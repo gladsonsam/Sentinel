@@ -1,0 +1,21 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Cross-compilation config for building a Windows .exe from Linux
+#
+# Uses the x86_64-pc-windows-msvc target so that the Windows crate, WinRT,
+# COM, and windows-capture all link against the real MSVC runtime.
+#
+# Build with:
+#   cargo xwin build --release
+# ─────────────────────────────────────────────────────────────────────────────
+
+[build]
+# Make `cargo build` (without --target) already target Windows x64.
+target = "x86_64-pc-windows-msvc"
+
+# ── xwin cache location ───────────────────────────────────────────────────────
+# cargo-xwin downloads the Windows SDK and MSVC CRT here once, then reuses it.
+# Change to any writable path you prefer.
+[env]
+XWIN_CACHE_DIR      = { value = ".xwin-cache", relative = true }
+XWIN_ARCH           = "x86_64"
+XWIN_SPLAT_OUTPUT   = { value = ".xwin-cache/splat", relative = true }

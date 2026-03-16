@@ -1,0 +1,15 @@
+# Rust build output
+/target
+
+# cargo-xwin: downloaded Windows SDK / MSVC CRT (re-fetched automatically)
+/.xwin-cache
+
+# Vendored crate build artifacts and cargo registry metadata
+/patches/*/target
+/patches/*/.cargo-ok
+/patches/*/.cargo_vcs_info.json
+/patches/*/Cargo.toml.orig
+/patches/*/Cargo.lock
+
+# Local helper scripts (machine-specific paths)
+move.sh
