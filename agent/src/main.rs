@@ -268,10 +268,8 @@ fn main() {
             std::thread::sleep(Duration::from_secs(60));
         }
     } else {
-        // ── egui settings window (main thread; eframe owns the event loop) ───
-        let _ = ui::AgentApp::new(initial_config, config_tx, agent_status)
-            .with_show_on_startup(show_ui_on_startup)
-            .run();
+        // ── Tauri settings window (main thread; Tauri owns the event loop) ──
+        ui::run_tauri(initial_config, config_tx, agent_status, show_ui_on_startup);
     }
 }
 
@@ -285,7 +283,7 @@ async fn run_agent_loop(
     mut frame_rx: mpsc::Receiver<Vec<u8>>,
     mut key_rx: mpsc::UnboundedReceiver<InputEvent>,
     status: Arc<Mutex<AgentStatus>>,
-    insecure_tls: bool,
+    cli_insecure_tls: bool,
 ) {
     // The capture stop-flag survives reconnects.
     let mut capture_stop: Option<Arc<AtomicBool>> = None;
@@ -317,7 +315,7 @@ async fn run_agent_loop(
                 info!("Connecting to {ws_url} …");
                 info!("Target FPS (streaming): {TARGET_FPS}");
 
-                match connect_ws(&ws_url, insecure_tls).await {
+                match connect_ws(&ws_url, cli_insecure_tls || cfg.insecure_tls).await {
                     Ok((ws_stream, response)) => {
                         set_status(&status, AgentStatus::Connected);
                         info!("WebSocket connected (HTTP {}).", response.status().as_u16());

@@ -1,5 +1,6 @@
 //! Persistent configuration and shared runtime state for the agent.
 
+use base64::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
@@ -27,6 +28,10 @@ pub struct Config {
     /// An empty-string hash (`hash_password("")`) means no password required.
     #[serde(default = "empty_password_hash")]
     pub ui_password_hash: String,
+
+    /// Whether to ignore TLS certificate errors (for self-signed / local certs).
+    #[serde(default)]
+    pub insecure_tls: bool,
 }
 
 fn default_agent_name() -> String {
@@ -44,6 +49,7 @@ impl Default for Config {
             agent_name: default_agent_name(),
             agent_password: String::new(),
             ui_password_hash: empty_password_hash(),
+            insecure_tls: false,
         }
     }
 }
@@ -55,24 +61,39 @@ pub fn hash_password(password: &str) -> String {
     format!("{:x}", h.finalize())
 }
 
-/// Path to the JSON config file on disk.
+/// Path to the obfuscated config file.
 ///
-/// On Windows: `%LOCALAPPDATA%\sentinel\config.json`
+/// On Windows: `%LOCALAPPDATA%\sentinel\config.dat`
 pub fn config_path() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("sentinel")
-        .join("config.json")
+        .join("config.dat")
 }
 
 /// Load configuration from disk; falls back to `Config::default()` on any error.
 pub fn load_config() -> Config {
     let path = config_path();
-    let mut cfg = if let Ok(data) = std::fs::read_to_string(&path) {
-        serde_json::from_str::<Config>(&data).unwrap_or_default()
-    } else {
-        Config::default()
-    };
+    let old_path = path.with_extension("json");
+
+    let mut cfg = Config::default();
+
+    // 1. Try reading the new base64 dat file
+    if let Ok(b64) = std::fs::read_to_string(&path) {
+        if let Ok(dec) = BASE64_STANDARD.decode(b64.trim()) {
+            if let Ok(s) = String::from_utf8(dec) {
+                if let Ok(c) = serde_json::from_str::<Config>(&s) {
+                    cfg = c;
+                }
+            }
+        }
+    } 
+    // 2. Fall back to old config.json
+    else if let Ok(json) = std::fs::read_to_string(&old_path) {
+        if let Ok(c) = serde_json::from_str::<Config>(&json) {
+            cfg = c;
+        }
+    }
 
     // Optional environment overrides, useful when running headless (no UI).
     // These only override when the env var is present and non-empty.
@@ -94,6 +115,12 @@ pub fn load_config() -> Config {
             cfg.agent_password = v.to_string();
         }
     }
+    if let Ok(v) = std::env::var("AGENT_INSECURE_TLS") {
+        let v = v.trim();
+        if !v.is_empty() {
+            cfg.insecure_tls = matches!(v, "1" | "true" | "TRUE");
+        }
+    }
 
     cfg
 }
@@ -104,7 +131,15 @@ pub fn save_config(config: &Config) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(&path, serde_json::to_string_pretty(config)?)?;
+    
+    let json = serde_json::to_string(config)?;
+    let b64 = BASE64_STANDARD.encode(json.as_bytes());
+    std::fs::write(&path, b64)?;
+
+    // Attempt to clean up the old readable json file safely
+    let old_path = path.with_extension("json");
+    let _ = std::fs::remove_file(old_path);
+    
     Ok(())
 }
 

@@ -1,0 +1,107 @@
+/* ── External font — must be first ─────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Design tokens ─────────────────────────────────────────────────────────── */
+:root {
+  /* Light mode (fallback) */
+  --color-bg:       #f5f5f7;
+  --color-surface:  #ffffff;
+  --color-border:   #e0e0e5;
+  --color-primary:  #1a1a2e;
+  --color-muted:    #6b7280;
+  --color-accent:   #6366f1;
+  --color-ok:       #22c55e;
+  --color-danger:   #ef4444;
+  --color-warn:     #f59e0b;
+}
+
+.dark {
+  --color-bg:       #0d0d14;
+  --color-surface:  #13131f;
+  --color-border:   #1e1e30;
+  --color-primary:  #e8e8f4;
+  --color-muted:    #6b7280;
+  --color-accent:   #818cf8;
+  --color-ok:       #4ade80;
+  --color-danger:   #f87171;
+  --color-warn:     #fbbf24;
+}
+
+/* ── Base ──────────────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── Scrollbar ─────────────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+
+/* ── Input base ────────────────────────────────────────────────────────────── */
+input {
+  background: var(--color-bg);
+  color: var(--color-primary);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.875rem;
+  outline: none;
+  transition: border-color 0.15s;
+  width: 100%;
+}
+
+input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-accent) 20%, transparent);
+}
+
+input::placeholder {
+  color: var(--color-muted);
+}
+
+/* ── Button base ───────────────────────────────────────────────────────────── */
+button {
+  cursor: pointer;
+  border: none;
+  outline: none;
+  font-family: inherit;
+}
+
+/* ── Animations ────────────────────────────────────────────────────────────── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-in {
+  animation: fadeIn 0.18s ease-out both;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+.animate-pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
