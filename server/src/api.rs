@@ -151,12 +151,12 @@ async fn agent_activity(
 async fn agent_screen(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Response {
     let frame = s.frames.lock().unwrap().get(&id).cloned();
     match frame {
-        Some(data) => (
+        Some(f) => (
             [
                 (header::CONTENT_TYPE, "image/jpeg"),
                 (header::CACHE_CONTROL, "no-cache, no-store"),
             ],
-            data,
+            f.jpeg,
         )
             .into_response(),
         None => (StatusCode::NOT_FOUND, "No frame available yet").into_response(),
@@ -215,7 +215,7 @@ async fn agent_mjpeg(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Re
         let mut interval = tokio::time::interval(Duration::from_millis(200));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-        let mut last_len: usize = 0;
+        let mut last_seq: u64 = 0;
         // Track whether the agent was reachable on the previous tick so we can
         // re-issue start_capture the moment it comes back online (the agent
         // always stops capture when its WebSocket session ends, so it needs a
@@ -238,27 +238,27 @@ async fn agent_mjpeg(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Re
 
             let frame = stream_state.frames.lock().unwrap().get(&id).cloned();
 
-            let Some(jpeg) = frame else {
+            let Some(f) = frame else {
                 // Agent not connected yet — keep the connection alive.
                 continue;
             };
 
-            // Skip frames identical in size (fast proxy for "no change").
-            if jpeg.len() == last_len {
+            // Skip frames we've already sent.
+            if f.seq == last_seq {
                 continue;
             }
-            last_len = jpeg.len();
+            last_seq = f.seq;
 
             let header = format!(
                 "--{BOUNDARY}\r\n\
                  Content-Type: image/jpeg\r\n\
                  Content-Length: {}\r\n\
                  \r\n",
-                jpeg.len()
+                f.jpeg.len()
             );
 
             let mut part: Vec<u8> = header.into_bytes();
-            part.extend_from_slice(&jpeg);
+            part.extend_from_slice(&f.jpeg);
             part.extend_from_slice(b"\r\n");
 
             yield Bytes::from(part);

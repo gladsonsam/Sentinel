@@ -144,6 +144,8 @@ const S = {
   activeAgent:   null,      // uuid string
   activeTab:     'screen',
   remoteEnabled: false,
+  live:          false,     // whether MJPEG stream is active
+  snapTimer:     null,      // interval id for snapshot polling
   mouseThrottle: 0,         // timestamp of last mousemove sent
 };
 
@@ -258,9 +260,10 @@ function renderSidebar() {
 
 function selectAgent(id) {
   if (S.activeAgent === id) return;
-  stopMjpeg();
+  stopLive();
   S.activeAgent = id;
   S.remoteEnabled = false;
+  S.live = false;
   renderSidebar();
   renderActiveTab();
 }
@@ -272,7 +275,7 @@ document.querySelectorAll('.tab').forEach(t => {
   t.addEventListener('click', () => {
     const tab = t.dataset.tab;
     if (tab === S.activeTab) return;
-    if (S.activeTab === 'screen') stopMjpeg();
+    if (S.activeTab === 'screen') stopLive();
     document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(x => x.classList.remove('active'));
     t.classList.add('active');
@@ -306,7 +309,10 @@ function renderScreen() {
   wrap.innerHTML = `
     <div class="screen-wrap">
       <div class="screen-toolbar">
-        <span class="badge live" id="streamBadge">● LIVE</span>
+        <span class="badge ${S.live ? 'live' : ''}" id="streamBadge">${S.live ? '● LIVE' : '● IDLE'}</span>
+        <button id="liveBtn" class="badge" style="border:1px solid var(--border);background:rgba(255,255,255,.04);cursor:pointer">
+          ${S.live ? 'Stop' : 'Go live'}
+        </button>
         <label>
           <input type="checkbox" id="remoteToggle" ${S.remoteEnabled ? 'checked' : ''}>
           <span class="lbl">Remote control</span>
@@ -314,14 +320,24 @@ function renderScreen() {
         <span class="lbl" id="coordLabel" style="margin-left:auto"></span>
       </div>
       <div class="screen-viewport" id="screenViewport">
-        <img id="screenImg" alt="Live stream">
+        <img id="screenImg" alt="${S.live ? 'Live stream' : 'Latest screenshot'}">
         <canvas id="screenCanvas"></canvas>
       </div>
     </div>`;
 
-  // Start MJPEG
-  const img = byId('screenImg');
-  img.src = `/api/agents/${S.activeAgent}/mjpeg`;
+  const liveBtn = byId('liveBtn');
+  liveBtn.onclick = () => {
+    if (S.live) {
+      stopLive();
+      S.live = false;
+      S.remoteEnabled = false;
+      renderScreen();
+    } else {
+      S.live = true;
+      startLive();
+      renderScreen();
+    }
+  };
 
   // Remote-control toggle
   const toggle = byId('remoteToggle');
@@ -330,12 +346,16 @@ function renderScreen() {
     applyRemoteState();
   };
   applyRemoteState();
+
+  // Default to lightweight snapshots until the user explicitly goes live.
+  if (!S.live) startSnapshots();
 }
 
 function applyRemoteState() {
   const canvas = byId('screenCanvas');
   if (!canvas) return;
-  if (S.remoteEnabled) {
+  // Remote control only makes sense when we have a live stream.
+  if (S.remoteEnabled && S.live) {
     canvas.classList.add('active');
     attachCanvasEvents(canvas);
   } else {
@@ -343,10 +363,46 @@ function applyRemoteState() {
   }
 }
 
-// Stop the MJPEG stream by clearing the img src.
-function stopMjpeg() {
+function startSnapshots() {
+  stopSnapshots();
+  const tick = () => {
+    const img = byId('screenImg');
+    if (!img || !S.activeAgent || S.live) return;
+    img.src = `/api/agents/${S.activeAgent}/screen?ts=${Date.now()}`;
+  };
+  tick();
+  S.snapTimer = setInterval(tick, 1500);
+}
+
+function stopSnapshots() {
+  if (S.snapTimer) {
+    clearInterval(S.snapTimer);
+    S.snapTimer = null;
+  }
+}
+
+function startLive() {
+  stopSnapshots();
   const img = byId('screenImg');
-  if (img) img.src = '';
+  if (img && S.activeAgent) {
+    img.src = `/api/agents/${S.activeAgent}/mjpeg?ts=${Date.now()}`;
+  }
+}
+
+// Hard-stop the MJPEG stream by removing the <img> node so the HTTP connection closes immediately.
+function stopLive() {
+  stopSnapshots();
+  const img = byId('screenImg');
+  if (img) {
+    const parent = img.parentNode;
+    img.remove();
+    if (parent) {
+      const repl = document.createElement('img');
+      repl.id = 'screenImg';
+      repl.alt = 'Latest screenshot';
+      parent.insertBefore(repl, parent.firstChild);
+    }
+  }
 }
 
 // Attach mouse event listeners to the remote-control canvas.
@@ -496,26 +552,133 @@ async function refreshActivity() {
   const el = byId('activity-inner');
   if (!S.activeAgent) { el.innerHTML = noAgent(); return; }
 
-  const data = await apiFetch(`/api/agents/${S.activeAgent}/activity`);
-  if (!data) return;
+  // Build a smarter "timeline" by merging recent windows + urls + key sessions,
+  // then grouping into app sessions (Chrome becomes one session with nested tabs/urls/keys).
+  const [windows, urls, keys, activity] = await Promise.all([
+    apiFetch(`/api/agents/${S.activeAgent}/windows?limit=250`),
+    apiFetch(`/api/agents/${S.activeAgent}/urls?limit=250`),
+    apiFetch(`/api/agents/${S.activeAgent}/keys?limit=100`),
+    apiFetch(`/api/agents/${S.activeAgent}/activity?limit=200`),
+  ]);
+  if (!windows || !urls || !keys || !activity) return;
 
-  if (!data.rows.length) { el.innerHTML = empty('No activity events recorded'); return; }
+  const normApp = (s) => {
+    const v = (s || '').trim();
+    if (!v) return 'unknown';
+    const low = v.toLowerCase();
+    // If it already looks like a process name, keep it.
+    if (low.endsWith('.exe')) return low;
+    // Common browser/product strings seen in URL events → map to the process we log for window/keys.
+    // (On your machine Helium browser shows up as chrome.exe in window/key events.)
+    if (low.includes('helium')) return 'chrome.exe';
+    if (low.includes('chrome')) return 'chrome.exe';
+    if (low.includes('edge')) return 'msedge.exe';
+    if (low.includes('firefox')) return 'firefox.exe';
+    return v;
+  };
+
+  const events = [];
+  (windows.rows || []).forEach(r => events.push({ kind:'window', ts:r.ts, app:normApp(r.app), title:r.title || '' , data:r }));
+  (urls.rows || []).forEach(r => events.push({
+    kind:'url',
+    ts:r.ts,
+    app:normApp(r.browser || r.title),
+    title:r.title || '',
+    data:r
+  }));
+  (keys.rows || []).forEach(r => events.push({ kind:'keys', ts:r.updated_at || r.started_at, app:normApp(r.app), title:r.window_title || '' , data:r }));
+  (activity.rows || []).forEach(r => events.push({ kind:'activity', ts:r.ts, app:'system', title:r.event_type , data:r }));
+
+  // Sort ascending so sessions read like a timeline.
+  events.sort((a,b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
+
+  const gapMs = 2 * 60 * 1000;
+  const sessions = [];
+  let cur = null;
+  for (const ev of events) {
+    const t = new Date(ev.ts).getTime();
+    const shouldNew =
+      !cur ||
+      cur.app !== ev.app ||
+      (t - cur.lastTs) > gapMs;
+    if (shouldNew) {
+      cur = { app: ev.app, startTs: t, lastTs: t, items: [] };
+      sessions.push(cur);
+    }
+    cur.lastTs = t;
+    cur.items.push(ev);
+  }
+
+  const q = (S.activityQuery || '').trim().toLowerCase();
+  const filtered = q ? sessions.filter(s => {
+    const hay = [
+      s.app,
+      ...s.items.map(i => i.title || ''),
+      ...s.items.map(i => (i.kind === 'url' ? (i.data.url || '') : '')),
+      ...s.items.map(i => (i.kind === 'keys' ? (i.data.text || '') : '')),
+    ].join('\n').toLowerCase();
+    return hay.includes(q);
+  }) : sessions;
 
   el.innerHTML = `
     <div class="panel">
-      <div class="panel-title">Activity log</div>
-      <table>
-        <thead><tr><th>Status</th><th>Idle (s)</th><th>Time</th></tr></thead>
-        <tbody>
-          ${data.rows.map(r => `
-            <tr>
-              <td><span class="tag ${r.event_type === 'active' ? 'tag-ok' : 'tag-warn'}">${esc(r.event_type)}</span></td>
-              <td>${r.idle_secs ?? '—'}</td>
-              <td>${ts(r.ts)}</td>
-            </tr>`).join('')}
-        </tbody>
-      </table>
+      <div class="panel-title">Timeline</div>
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <input id="activitySearch" placeholder="Search app / URLs / keys…" value="${esc(S.activityQuery || '')}"
+               style="flex:1;min-width:240px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:6px;padding:8px 10px;color:var(--text)">
+        <span style="color:var(--muted);font-size:12px">${filtered.length} sessions</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:10px">
+        ${filtered.map(s => renderSession(s)).join('')}
+      </div>
     </div>`;
+
+  byId('activitySearch').oninput = (e) => {
+    S.activityQuery = e.target.value;
+    refreshActivity();
+  };
+}
+
+function renderSession(s) {
+  const start = new Date(s.startTs).toLocaleTimeString();
+  const end = new Date(s.lastTs).toLocaleTimeString();
+  const head = `<div style="display:flex;justify-content:space-between;gap:10px;align-items:center">
+      <div style="font-weight:600">${esc(s.app)}</div>
+      <div style="color:var(--muted);font-size:12px">${start} → ${end}</div>
+    </div>`;
+
+  const items = s.items.map(ev => {
+    if (ev.kind === 'url') {
+      return `<div style="color:var(--muted);font-size:12px;line-height:1.35">
+        <span class="tag tag-ok">URL</span>
+        <a href="${esc(ev.data.url)}" target="_blank" style="color:var(--accent);text-decoration:none">${esc(ev.data.url)}</a>
+        ${ev.title ? `<span style="color:var(--muted)"> — ${esc(ev.title)}</span>` : ''}
+      </div>`;
+    }
+    if (ev.kind === 'window') {
+      return `<div style="color:var(--muted);font-size:12px;line-height:1.35">
+        <span class="tag">WIN</span> ${esc(ev.title || '(no title)')}
+      </div>`;
+    }
+    if (ev.kind === 'keys') {
+      const txt = (ev.data.text || '').slice(-280);
+      return `<div style="color:var(--muted);font-size:12px;line-height:1.35">
+        <span class="tag">KEYS</span> <span style="font-family:Consolas,monospace;color:var(--text)">${esc(txt)}</span>
+      </div>`;
+    }
+    // activity (afk/active)
+    return `<div style="color:var(--muted);font-size:12px;line-height:1.35">
+      <span class="tag ${ev.data.event_type === 'active' ? 'tag-ok' : 'tag-warn'}">${esc(ev.data.event_type)}</span>
+      ${ev.data.idle_secs != null ? `<span style="margin-left:6px">idle ${ev.data.idle_secs}s</span>` : ''}
+    </div>`;
+  }).join('');
+
+  return `<div style="border:1px solid var(--border);border-radius:8px;padding:12px;background:rgba(255,255,255,.02)">
+    ${head}
+    <div style="margin-top:8px;display:flex;flex-direction:column;gap:6px">
+      ${items}
+    </div>
+  </div>`;
 }
 
 // ───────────────────────────────────────────────────────────────────────────

@@ -25,7 +25,7 @@ use serde::Deserialize;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-use crate::{db, state::AppState};
+use crate::{db, state::{AppState, Frame}};
 
 // ─── Connection handshake ─────────────────────────────────────────────────────
 
@@ -123,8 +123,16 @@ async fn run(mut ws: WebSocket, name: String, state: Arc<AppState>) {
             msg = ws.recv() => {
                 match msg {
                     Some(Ok(Message::Binary(bytes))) => {
-                        // Cache the latest screenshot frame.
-                        state.frames.lock().unwrap().insert(agent_id, bytes.to_vec());
+                        // Cache the latest screenshot frame with a monotonically increasing sequence.
+                        let mut frames = state.frames.lock().unwrap();
+                        let next_seq = frames.get(&agent_id).map(|f| f.seq.saturating_add(1)).unwrap_or(1);
+                        frames.insert(
+                            agent_id,
+                            Frame {
+                                seq: next_seq,
+                                jpeg: bytes::Bytes::from(bytes),
+                            },
+                        );
                     }
                     Some(Ok(Message::Text(text))) => {
                         dispatch_text(text.as_str(), agent_id, &name, &state).await;

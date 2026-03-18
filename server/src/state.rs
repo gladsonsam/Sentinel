@@ -3,6 +3,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
+use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use tokio::sync::{broadcast, mpsc::UnboundedSender};
@@ -42,7 +43,7 @@ pub struct AppState {
 
     /// Most-recent JPEG frame per agent – served by both the HTTP snapshot
     /// endpoint and the MJPEG stream.
-    pub frames: Mutex<HashMap<Uuid, Vec<u8>>>,
+    pub frames: Mutex<HashMap<Uuid, Frame>>,
 
     /// Per-agent command channels.
     ///
@@ -70,6 +71,16 @@ pub struct AppState {
     /// Active dashboard session tokens (random UUIDs issued on login).
     /// Stored in memory only — reset when the server restarts.
     pub sessions: Mutex<HashSet<String>>,
+}
+
+/// A cached screenshot frame with a monotonically increasing sequence number.
+///
+/// The MJPEG stream uses `seq` to reliably detect "new frame" without having to
+/// compare bytes (frame sizes can repeat even when the image changes).
+#[derive(Clone, Debug)]
+pub struct Frame {
+    pub seq: u64,
+    pub jpeg: Bytes,
 }
 
 impl AppState {
