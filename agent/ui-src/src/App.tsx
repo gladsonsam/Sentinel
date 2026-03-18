@@ -13,6 +13,9 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { LogicalSize } from "@tauri-apps/api/dpi";
 import {
   Shield,
   Save,
@@ -155,7 +158,7 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-bg animate-fade-in">
+    <div className="flex h-[380px] items-center justify-center bg-bg animate-fade-in">
       <div
         className="w-[340px] rounded-2xl border border-border bg-surface shadow-2xl p-8"
         style={{ boxShadow: "0 25px 60px rgba(0,0,0,0.6)" }}
@@ -291,7 +294,7 @@ function SettingsPanel() {
   }
 
   return (
-    <div className="min-h-screen bg-bg flex flex-col animate-fade-in">
+    <div className="bg-bg flex flex-col animate-fade-in">
       {/* ── Header ── */}
       <header className="flex items-center justify-between px-5 h-12 bg-surface border-b border-border flex-shrink-0">
         <div className="flex items-center gap-2">
@@ -481,16 +484,62 @@ type AppScreen = "loading" | "password" | "settings";
 export default function App() {
   const [screen, setScreen] = useState<AppScreen>("loading");
 
-  useEffect(() => {
-    // Ask Rust whether a UI password is configured
+  const checkLock = useCallback(() => {
     invoke<boolean>("has_ui_password")
       .then((has) => setScreen(has ? "password" : "settings"))
-      .catch(() => setScreen("settings")); // If IPC fails, just show settings
+      .catch(() => setScreen("settings"));
   }, []);
+
+  const forceRelock = useCallback(() => {
+    // Immediately hide the settings UI (no flash), then decide whether a password gate is needed.
+    setScreen("password");
+    checkLock();
+  }, [checkLock]);
+
+  useEffect(() => {
+    // Dynamic native auto-resizing
+    const ob = new ResizeObserver(() => {
+      const height = document.documentElement.scrollHeight;
+      const win = getCurrentWebviewWindow();
+      win.setSize(new LogicalSize(520, height));
+    });
+    ob.observe(document.body);
+    return () => ob.disconnect();
+  }, []);
+
+  useEffect(() => {
+    checkLock();
+
+    const unlistenLock = listen("lock_ui", () => {
+      forceRelock();
+    });
+
+    // Re-lock whenever the window gains focus (covers hotkey show and any other way
+    // the window is brought back into view).
+    const unlistenFocus = getCurrentWebviewWindow().onFocusChanged(({ payload: focused }) => {
+      if (focused) forceRelock();
+    });
+
+    // Fallbacks: some platforms / versions are more reliable with DOM events.
+    const onFocus = () => forceRelock();
+    window.addEventListener("focus", onFocus);
+
+    const onVisibility = () => {
+      if (!document.hidden) forceRelock();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      unlistenLock.then((unlisten: () => void) => unlisten());
+      unlistenFocus.then((unlisten: () => void) => unlisten());
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [checkLock, forceRelock]);
 
   if (screen === "loading") {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-bg">
+      <div className="flex h-[200px] items-center justify-center bg-bg">
         <Loader2 size={28} className="animate-spin text-accent" />
       </div>
     );

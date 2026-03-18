@@ -25,7 +25,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager, State, Emitter};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 use tracing::{error, info};
 
@@ -151,6 +151,7 @@ fn verify_ui_password(password: String, stored: State<StoredConfig>) -> Result<(
 #[tauri::command]
 fn hide_window(app: AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
+        let _ = win.emit("lock_ui", ());
         let _ = win.hide();
     }
 }
@@ -208,8 +209,11 @@ pub fn run_tauri(
                         if let Some(w) = app_handle.get_webview_window("main") {
                             let visible = w.is_visible().unwrap_or(false);
                             if visible {
+                                let _ = w.emit("lock_ui", ());
                                 let _ = w.hide();
                             } else {
+                                // Always re-lock before showing so the user must log in again.
+                                let _ = w.emit("lock_ui", ());
                                 let _ = w.show();
                                 let _ = w.set_focus();
                             }
@@ -227,6 +231,7 @@ pub fn run_tauri(
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
+                let _ = window.emit("lock_ui", ());
                 let _ = window.hide();
             }
         })
