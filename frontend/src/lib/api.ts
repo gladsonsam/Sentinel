@@ -6,6 +6,8 @@ import type {
   ActivityEvent,
   AgentInfo,
   RetentionPolicy,
+  LocalUiPasswordGlobalState,
+  LocalUiPasswordAgentState,
 } from "./types";
 
 interface PageParams {
@@ -139,5 +141,39 @@ export const api = {
       global: RetentionPolicy;
       override: RetentionPolicy | null;
     }>;
+  },
+
+  // ── Agent local settings window password (pushed to Windows agents) ───────
+
+  localUiPasswordGlobalGet: (): Promise<LocalUiPasswordGlobalState> =>
+    get("/api/settings/local-ui-password"),
+
+  localUiPasswordGlobalPut: (body: {
+    password: string | null;
+  }): Promise<LocalUiPasswordGlobalState> =>
+    putJson("/api/settings/local-ui-password", body),
+
+  localUiPasswordAgentGet: (
+    id: string,
+  ): Promise<LocalUiPasswordAgentState> =>
+    get(`/api/agents/${id}/local-ui-password`),
+
+  localUiPasswordAgentPut: (
+    id: string,
+    body: { password: string | null },
+  ): Promise<LocalUiPasswordAgentState> =>
+    putJson(`/api/agents/${id}/local-ui-password`, body),
+
+  localUiPasswordAgentDelete: async (
+    id: string,
+  ): Promise<LocalUiPasswordAgentState> => {
+    const res = await fetch(`/api/agents/${id}/local-ui-password`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      const errBody = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(errBody.error ?? `HTTP ${res.status}`);
+    }
+    return res.json() as Promise<LocalUiPasswordAgentState>;
   },
 };

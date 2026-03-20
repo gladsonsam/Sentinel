@@ -1,9 +1,24 @@
 //! Persistent configuration and shared runtime state for the agent.
+//!
+//! ## On-disk format (`config.dat`)
+//!
+//! The file is **encrypted with Windows DPAPI** ([`CryptProtectData`]), not merely
+//! base64-encoded. Ciphertext is bound to the **current Windows user and this PC**;
+//! another user or another machine cannot decrypt it from the file alone. This matches
+//! how many desktop apps protect local secrets (browser profiles, Credential Manager
+//! exports, some enterprise agents).
+//!
+//! Legacy: older builds stored base64(JSON) or plain `config.json`; those are still read
+//! and are rewritten in the new format on next save.
+//!
+//! [`CryptProtectData`]: https://learn.microsoft.com/en-us/windows/win32/api/dpapi/nf-dpapi-cryptprotectdata
 
 use base64::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
+use tracing::warn;
+use windows_dpapi::{decrypt_data, encrypt_data, Scope};
 
 // ─── Configuration ────────────────────────────────────────────────────────────
 
@@ -61,7 +76,10 @@ pub fn hash_password(password: &str) -> String {
     format!("{:x}", h.finalize())
 }
 
-/// Path to the obfuscated config file.
+/// Optional app-specific entropy so unrelated DPAPI blobs are never mistaken for ours.
+const CONFIG_DPAPI_ENTROPY: &[u8] = b"sentinel-agent-config\0";
+
+/// Path to the encrypted config file.
 ///
 /// On Windows: `%LOCALAPPDATA%\sentinel\config.dat`
 pub fn config_path() -> PathBuf {
@@ -71,6 +89,25 @@ pub fn config_path() -> PathBuf {
         .join("config.dat")
 }
 
+fn parse_config_json(s: &str) -> Option<Config> {
+    serde_json::from_str::<Config>(s).ok()
+}
+
+/// Try legacy base64-wrapped JSON (`config.dat` from older builds).
+fn try_load_legacy_base64_dat(bytes: &[u8]) -> Option<Config> {
+    let s = std::str::from_utf8(bytes).ok()?.trim();
+    let dec = BASE64_STANDARD.decode(s).ok()?;
+    let s = String::from_utf8(dec).ok()?;
+    parse_config_json(&s)
+}
+
+/// Try DPAPI-encrypted JSON (current format).
+fn try_load_dpapi_dat(bytes: &[u8]) -> Option<Config> {
+    let dec = decrypt_data(bytes, Scope::User, Some(CONFIG_DPAPI_ENTROPY)).ok()?;
+    let s = String::from_utf8(dec).ok()?;
+    parse_config_json(&s)
+}
+
 /// Load configuration from disk; falls back to `Config::default()` on any error.
 pub fn load_config() -> Config {
     let path = config_path();
@@ -78,19 +115,22 @@ pub fn load_config() -> Config {
 
     let mut cfg = Config::default();
 
-    // 1. Try reading the new base64 dat file
-    if let Ok(b64) = std::fs::read_to_string(&path) {
-        if let Ok(dec) = BASE64_STANDARD.decode(b64.trim()) {
-            if let Ok(s) = String::from_utf8(dec) {
-                if let Ok(c) = serde_json::from_str::<Config>(&s) {
-                    cfg = c;
-                }
+    // 1. `config.dat` — prefer DPAPI, then legacy base64(JSON)
+    if let Ok(bytes) = std::fs::read(&path) {
+        if !bytes.is_empty() {
+            if let Some(c) = try_load_dpapi_dat(&bytes) {
+                cfg = c;
+            } else if let Some(c) = try_load_legacy_base64_dat(&bytes) {
+                warn!(
+                    "Loaded legacy base64 config.dat; it will be upgraded to DPAPI on next save"
+                );
+                cfg = c;
             }
         }
-    } 
-    // 2. Fall back to old config.json
-    else if let Ok(json) = std::fs::read_to_string(&old_path) {
+    } else if let Ok(json) = std::fs::read_to_string(&old_path) {
+        // 2. Very old plain `config.json`
         if let Ok(c) = serde_json::from_str::<Config>(&json) {
+            warn!("Loaded legacy config.json; it will be replaced by encrypted config.dat on next save");
             cfg = c;
         }
     }
@@ -126,20 +166,23 @@ pub fn load_config() -> Config {
 }
 
 /// Persist configuration to disk, creating parent directories as needed.
+///
+/// Writes **DPAPI-encrypted** bytes (not base64 text). Requires the same Windows user
+/// and machine to decrypt.
 pub fn save_config(config: &Config) -> anyhow::Result<()> {
     let path = config_path();
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    
+
     let json = serde_json::to_string(config)?;
-    let b64 = BASE64_STANDARD.encode(json.as_bytes());
-    std::fs::write(&path, b64)?;
+    let encrypted = encrypt_data(json.as_bytes(), Scope::User, Some(CONFIG_DPAPI_ENTROPY))?;
+    std::fs::write(&path, encrypted)?;
 
     // Attempt to clean up the old readable json file safely
     let old_path = path.with_extension("json");
     let _ = std::fs::remove_file(old_path);
-    
+
     Ok(())
 }
 

@@ -36,6 +36,7 @@
 //! |------------------|---------------|-----------------------|
 //! | Start streaming  | `Text` (JSON) | `"start_capture"`     |
 //! | Stop streaming   | `Text` (JSON) | `"stop_capture"`      |
+//! | Local UI password| `Text` (JSON) | `"set_local_ui_password_hash"` |
 //! | Mouse move       | `Text` (JSON) | `"MouseMove"`         |
 //! | Mouse click      | `Text` (JSON) | `"MouseClick"`        |
 
@@ -203,6 +204,9 @@ fn main() {
     let initial_config = config::load_config();
     info!("Config loaded from {:?}", config::config_path());
 
+    // Shared with Tauri so server-pushed UI password updates apply everywhere.
+    let shared_cfg: Arc<Mutex<Config>> = Arc::new(Mutex::new(initial_config.clone()));
+
     // ── Shared agent status (agent thread writes, GUI thread reads) ───────
     let agent_status: Arc<Mutex<AgentStatus>> = Arc::new(Mutex::new(AgentStatus::Disconnected));
 
@@ -219,6 +223,8 @@ fn main() {
 
     // ── Background thread: Tokio runtime + agent WebSocket loop ──────────
     let status_bg = agent_status.clone();
+    let shared_cfg_bg = shared_cfg.clone();
+    let config_tx_bg = config_tx.clone();
     std::thread::Builder::new()
         .name("agent-runtime".into())
         .spawn(move || {
@@ -245,6 +251,8 @@ fn main() {
                 let (frame_tx, frame_rx) = mpsc::channel::<Vec<u8>>(FRAME_CHANNEL_CAP);
                 run_agent_loop(
                     config_rx,
+                    config_tx_bg,
+                    shared_cfg_bg,
                     frame_tx,
                     frame_rx,
                     key_rx,
@@ -270,7 +278,13 @@ fn main() {
         }
     } else {
         // ── Tauri settings window (main thread; Tauri owns the event loop) ──
-        ui::run_tauri(initial_config, config_tx, agent_status, show_ui_on_startup);
+        ui::run_tauri(
+            initial_config,
+            config_tx,
+            shared_cfg,
+            agent_status,
+            show_ui_on_startup,
+        );
     }
 }
 
@@ -280,6 +294,8 @@ fn main() {
 
 async fn run_agent_loop(
     mut config_rx: tokio::sync::watch::Receiver<Option<Config>>,
+    config_tx: tokio::sync::watch::Sender<Option<Config>>,
+    shared_cfg: Arc<Mutex<Config>>,
     frame_tx: mpsc::Sender<Vec<u8>>,
     mut frame_rx: mpsc::Receiver<Vec<u8>>,
     mut key_rx: mpsc::UnboundedReceiver<InputEvent>,
@@ -327,6 +343,8 @@ async fn run_agent_loop(
                             &mut key_rx,
                             &mut capture_stop,
                             cfg.agent_name.clone(),
+                            shared_cfg.clone(),
+                            config_tx.clone(),
                         )
                         .await
                         {
@@ -409,6 +427,8 @@ async fn run_session(
     key_rx: &mut mpsc::UnboundedReceiver<InputEvent>,
     capture_stop: &mut Option<Arc<AtomicBool>>,
     _agent_name: String,
+    shared_cfg: Arc<Mutex<Config>>,
+    config_tx: tokio::sync::watch::Sender<Option<Config>>,
 ) -> Result<()> {
     let (mut ws_tx, mut ws_rx) = ws_stream.split();
 
@@ -464,6 +484,8 @@ async fn run_session(
                             frame_tx,
                             capture_stop,
                             &mut controller,
+                            &shared_cfg,
+                            &config_tx,
                         );
                     }
                     Some(Ok(Message::Close(frame))) => {
@@ -595,6 +617,8 @@ fn handle_server_command(
     frame_tx: &mpsc::Sender<Vec<u8>>,
     capture_stop: &mut Option<Arc<AtomicBool>>,
     controller: &mut InputController,
+    shared_cfg: &Arc<Mutex<Config>>,
+    config_tx: &tokio::sync::watch::Sender<Option<Config>>,
 ) {
     let val: serde_json::Value = match serde_json::from_str(text) {
         Ok(v) => v,
@@ -602,6 +626,22 @@ fn handle_server_command(
     };
 
     match val["type"].as_str().unwrap_or("") {
+        "set_local_ui_password_hash" => {
+            if let Some(hash) = val["hash"].as_str() {
+                if let Ok(mut c) = shared_cfg.lock() {
+                    c.ui_password_hash = hash.to_string();
+                    match crate::config::save_config(&*c) {
+                        Ok(()) => {
+                            let new_cfg = c.clone();
+                            drop(c);
+                            let _ = config_tx.send(Some(new_cfg));
+                            info!("Local settings UI password updated from server.");
+                        }
+                        Err(e) => warn!("Failed to save config (server UI password): {e}"),
+                    }
+                }
+            }
+        }
         "start_capture" => {
             if capture_stop.is_none() {
                 let stop = Arc::new(AtomicBool::new(false));

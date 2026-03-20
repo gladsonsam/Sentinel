@@ -36,8 +36,9 @@ use crate::config::{AgentStatus, Config};
 /// Watch sender — agent loop listens on the receiver end.
 pub struct SharedConfigTx(pub tokio::sync::watch::Sender<Option<Config>>);
 
-/// Mutex-wrapped latest config (for synchronous reads from command handlers).
-pub struct StoredConfig(pub Mutex<Config>);
+/// Latest saved config — shared with the background agent thread so server-pushed
+/// UI password updates stay in sync with the settings window.
+pub struct StoredConfig(pub Arc<Mutex<Config>>);
 
 /// Agent connection status — written by the agent loop, read by `get_status`.
 pub struct SharedStatus(pub Arc<Mutex<AgentStatus>>);
@@ -168,6 +169,7 @@ fn exit_agent() {
 pub fn run_tauri(
     initial_config: Config,
     config_tx: tokio::sync::watch::Sender<Option<Config>>,
+    shared_cfg: Arc<Mutex<Config>>,
     agent_status: Arc<Mutex<AgentStatus>>,
     show_on_startup: bool,
 ) {
@@ -185,7 +187,7 @@ pub fn run_tauri(
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         // ── Shared state ────────────────────────────────────────────────────
         .manage(SharedConfigTx(config_tx))
-        .manage(StoredConfig(Mutex::new(initial_config.clone())))
+        .manage(StoredConfig(shared_cfg))
         .manage(SharedStatus(agent_status))
         // ── Commands ────────────────────────────────────────────────────────
         .invoke_handler(tauri::generate_handler![

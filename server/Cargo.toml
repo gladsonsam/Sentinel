@@ -42,3 +42,6 @@ async-stream = "0.3"
 # ── Error handling ────────────────────────────────────────────────────────────
 anyhow = "1"
 subtle = "2.6.1"
+
+# ── Agent local UI password (SHA-256, match Windows agent config.rs) ─────────
+sha2 = "0.10"

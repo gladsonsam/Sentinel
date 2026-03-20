@@ -11,6 +11,8 @@
 //! | `GET /api/agents/:id/mjpeg`     | MJPEG stream (multipart/x-mixed-replace)|
 //! | `GET/PUT /api/settings/retention` | Global telemetry retention (days)    |
 //! | `GET/PUT/DELETE /api/agents/:id/retention` | Per-agent retention overrides   |
+//! | `GET/PUT /api/settings/local-ui-password` | Agent local settings UI password |
+//! | `GET/PUT/DELETE /api/agents/:id/local-ui-password` | Per-agent override        |
 
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -29,7 +31,7 @@ use futures_util::StreamExt;
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::{db, state::AppState};
+use crate::{db, state::AppState, ws_agent};
 
 // ─── Router ───────────────────────────────────────────────────────────────────
 
@@ -52,6 +54,16 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/settings/retention",
             get(retention_global_get).put(retention_global_put),
+        )
+        .route(
+            "/settings/local-ui-password",
+            get(local_ui_password_global_get).put(local_ui_password_global_put),
+        )
+        .route(
+            "/agents/:id/local-ui-password",
+            get(local_ui_password_agent_get)
+                .put(local_ui_password_agent_put)
+                .delete(local_ui_password_agent_delete),
         )
         // Domain blocklists intentionally removed for now.
 }
@@ -283,6 +295,114 @@ async fn agent_retention_put(
 async fn agent_retention_delete(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Response {
     match db::clear_retention_agent(&s.db, id).await {
         Ok(()) => agent_retention_get(Path(id), State(s.clone())).await,
+        Err(e) => err500(e),
+    }
+}
+
+// ─── Agent local UI password (Windows settings window) ───────────────────────
+
+#[derive(Deserialize)]
+struct LocalUiPasswordBody {
+    /// Plaintext; `null` or omitted + empty string = no password (open) or clear override.
+    password: Option<String>,
+}
+
+fn validate_local_ui_password_plain(p: &str) -> Result<(), &'static str> {
+    if p.is_empty() {
+        return Ok(());
+    }
+    if p.len() < 4 {
+        return Err("Password must be at least 4 characters, or leave empty to remove.");
+    }
+    Ok(())
+}
+
+async fn local_ui_password_global_get(State(s): State<Arc<AppState>>) -> Response {
+    match db::get_local_ui_global_hash(&s.db).await {
+        Ok(h) => {
+            let password_set = db::agent_ui_password_is_set(h.as_deref());
+            Json(serde_json::json!({ "password_set": password_set })).into_response()
+        }
+        Err(e) => err500(e),
+    }
+}
+
+async fn local_ui_password_global_put(
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<LocalUiPasswordBody>,
+) -> Response {
+    if let Some(ref p) = body.password {
+        if let Err(msg) = validate_local_ui_password_plain(p) {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+        }
+    }
+    let hash = match body.password {
+        None => None,
+        Some(ref p) if p.is_empty() => None,
+        Some(ref p) => Some(db::sha256_hex(p)),
+    };
+    match db::set_local_ui_global_hash(&s.db, hash.as_deref()).await {
+        Ok(()) => {
+            ws_agent::push_local_ui_password_to_all_connected(&s).await;
+            local_ui_password_global_get(State(s.clone())).await
+        }
+        Err(e) => err500(e),
+    }
+}
+
+async fn local_ui_password_agent_get(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Response {
+    let global = match db::get_local_ui_global_hash(&s.db).await {
+        Ok(h) => h,
+        Err(e) => return err500(e),
+    };
+    let global_set = db::agent_ui_password_is_set(global.as_deref());
+
+    let ov = match db::get_local_ui_override_hash(&s.db, id).await {
+        Ok(h) => h,
+        Err(e) => return err500(e),
+    };
+    let override_json = match ov {
+        None => serde_json::Value::Null,
+        Some(h) => serde_json::json!({ "password_set": db::agent_ui_password_is_set(Some(&h)) }),
+    };
+
+    Json(serde_json::json!({
+        "global": { "password_set": global_set },
+        "override": override_json,
+    }))
+    .into_response()
+}
+
+async fn local_ui_password_agent_put(
+    Path(id): Path<Uuid>,
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<LocalUiPasswordBody>,
+) -> Response {
+    if let Some(ref p) = body.password {
+        if let Err(msg) = validate_local_ui_password_plain(p) {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+        }
+    }
+    let hash = match body.password {
+        None => None,
+        Some(ref p) if p.is_empty() => None,
+        Some(ref p) => Some(db::sha256_hex(p)),
+    };
+    match db::set_local_ui_override_hash(&s.db, id, hash.as_deref()).await {
+        Ok(()) => {
+            ws_agent::push_local_ui_password_hash_to_agent(&s, id).await;
+            local_ui_password_agent_get(Path(id), State(s.clone())).await
+        }
+        Err(e) => err500(e),
+    }
+}
+
+async fn local_ui_password_agent_delete(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Response {
+    match db::clear_local_ui_override(&s.db, id).await {
+        Ok(()) => {
+            ws_agent::push_local_ui_password_hash_to_agent(&s, id).await;
+            local_ui_password_agent_get(Path(id), State(s.clone())).await
+        }
         Err(e) => err500(e),
     }
 }

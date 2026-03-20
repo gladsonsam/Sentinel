@@ -116,6 +116,19 @@ async fn run(mut ws: WebSocket, name: String, state: Arc<AppState>) {
         .to_string(),
     );
 
+    // Push local settings-window password hash (SHA-256 hex) so the agent matches server policy.
+    if let Ok(hash) = db::effective_agent_ui_password_hash(&state.db, agent_id).await {
+        let sync = serde_json::json!({
+            "type": "set_local_ui_password_hash",
+            "hash": hash,
+        })
+        .to_string();
+        if let Err(e) = ws.send(Message::Text(sync)).await {
+            warn!("Failed to push local UI password to {name}: {e}");
+            // Continue — agent can still work; user may reconnect.
+        }
+    }
+
     // ── Message loop ──────────────────────────────────────────────────────────
     //
     // `select!` concurrently waits on:
@@ -179,6 +192,29 @@ async fn run(mut ws: WebSocket, name: String, state: Arc<AppState>) {
     );
 
     info!("Agent disconnected: {name} ({agent_id})");
+}
+
+/// Push updated local UI password hash to a connected agent (after dashboard edit).
+pub async fn push_local_ui_password_hash_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
+    let Ok(hash) = db::effective_agent_ui_password_hash(&state.db, agent_id).await else {
+        return;
+    };
+    let payload = serde_json::json!({
+        "type": "set_local_ui_password_hash",
+        "hash": hash,
+    })
+    .to_string();
+    if let Some(tx) = state.agent_cmds.lock().unwrap().get(&agent_id) {
+        let _ = tx.send(payload);
+    }
+}
+
+/// After changing the global default, notify every connected agent.
+pub async fn push_local_ui_password_to_all_connected(state: &Arc<AppState>) {
+    let ids: Vec<uuid::Uuid> = state.agents.lock().unwrap().keys().copied().collect();
+    for id in ids {
+        push_local_ui_password_hash_to_agent(state, id).await;
+    }
 }
 
 // ─── Event dispatching ────────────────────────────────────────────────────────

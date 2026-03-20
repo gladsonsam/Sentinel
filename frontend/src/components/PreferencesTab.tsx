@@ -34,28 +34,37 @@ export function PreferencesTab({
   const [gKey, setGKey] = useState("");
   const [gWin, setGWin] = useState("");
   const [gUrl, setGUrl] = useState("");
-  const [gLoad, setGLoad] = useState(true);
+  const [prefsLoad, setPrefsLoad] = useState(true);
   const [gSave, setGSave] = useState(false);
   const [gErr, setGErr] = useState<string | null>(null);
   const [gOk, setGOk] = useState<string | null>(null);
 
+  const [localUiPwd, setLocalUiPwd] = useState("");
+  const [localUiPwd2, setLocalUiPwd2] = useState("");
+  const [localUiPasswordSet, setLocalUiPasswordSet] = useState(false);
+  const [localUiSave, setLocalUiSave] = useState(false);
+  const [localUiErr, setLocalUiErr] = useState<string | null>(null);
+  const [localUiOk, setLocalUiOk] = useState<string | null>(null);
+
   useEffect(() => {
     let cancelled = false;
-    setGLoad(true);
+    setPrefsLoad(true);
     setGErr(null);
-    api
-      .retentionGlobalGet()
-      .then((p) => {
+    Promise.all([api.retentionGlobalGet(), api.localUiPasswordGlobalGet()])
+      .then(([p, ui]) => {
         if (cancelled) return;
         setGKey(daysToField(p.keylog_days));
         setGWin(daysToField(p.window_days));
         setGUrl(daysToField(p.url_days));
+        setLocalUiPasswordSet(ui.password_set);
+        setLocalUiPwd("");
+        setLocalUiPwd2("");
       })
       .catch((e) => {
         if (!cancelled) setGErr(String(e));
       })
       .finally(() => {
-        if (!cancelled) setGLoad(false);
+        if (!cancelled) setPrefsLoad(false);
       });
     return () => {
       cancelled = true;
@@ -87,6 +96,54 @@ export function PreferencesTab({
       })
       .catch((e) => setGErr(String(e)))
       .finally(() => setGSave(false));
+  };
+
+  const saveLocalUiPassword = () => {
+    setLocalUiErr(null);
+    setLocalUiOk(null);
+    const a = localUiPwd.trim();
+    const b = localUiPwd2.trim();
+    if (a !== b) {
+      setLocalUiErr("Passwords do not match.");
+      return;
+    }
+    if (a.length > 0 && a.length < 4) {
+      setLocalUiErr("Use at least 4 characters, or leave both fields empty to remove the password.");
+      return;
+    }
+    setLocalUiSave(true);
+    api
+      .localUiPasswordGlobalPut({ password: a.length ? a : null })
+      .then((ui) => {
+        setLocalUiPasswordSet(ui.password_set);
+        setLocalUiPwd("");
+        setLocalUiPwd2("");
+        setLocalUiOk(
+          ui.password_set
+            ? "Saved. Connected agents will receive the new lock password."
+            : "Saved. Agents will use an open settings window (no password) unless overridden per PC.",
+        );
+      })
+      .catch((e) => setLocalUiErr(String(e)))
+      .finally(() => setLocalUiSave(false));
+  };
+
+  const clearLocalUiPassword = () => {
+    setLocalUiErr(null);
+    setLocalUiOk(null);
+    setLocalUiSave(true);
+    api
+      .localUiPasswordGlobalPut({ password: null })
+      .then((ui) => {
+        setLocalUiPasswordSet(ui.password_set);
+        setLocalUiPwd("");
+        setLocalUiPwd2("");
+        setLocalUiOk(
+          "Removed. Connected agents will unlock the local settings window without a password (unless overridden per PC).",
+        );
+      })
+      .catch((e) => setLocalUiErr(String(e)))
+      .finally(() => setLocalUiSave(false));
   };
 
   return (
@@ -121,6 +178,13 @@ export function PreferencesTab({
         </div>
       </div>
 
+      {prefsLoad ? (
+        <div className="flex items-center gap-2 text-sm text-muted py-6">
+          <Loader2 size={14} className="animate-spin" />
+          Loading preferences…
+        </div>
+      ) : (
+        <div className="flex flex-col gap-8">
       <div>
         <h2 className="text-sm font-semibold text-primary mb-1">
           Default data retention
@@ -135,12 +199,6 @@ export function PreferencesTab({
           <span className="text-primary font-medium">Overrides</span> tab.
         </p>
 
-        {gLoad ? (
-          <div className="flex items-center gap-2 text-sm text-muted py-2">
-            <Loader2 size={14} className="animate-spin" />
-            Loading…
-          </div>
-        ) : (
           <div className="flex flex-col gap-3 max-w-md">
             <label className="flex flex-col gap-1">
               <span className="text-sm font-medium text-primary">Keylogs</span>
@@ -196,8 +254,80 @@ export function PreferencesTab({
             {gErr && <p className="text-sm text-danger">{gErr}</p>}
             {gOk && <p className="text-sm text-ok">{gOk}</p>}
           </div>
-        )}
       </div>
+
+      <div>
+        <h2 className="text-sm font-semibold text-primary mb-1">
+          Agent local settings password
+        </h2>
+        <p className="text-sm text-muted mb-1">
+          Default lock for the <strong>Windows Sentinel agent’s local settings window</strong>{" "}
+          (not this dashboard). When an agent connects, the server sends this password hash so
+          operators can set or rotate the lock from here instead of on each machine.
+        </p>
+        <p className="text-xs text-muted mb-4">
+          Per-computer overrides are on each agent’s <span className="text-primary font-medium">Overrides</span>{" "}
+          tab.
+        </p>
+
+          <div className="flex flex-col gap-3 max-w-md">
+            <p className="text-sm text-primary">
+              Status:{" "}
+              <span className="font-medium">
+                {localUiPasswordSet ? "Password is set (agents use this lock)" : "No password (open)"}
+              </span>
+            </p>
+            <label className="flex flex-col gap-1">
+              <span className="text-sm font-medium text-primary">New password</span>
+              <span className="text-xs text-muted">
+                Leave both fields empty and click “Remove password” to open the local settings without a lock.
+              </span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                className={RETENTION_INPUT_CLASS}
+                value={localUiPwd}
+                onChange={(e) => setLocalUiPwd(e.target.value)}
+                disabled={localUiSave}
+                placeholder="••••••••"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-sm font-medium text-primary">Confirm</span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                className={RETENTION_INPUT_CLASS}
+                value={localUiPwd2}
+                onChange={(e) => setLocalUiPwd2(e.target.value)}
+                disabled={localUiSave}
+                placeholder="••••••••"
+              />
+            </label>
+            <div className="flex flex-wrap gap-2 pt-1">
+              <button
+                type="button"
+                onClick={saveLocalUiPassword}
+                disabled={localUiSave}
+                className="px-4 py-2 rounded-md text-sm font-medium border border-accent bg-accent/10 text-primary hover:bg-accent/20 disabled:opacity-50"
+              >
+                {localUiSave ? "Saving…" : "Save password"}
+              </button>
+              <button
+                type="button"
+                onClick={clearLocalUiPassword}
+                disabled={localUiSave}
+                className="px-4 py-2 rounded-md text-sm font-medium border border-border text-muted hover:text-primary hover:bg-border/30 disabled:opacity-50"
+              >
+                Remove password
+              </button>
+            </div>
+            {localUiErr && <p className="text-sm text-danger">{localUiErr}</p>}
+            {localUiOk && <p className="text-sm text-ok">{localUiOk}</p>}
+          </div>
+      </div>
+        </div>
+      )}
 
       <div>
         <h2 className="text-sm font-semibold text-primary mb-1">Agent details</h2>

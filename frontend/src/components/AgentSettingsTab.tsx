@@ -22,19 +22,32 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
   const [agWin, setAgWin] = useState("");
   const [agUrl, setAgUrl] = useState("");
   const [agGlobal, setAgGlobal] = useState<RetentionPolicy | null>(null);
+  const [localUiGlobalSet, setLocalUiGlobalSet] = useState(false);
+  const [localUiOverride, setLocalUiOverride] = useState<{
+    password_set: boolean;
+  } | null>(null);
+  const [localUiPwd, setLocalUiPwd] = useState("");
+  const [localUiPwd2, setLocalUiPwd2] = useState("");
   const [load, setLoad] = useState(true);
   const [save, setSave] = useState(false);
+  const [localUiSave, setLocalUiSave] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [ok, setOk] = useState<string | null>(null);
+  const [localUiErr, setLocalUiErr] = useState<string | null>(null);
+  const [localUiOk, setLocalUiOk] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     setLoad(true);
     setErr(null);
     setOk(null);
-    api
-      .retentionAgentGet(agentId)
-      .then(({ global, override }) => {
+    setLocalUiErr(null);
+    setLocalUiOk(null);
+    Promise.all([
+      api.retentionAgentGet(agentId),
+      api.localUiPasswordAgentGet(agentId),
+    ])
+      .then(([{ global, override }, localUi]) => {
         if (cancelled) return;
         setAgGlobal(global);
         const o = override ?? {
@@ -45,6 +58,10 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
         setAgKey(daysToField(o.keylog_days));
         setAgWin(daysToField(o.window_days));
         setAgUrl(daysToField(o.url_days));
+        setLocalUiGlobalSet(localUi.global.password_set);
+        setLocalUiOverride(localUi.override);
+        setLocalUiPwd("");
+        setLocalUiPwd2("");
       })
       .catch((e) => {
         if (!cancelled) setErr(String(e));
@@ -112,8 +129,56 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
       .finally(() => setSave(false));
   };
 
+  const saveLocalUiOverride = () => {
+    setLocalUiErr(null);
+    setLocalUiOk(null);
+    const a = localUiPwd.trim();
+    const b = localUiPwd2.trim();
+    if (a !== b) {
+      setLocalUiErr("Passwords do not match.");
+      return;
+    }
+    if (a.length > 0 && a.length < 4) {
+      setLocalUiErr("Use at least 4 characters, or leave both empty for an open window.");
+      return;
+    }
+    setLocalUiSave(true);
+    api
+      .localUiPasswordAgentPut(agentId, { password: a.length ? a : null })
+      .then((s) => {
+        setLocalUiGlobalSet(s.global.password_set);
+        setLocalUiOverride(s.override);
+        setLocalUiPwd("");
+        setLocalUiPwd2("");
+        setLocalUiOk(
+          s.override?.password_set
+            ? "Saved. This agent will receive the new lock password when connected."
+            : "Saved. This PC’s settings window will stay open (override), unless you set a password above.",
+        );
+      })
+      .catch((e) => setLocalUiErr(String(e)))
+      .finally(() => setLocalUiSave(false));
+  };
+
+  const clearLocalUiOverride = () => {
+    setLocalUiErr(null);
+    setLocalUiOk(null);
+    setLocalUiSave(true);
+    api
+      .localUiPasswordAgentDelete(agentId)
+      .then((s) => {
+        setLocalUiGlobalSet(s.global.password_set);
+        setLocalUiOverride(s.override);
+        setLocalUiPwd("");
+        setLocalUiPwd2("");
+        setLocalUiOk("This computer now follows the global default from Preferences.");
+      })
+      .catch((e) => setLocalUiErr(String(e)))
+      .finally(() => setLocalUiSave(false));
+  };
+
   return (
-    <div className="max-w-lg flex flex-col gap-5">
+    <div className="max-w-lg flex flex-col gap-8">
       <div>
         <h2 className="text-base font-semibold text-primary">Retention overrides</h2>
         <p className="text-sm text-muted mt-1">
@@ -226,6 +291,100 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
           {err && <p className="text-sm text-danger">{err}</p>}
           {ok && <p className="text-sm text-ok">{ok}</p>}
         </>
+      )}
+
+      {!load && (
+        <div className="border-t border-border pt-8 flex flex-col gap-4">
+          <div>
+            <h2 className="text-base font-semibold text-primary">
+              Local settings window password
+            </h2>
+            <p className="text-sm text-muted mt-1">
+              <span className="text-primary font-medium">{agentName}</span> — lock for the
+              Windows agent’s <strong>on-machine</strong> Sentinel settings window (not this
+              dashboard). Overrides the global default from Preferences for this PC only.
+            </p>
+          </div>
+
+          <div className="rounded-lg border border-border bg-bg/30 px-4 py-3 text-sm space-y-2">
+            <div className="text-[11px] uppercase tracking-wide text-muted font-semibold">
+              Global default (Preferences)
+            </div>
+            <p className="text-muted">
+              {localUiGlobalSet
+                ? "Password required for the local settings window."
+                : "No password — local settings open by default."}
+            </p>
+            <div className="text-[11px] uppercase tracking-wide text-muted font-semibold pt-2">
+              This computer
+            </div>
+            <p className="text-muted">
+              {localUiOverride === null
+                ? "Follows the global default above."
+                : localUiOverride.password_set
+                  ? "Override: password set for this PC."
+                  : "Override: no password (open) for this PC."}
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-4">
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium text-primary">New password (override)</span>
+              <span className="text-xs text-muted">
+                Set a password for this PC only, or leave both fields empty and save to force an
+                open window on this machine.
+              </span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                className={RETENTION_INPUT_CLASS}
+                value={localUiPwd}
+                onChange={(e) => setLocalUiPwd(e.target.value)}
+                disabled={localUiSave}
+                placeholder="••••••••"
+              />
+            </label>
+            <label className="flex flex-col gap-1.5">
+              <span className="text-sm font-medium text-primary">Confirm</span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                className={RETENTION_INPUT_CLASS}
+                value={localUiPwd2}
+                onChange={(e) => setLocalUiPwd2(e.target.value)}
+                disabled={localUiSave}
+                placeholder="••••••••"
+              />
+            </label>
+          </div>
+
+          <div className="flex flex-wrap gap-2 pt-1">
+            <button
+              type="button"
+              onClick={saveLocalUiOverride}
+              disabled={localUiSave}
+              className="px-4 py-2 rounded-md text-sm font-medium border border-accent bg-accent/10 text-primary hover:bg-accent/20 disabled:opacity-50"
+            >
+              {localUiSave ? "Saving…" : "Save override"}
+            </button>
+            <button
+              type="button"
+              onClick={clearLocalUiOverride}
+              disabled={localUiSave || localUiOverride === null}
+              className="px-4 py-2 rounded-md text-sm font-medium border border-border text-muted hover:text-primary hover:bg-border/30 disabled:opacity-50"
+              title={
+                localUiOverride === null
+                  ? "No per-PC override is set"
+                  : "Use the global default from Preferences"
+              }
+            >
+              Use global default only
+            </button>
+          </div>
+
+          {localUiErr && <p className="text-sm text-danger">{localUiErr}</p>}
+          {localUiOk && <p className="text-sm text-ok">{localUiOk}</p>}
+        </div>
       )}
     </div>
   );

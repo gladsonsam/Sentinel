@@ -100,6 +100,17 @@ export interface RetentionPolicy {
   url_days: number | null;
 }
 
+/** Windows agent “Sentinel settings” window lock; hash is server-side only. */
+export interface LocalUiPasswordGlobalState {
+  password_set: boolean;
+}
+
+export interface LocalUiPasswordAgentState {
+  global: { password_set: boolean };
+  /** `null` = this agent follows the global default (no per-PC row). */
+  override: { password_set: boolean } | null;
+}
+
 // ── UI ────────────────────────────────────────────────────────────────────────
 
 export type TabKey =
