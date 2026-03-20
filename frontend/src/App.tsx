@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, type ReactNode } from "react";
 import {
   Monitor,
   Keyboard,
@@ -26,6 +26,8 @@ import { ActivityTab } from "./components/ActivityTab";
 import { PreferencesTab } from "./components/PreferencesTab";
 import { AgentSettingsTab } from "./components/AgentSettingsTab";
 import { LoginPage } from "./components/LoginPage";
+import { Modal } from "./components/ui/Modal";
+import { ToastProvider, useToast } from "./components/ui/ToastProvider";
 import { cn } from "./lib/utils";
 import { api } from "./lib/api";
 import {
@@ -39,12 +41,12 @@ import type { Agent, AgentInfo, AgentLiveStatus, TabKey, WsEvent } from "./lib/t
 // ── Tab definitions ───────────────────────────────────────────────────────────
 
 const TABS: { key: TabKey; label: string; Icon: typeof Monitor }[] = [
+  { key: "activity", label: "Activity", Icon: Activity },
   { key: "specs", label: "Specs", Icon: Info },
   { key: "screen", label: "Screen", Icon: Monitor },
   { key: "keys", label: "Keys", Icon: Keyboard },
   { key: "windows", label: "Windows", Icon: Layout },
   { key: "urls", label: "URLs", Icon: Globe },
-  { key: "activity", label: "Activity", Icon: Activity },
   { key: "settings", label: "Overrides", Icon: SlidersHorizontal },
 ];
 
@@ -65,7 +67,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     "overview",
   );
   const settingsReturnRef = useRef<"overview" | "detail">("overview");
-  const [activeTab, setActiveTab] = useState<TabKey>("specs");
+  const [activeTab, setActiveTab] = useState<TabKey>("activity");
   const [wsStatus, setWsStatus] = useState<WsStatus>("connecting");
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -97,6 +99,8 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     useState(() => loadActivityCorrectedKeysDefault());
 
   const [clearingHistory, setClearingHistory] = useState(false);
+  const [clearHistoryOpen, setClearHistoryOpen] = useState(false);
+  const { pushToast } = useToast();
 
   const [refreshKey, setRefreshKey] = useState(0);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -239,7 +243,8 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   const selectAgent = useCallback((id: string) => {
     setSelectedId(id);
     setView("detail");
-    setActiveTab("specs");
+    // Activity is the primary telemetry highlight in the UX.
+    setActiveTab("activity");
     setRefreshKey(0);
     setSidebarOpen(false);
   }, []);
@@ -269,22 +274,32 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     onLogout();
   }, [onLogout]);
 
-  const handleClearHistory = useCallback(async () => {
+  const openClearHistoryDialog = useCallback(() => {
+    setClearHistoryOpen(true);
+  }, []);
+
+  const confirmClearHistory = useCallback(async () => {
     if (!selectedId || clearingHistory) return;
-    const ok = window.confirm(
-      `Clear stored history for this agent?\n\nThis deletes windows, keystrokes, URLs, and AFK/active history for this client.`,
-    );
-    if (!ok) return;
+    setClearHistoryOpen(false);
     setClearingHistory(true);
     try {
-      await api.clearAgentHistory(selectedId);
+      const res = await api.clearAgentHistory(selectedId);
       forceRefresh();
+      pushToast({
+        variant: "success",
+        title: "History cleared",
+        message: `Cleared ${res.cleared_rows} rows for this agent.`,
+      });
     } catch (e) {
-      window.alert(e instanceof Error ? e.message : String(e));
+      pushToast({
+        variant: "error",
+        title: "Failed to clear history",
+        message: e instanceof Error ? e.message : String(e),
+      });
     } finally {
       setClearingHistory(false);
     }
-  }, [selectedId, clearingHistory, forceRefresh]);
+  }, [selectedId, clearingHistory, forceRefresh, pushToast]);
 
   const selectedAgent = selectedId ? agents[selectedId] : null;
   const selectedAgentInfo = selectedId ? agentInfo[selectedId] : null;
@@ -471,7 +486,7 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
                   >
                     <button
                       type="button"
-                      onClick={handleClearHistory}
+                      onClick={openClearHistoryDialog}
                       disabled={clearingHistory}
                       className={cn(
                         "flex items-center gap-1.5 px-2 sm:px-3 py-2 rounded text-xs font-medium",
@@ -547,6 +562,44 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
           )}
         </main>
       </div>
+
+      <Modal
+        open={clearHistoryOpen}
+        title="Clear stored history?"
+        onClose={() => setClearHistoryOpen(false)}
+        actions={
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setClearHistoryOpen(false)}
+              className="px-4 py-2 rounded-md text-sm font-medium border border-border text-muted hover:text-primary hover:bg-border/30 transition-colors"
+              disabled={clearingHistory}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirmClearHistory}
+              disabled={clearingHistory}
+              className="px-4 py-2 rounded-md text-sm font-medium border border-accent bg-accent/10 text-primary hover:bg-accent/20 disabled:opacity-50 transition-colors"
+            >
+              {clearingHistory ? (
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 size={14} className="animate-spin" />
+                  Clearing…
+                </span>
+              ) : (
+                "Clear history"
+              )}
+            </button>
+          </div>
+        }
+      >
+        <p className="text-sm text-muted">
+          This deletes stored windows, keystrokes, URLs, and AFK/active history for
+          this client.
+        </p>
+      </Modal>
     </div>
   );
 }
@@ -702,17 +755,18 @@ export default function App() {
       .catch(() => setAuthState("login"));
   }, []);
 
+  let content: ReactNode = null;
   if (authState === "loading") {
-    return (
+    content = (
       <div className="min-h-screen bg-bg flex items-center justify-center">
         <Loader2 size={28} className="animate-spin text-muted" />
       </div>
     );
+  } else if (authState === "login") {
+    content = <LoginPage onSuccess={() => setAuthState("ok")} />;
+  } else {
+    content = <Dashboard onLogout={() => setAuthState("login")} />;
   }
 
-  if (authState === "login") {
-    return <LoginPage onSuccess={() => setAuthState("ok")} />;
-  }
-
-  return <Dashboard onLogout={() => setAuthState("login")} />;
+  return <ToastProvider>{content}</ToastProvider>;
 }

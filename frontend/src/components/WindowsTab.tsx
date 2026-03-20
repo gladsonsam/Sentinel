@@ -42,6 +42,7 @@ export function WindowsTab({ agentId, refreshKey }: Props) {
       searchPlaceholder="Search by title or app…"
       isLoading={loading}
       emptyMessage="No window focus events recorded yet"
+      emptySubtitle="When an agent focuses a window, focus history is recorded and shows up here (and in Activity)."
     />
   );
 }

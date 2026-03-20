@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ThemePreference } from "../lib/preferences";
 import {
   saveNetworkIncludeIpv6,
@@ -11,8 +11,17 @@ import { Loader2 } from "lucide-react";
 import {
   daysToField,
   fieldToDays,
+  fmtRetentionBrief,
   RETENTION_INPUT_CLASS,
 } from "../lib/retentionForm";
+
+function parseRetentionField(s: string): { value: number | null; error: string | null } {
+  try {
+    return { value: fieldToDays(s), error: null };
+  } catch (e) {
+    return { value: null, error: e instanceof Error ? e.message : String(e) };
+  }
+}
 
 interface Props {
   themePref: ThemePreference;
@@ -45,6 +54,11 @@ export function PreferencesTab({
   const [localUiSave, setLocalUiSave] = useState(false);
   const [localUiErr, setLocalUiErr] = useState<string | null>(null);
   const [localUiOk, setLocalUiOk] = useState<string | null>(null);
+
+  const parsedKey = useMemo(() => parseRetentionField(gKey), [gKey]);
+  const parsedWin = useMemo(() => parseRetentionField(gWin), [gWin]);
+  const parsedUrl = useMemo(() => parseRetentionField(gUrl), [gUrl]);
+  const hasRetentionErrors = !!parsedKey.error || !!parsedWin.error || !!parsedUrl.error;
 
   useEffect(() => {
     let cancelled = false;
@@ -203,14 +217,23 @@ export function PreferencesTab({
             <label className="flex flex-col gap-1">
               <span className="text-sm font-medium text-primary">Keylogs</span>
               <input
-                type="text"
-                inputMode="numeric"
+                type="number"
+                min={1}
+                max={36500}
+                step={1}
                 className={RETENTION_INPUT_CLASS}
                 value={gKey}
                 onChange={(e) => setGKey(e.target.value)}
                 placeholder="Leave blank to keep until removed"
                 disabled={gSave}
               />
+              {parsedKey.error ? (
+                <span className="text-xs text-danger">{parsedKey.error}</span>
+              ) : (
+                <span className="text-xs text-muted">
+                  Effective: {fmtRetentionBrief(parsedKey.value)}
+                </span>
+              )}
             </label>
             <label className="flex flex-col gap-1">
               <span className="text-sm font-medium text-primary">
@@ -220,32 +243,50 @@ export function PreferencesTab({
                 Includes focus changes and AFK / active events
               </span>
               <input
-                type="text"
-                inputMode="numeric"
+                type="number"
+                min={1}
+                max={36500}
+                step={1}
                 className={RETENTION_INPUT_CLASS}
                 value={gWin}
                 onChange={(e) => setGWin(e.target.value)}
                 placeholder="Leave blank to keep until removed"
                 disabled={gSave}
               />
+              {parsedWin.error ? (
+                <span className="text-xs text-danger">{parsedWin.error}</span>
+              ) : (
+                <span className="text-xs text-muted">
+                  Effective: {fmtRetentionBrief(parsedWin.value)}
+                </span>
+              )}
             </label>
             <label className="flex flex-col gap-1">
               <span className="text-sm font-medium text-primary">URLs</span>
               <input
-                type="text"
-                inputMode="numeric"
+                type="number"
+                min={1}
+                max={36500}
+                step={1}
                 className={RETENTION_INPUT_CLASS}
                 value={gUrl}
                 onChange={(e) => setGUrl(e.target.value)}
                 placeholder="Leave blank to keep until removed"
                 disabled={gSave}
               />
+              {parsedUrl.error ? (
+                <span className="text-xs text-danger">{parsedUrl.error}</span>
+              ) : (
+                <span className="text-xs text-muted">
+                  Effective: {fmtRetentionBrief(parsedUrl.value)}
+                </span>
+              )}
             </label>
             <div className="pt-1">
               <button
                 type="button"
                 onClick={saveGlobal}
-                disabled={gSave}
+                disabled={gSave || hasRetentionErrors}
                 className="px-4 py-2 rounded-md text-sm font-medium border border-accent bg-accent/10 text-primary hover:bg-accent/20 disabled:opacity-50"
               >
                 {gSave ? "Saving…" : "Save defaults"}

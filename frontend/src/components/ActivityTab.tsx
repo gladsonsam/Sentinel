@@ -87,6 +87,15 @@ function fmtTime(ts: string | number): string {
   return isNaN(d.getTime()) ? String(ts) : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+function fmtGap(ms: number): string {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `+${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `+${m}m`;
+  const h = Math.floor(m / 60);
+  return `+${h}h`;
+}
+
 /** Build combined sessions from raw rows. */
 function buildSessions(
   windows: WindowEvent[],
@@ -192,6 +201,22 @@ function SessionCard({
 }) {
   const { window: win, durationSecs, urls, keys, windows } = session;
   const hasDetail = urls.length > 0 || keys.length > 0;
+  const tone =
+    urls.length > 0 && keys.length > 0
+      ? "mixed"
+      : urls.length > 0
+        ? "urls"
+        : keys.length > 0
+          ? "keys"
+          : "none";
+  const railClass =
+    tone === "urls"
+      ? "border-l-accent/60"
+      : tone === "keys"
+        ? "border-l-ok/60"
+        : tone === "mixed"
+          ? "border-l-accent/60"
+          : "border-l-border";
 
   type TimelineItem =
     | { kind: "window"; ts: string; tsMs: number; title: string }
@@ -245,12 +270,18 @@ function SessionCard({
     : [];
 
   return (
-    <div className="bg-surface border border-border rounded-lg overflow-hidden">
+    <div
+      className={cn(
+        "bg-surface border border-border rounded-lg overflow-hidden",
+        "border-l-4",
+        railClass,
+      )}
+    >
       {/* ── Header row ── */}
       <div
         className={cn(
           "w-full flex items-start gap-3 px-4 py-3 text-left transition-colors",
-          hasDetail && "hover:bg-white/[.03] cursor-pointer",
+          hasDetail && (tone === "urls" ? "hover:bg-accent/5" : tone === "keys" ? "hover:bg-ok/5" : "hover:bg-white/[.03]"),
           !hasDetail && "cursor-default",
         )}
         onClick={() => hasDetail && onToggle()}
@@ -274,7 +305,13 @@ function SessionCard({
 
         {/* App icon proxy */}
         <span className="flex-shrink-0 mt-0.5">
-          <Layout size={14} className="text-accent" />
+          <Layout
+            size={14}
+            className={cn(
+              tone === "keys" ? "text-ok" : "text-accent",
+              tone === "none" && "text-muted",
+            )}
+          />
         </span>
 
         {/* Window / app info */}
@@ -315,7 +352,12 @@ function SessionCard({
 
       {/* ── Expanded detail ── */}
       {expanded && (
-        <div className="border-t border-border touch-pan-y">
+        <div
+          className={cn(
+            "border-t border-border touch-pan-y",
+            tone === "urls" ? "bg-accent/4" : tone === "keys" ? "bg-ok/4" : tone === "mixed" ? "bg-accent/4" : "",
+          )}
+        >
           <div className="px-4 py-3">
             <p className="text-[10px] uppercase tracking-widest text-muted font-semibold mb-2">
               Timeline
@@ -325,11 +367,26 @@ function SessionCard({
               {(() => {
                 let lastTitle = "";
                 return timeline.map((it, idx) => {
+                  const prev = timeline[idx - 1];
+                  const SEP_MS = 15 * 60 * 1000; // 15 minutes
+                  const gapMs =
+                    prev && typeof prev.tsMs === "number"
+                      ? it.tsMs - prev.tsMs
+                      : 0;
+                  const showGapSep = prev && gapMs >= SEP_MS;
                   const showTitle = it.title !== lastTitle;
                   if (showTitle) lastTitle = it.title;
 
                   return (
                     <div key={idx} className="flex flex-col gap-1">
+                      {showGapSep && (
+                        <div className="flex items-center gap-2 my-1">
+                          <span className="text-[10px] uppercase tracking-widest text-muted font-semibold">
+                            Gap {fmtGap(gapMs)}
+                          </span>
+                          <span className="flex-1 h-px bg-border/60" />
+                        </div>
+                      )}
                       {showTitle && (
                         <div className="text-[11px] text-muted font-medium truncate">
                           {it.title}
@@ -343,12 +400,14 @@ function SessionCard({
 
                         {it.kind === "window" ? (
                           <span className="flex items-center gap-1 text-[12px] text-primary/70">
+                            <span className="w-1.5 h-1.5 rounded-full bg-border mt-0.5 flex-shrink-0" />
                             <Layout size={12} className="text-muted" />
                             Focus
                           </span>
                         ) : it.kind === "url" ? (
                           <div className="flex items-start gap-2 min-w-0">
                             <span className="flex items-center gap-1 text-[12px] text-accent flex-shrink-0">
+                              <span className="w-1.5 h-1.5 rounded-full bg-accent/70 mt-0.5 flex-shrink-0" />
                               <Globe size={12} />
                               URL
                             </span>
@@ -370,10 +429,11 @@ function SessionCard({
                         ) : (
                           <div className="flex items-start gap-2 min-w-0">
                             <span className="flex items-center gap-1 text-[12px] text-ok flex-shrink-0">
+                              <span className="w-1.5 h-1.5 rounded-full bg-ok/70 mt-0.5 flex-shrink-0" />
                               <Keyboard size={12} />
                               Keys
                             </span>
-                            <code className="text-[12px] bg-bg/70 px-2 py-0.5 rounded text-primary/80 break-all leading-relaxed font-mono">
+                            <code className="text-[12px] bg-ok/10 border border-ok/15 px-2 py-0.5 rounded text-primary/85 break-all leading-relaxed font-mono">
                               {it.keys.text?.trim()
                                 ? (correctedKeys
                                     ? applyKeyCorrections(it.keys.text)
@@ -415,11 +475,15 @@ export function ActivityTab({
   const [search, setSearch] = useState("");
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
   const [correctedKeys, setCorrectedKeys] = useState(defaultCorrectedKeys);
+  const [onlyUrls, setOnlyUrls] = useState(false);
+  const [onlyKeys, setOnlyKeys] = useState(false);
 
   // Reset UI state only when switching agents (not on live refresh).
   useEffect(() => {
     setSearch("");
     setExpandedIds({});
+    setOnlyUrls(false);
+    setOnlyKeys(false);
   }, [agentId]);
 
   useEffect(() => {
@@ -476,7 +540,7 @@ export function ActivityTab({
   // Show newest sessions first
   const sorted = [...sessions].reverse();
   const q = search.trim().toLowerCase();
-  const filtered = !q
+  let filtered = !q
     ? sorted
     : sorted.filter((s) => {
         const hay = [
@@ -494,14 +558,102 @@ export function ActivityTab({
         return hay.includes(q);
       });
 
+  if (onlyUrls) filtered = filtered.filter((s) => s.urls.length > 0);
+  if (onlyKeys) filtered = filtered.filter((s) => s.keys.length > 0);
+
   const toggleExpanded = (id: string) => {
     setExpandedIds((prev) => ({ ...prev, [id]: !prev[id] }));
   };
 
+  const collapseAll = () => setExpandedIds({});
+  const expandLatest = (n: number) => {
+    const next: Record<string, boolean> = {};
+    for (const s of filtered.slice(0, n)) {
+      next[sessionId(s)] = true;
+    }
+    setExpandedIds(next);
+  };
+
   const correctedLabel = correctedKeys ? "Corrected" : "Raw";
+  const totals = {
+    urls: filtered.reduce((acc, s) => acc + s.urls.length, 0),
+    keys: filtered.reduce((acc, s) => acc + s.keys.length, 0),
+  };
+
+  const topApps = (() => {
+    const m = new Map<string, number>();
+    for (const s of filtered) {
+      const app = s.window.app?.trim() || "Unknown app";
+      m.set(app, (m.get(app) ?? 0) + 1);
+    }
+    return Array.from(m.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 3);
+  })();
 
   return (
     <div className="flex flex-col gap-2 touch-pan-y">
+      {/* Overview header (scannability first) */}
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="min-w-[220px]">
+          <h2 className="text-base font-semibold text-primary">Activity</h2>
+          <p className="text-xs text-muted mt-0.5">
+            {filtered.length} sessions · {totals.urls} URLs · {totals.keys} key buffers
+          </p>
+          {topApps.length > 0 && (
+            <div className="flex items-center gap-2 flex-wrap mt-2">
+              <span className="text-[11px] uppercase tracking-widest text-muted font-semibold">
+                Top apps
+              </span>
+              {topApps.map(([app, count]) => (
+                <span
+                  key={app}
+                  className="text-[11px] px-2 py-0.5 rounded-full bg-accent/10 text-accent"
+                >
+                  {app} · {count}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <button
+            type="button"
+            onClick={collapseAll}
+            className="px-3 py-1.5 rounded-md text-xs font-medium border border-border text-muted hover:text-primary hover:bg-border/30 transition-colors"
+          >
+            Collapse all
+          </button>
+          <button
+            type="button"
+            onClick={() => expandLatest(5)}
+            className="px-3 py-1.5 rounded-md text-xs font-medium border border-accent bg-accent/10 text-accent hover:bg-accent/20 transition-colors"
+          >
+            Expand latest
+          </button>
+
+          <label className="flex items-center gap-2 text-xs text-muted cursor-pointer">
+            <input
+              type="checkbox"
+              className="rounded border-border"
+              checked={onlyUrls}
+              onChange={(e) => setOnlyUrls(e.target.checked)}
+            />
+            Only URLs
+          </label>
+          <label className="flex items-center gap-2 text-xs text-muted cursor-pointer">
+            <input
+              type="checkbox"
+              className="rounded border-border"
+              checked={onlyKeys}
+              onChange={(e) => setOnlyKeys(e.target.checked)}
+            />
+            Only keys
+          </label>
+        </div>
+      </div>
+
       {/* Toolbar */}
       <div className="flex items-center gap-2 flex-wrap">
         <div className="relative flex-1 max-w-sm min-w-[220px]">
@@ -535,7 +687,7 @@ export function ActivityTab({
       </div>
 
       <p className="text-[11px] text-muted">
-        {filtered.length} of {sorted.length} window sessions · click to expand URLs &amp; keystrokes
+        Tip: use filters to narrow sessions · click a session to expand its URL/keystrokes
       </p>
 
       {filtered.length === 0 ? (
@@ -546,10 +698,24 @@ export function ActivityTab({
               <>
                 No matches for <span className="text-primary">"{search.trim()}"</span>
               </>
+            ) : onlyUrls || onlyKeys ? (
+              "No sessions match your filters."
             ) : (
               "No activity recorded yet"
             )}
           </p>
+          {!q && (onlyUrls || onlyKeys) && (
+            <button
+              type="button"
+              onClick={() => {
+                setOnlyUrls(false);
+                setOnlyKeys(false);
+              }}
+              className="mt-3 px-4 py-2 rounded-md text-sm font-medium border border-border text-muted hover:text-primary hover:bg-border/30 transition-colors"
+            >
+              Clear filters
+            </button>
+          )}
         </div>
       ) : (
         filtered.map((s) => {

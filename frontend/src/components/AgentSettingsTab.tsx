@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Loader2 } from "lucide-react";
 import type { RetentionPolicy } from "../lib/types";
 import { api } from "../lib/api";
@@ -8,6 +8,14 @@ import {
   fmtRetentionBrief,
   RETENTION_INPUT_CLASS,
 } from "../lib/retentionForm";
+
+function parseRetentionField(s: string): { value: number | null; error: string | null } {
+  try {
+    return { value: fieldToDays(s), error: null };
+  } catch (e) {
+    return { value: null, error: e instanceof Error ? e.message : String(e) };
+  }
+}
 
 interface Props {
   agentId: string;
@@ -35,6 +43,32 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
   const [ok, setOk] = useState<string | null>(null);
   const [localUiErr, setLocalUiErr] = useState<string | null>(null);
   const [localUiOk, setLocalUiOk] = useState<string | null>(null);
+
+  const parsedKey = useMemo(() => parseRetentionField(agKey), [agKey]);
+  const parsedWin = useMemo(() => parseRetentionField(agWin), [agWin]);
+  const parsedUrl = useMemo(() => parseRetentionField(agUrl), [agUrl]);
+  const hasRetentionErrors =
+    !!parsedKey.error || !!parsedWin.error || !!parsedUrl.error;
+
+  const overrideDefaultDays = 30;
+  const keyOverrideEnabled = agKey.trim().length > 0;
+  const winOverrideEnabled = agWin.trim().length > 0;
+  const urlOverrideEnabled = agUrl.trim().length > 0;
+
+  const enableKeyOverride = () => {
+    if (keyOverrideEnabled) return;
+    setAgKey(String(agGlobal?.keylog_days ?? overrideDefaultDays));
+  };
+
+  const enableWinOverride = () => {
+    if (winOverrideEnabled) return;
+    setAgWin(String(agGlobal?.window_days ?? overrideDefaultDays));
+  };
+
+  const enableUrlOverride = () => {
+    if (urlOverrideEnabled) return;
+    setAgUrl(String(agGlobal?.url_days ?? overrideDefaultDays));
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -178,7 +212,7 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
   };
 
   return (
-    <div className="max-w-lg flex flex-col gap-8">
+    <div className="w-full max-w-5xl flex flex-col gap-8">
       <div>
         <h2 className="text-base font-semibold text-primary">Retention overrides</h2>
         <p className="text-sm text-muted mt-1">
@@ -223,70 +257,287 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
             </div>
           )}
 
-          <div className="flex flex-col gap-4">
-            <label className="flex flex-col gap-1.5">
-              <span className="text-sm font-medium text-primary">Keylogs</span>
-              <span className="text-xs text-muted">Days to keep, or blank to match default</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                className={RETENTION_INPUT_CLASS}
-                value={agKey}
-                onChange={(e) => setAgKey(e.target.value)}
-                disabled={save}
-                placeholder="Same as default"
-              />
-            </label>
+          {/* Effective policy preview: keeps the monochrome UX readable */}
+          {agGlobal && (
+            <div className="rounded-lg border border-border bg-surface px-4 py-3 text-sm">
+              <div className="text-[11px] uppercase tracking-wide text-muted font-semibold mb-2">
+                Effective policy (preview)
+              </div>
+              <ul className="text-muted space-y-1 text-sm">
+                <li>
+                  Keylogs:{" "}
+                  <span className="text-primary">
+                    {agKey.trim()
+                      ? parsedKey.error
+                        ? "Invalid input"
+                        : fmtRetentionBrief(parsedKey.value)
+                      : fmtRetentionBrief(agGlobal.keylog_days)}
+                  </span>
+                </li>
+                <li>
+                  Windows &amp; activity:{" "}
+                  <span className="text-primary">
+                    {agWin.trim()
+                      ? parsedWin.error
+                        ? "Invalid input"
+                        : fmtRetentionBrief(parsedWin.value)
+                      : fmtRetentionBrief(agGlobal.window_days)}
+                  </span>
+                </li>
+                <li>
+                  URLs:{" "}
+                  <span className="text-primary">
+                    {agUrl.trim()
+                      ? parsedUrl.error
+                        ? "Invalid input"
+                        : fmtRetentionBrief(parsedUrl.value)
+                      : fmtRetentionBrief(agGlobal.url_days)}
+                  </span>
+                </li>
+              </ul>
+            </div>
+          )}
 
-            <label className="flex flex-col gap-1.5">
-              <span className="text-sm font-medium text-primary">Windows &amp; activity</span>
-              <span className="text-xs text-muted">
-                How long to keep focus history and AFK/active events for this PC
-              </span>
-              <input
-                type="text"
-                inputMode="numeric"
-                className={RETENTION_INPUT_CLASS}
-                value={agWin}
-                onChange={(e) => setAgWin(e.target.value)}
-                disabled={save}
-                placeholder="Same as default"
-              />
-            </label>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div className="flex flex-col gap-4">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium text-primary">Keylogs</span>
+                <span className="text-xs text-muted">
+                  Auto-delete days (blank = inherit defaults)
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAgKey("")}
+                    className={
+                      !keyOverrideEnabled
+                        ? "px-3 py-1.5 rounded-md text-xs font-medium border border-accent bg-accent/10 text-primary"
+                        : "px-3 py-1.5 rounded-md text-xs font-medium border border-border bg-surface text-muted hover:text-primary hover:bg-border/30 transition-colors"
+                    }
+                  >
+                    Inherit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={enableKeyOverride}
+                    className={
+                      keyOverrideEnabled
+                        ? "px-3 py-1.5 rounded-md text-xs font-medium border border-accent bg-accent/10 text-primary"
+                        : "px-3 py-1.5 rounded-md text-xs font-medium border border-border bg-surface text-muted hover:text-primary hover:bg-border/30 transition-colors"
+                    }
+                  >
+                    Override
+                  </button>
+                </div>
 
-            <label className="flex flex-col gap-1.5">
-              <span className="text-sm font-medium text-primary">URLs</span>
-              <span className="text-xs text-muted">Days to keep, or blank to match default</span>
-              <input
-                type="text"
-                inputMode="numeric"
-                className={RETENTION_INPUT_CLASS}
-                value={agUrl}
-                onChange={(e) => setAgUrl(e.target.value)}
-                disabled={save}
-                placeholder="Same as default"
-              />
-            </label>
+                {keyOverrideEnabled && (
+                  <div className="flex flex-wrap gap-2">
+                    {[7, 30, 90, 365].map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => setAgKey(String(d))}
+                        className="px-2 py-1 rounded-md text-xs font-medium border border-accent bg-accent/10 text-primary hover:bg-accent/20 transition-colors"
+                      >
+                        {d}d
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <input
+                  type="number"
+                  min={1}
+                  max={36500}
+                  step={1}
+                  className={RETENTION_INPUT_CLASS}
+                  value={agKey}
+                  onChange={(e) => setAgKey(e.target.value)}
+                  disabled={save || !keyOverrideEnabled}
+                  placeholder="Inherit"
+                />
+                {parsedKey.error ? (
+                  <span className="text-xs text-danger">{parsedKey.error}</span>
+                ) : agKey.trim() ? (
+                  <span className="text-xs text-muted">
+                    Override: {fmtRetentionBrief(parsedKey.value)}
+                  </span>
+                ) : (
+                  <span className="text-xs text-muted">
+                    Inherit: {fmtRetentionBrief(agGlobal?.keylog_days)}
+                  </span>
+                )}
+              </label>
+
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium text-primary">
+                  Windows &amp; activity
+                </span>
+                <span className="text-xs text-muted">
+                  How long to keep focus history and AFK/active events for this PC
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAgWin("")}
+                    className={
+                      !winOverrideEnabled
+                        ? "px-3 py-1.5 rounded-md text-xs font-medium border border-accent bg-accent/10 text-primary"
+                        : "px-3 py-1.5 rounded-md text-xs font-medium border border-border bg-surface text-muted hover:text-primary hover:bg-border/30 transition-colors"
+                    }
+                  >
+                    Inherit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={enableWinOverride}
+                    className={
+                      winOverrideEnabled
+                        ? "px-3 py-1.5 rounded-md text-xs font-medium border border-accent bg-accent/10 text-primary"
+                        : "px-3 py-1.5 rounded-md text-xs font-medium border border-border bg-surface text-muted hover:text-primary hover:bg-border/30 transition-colors"
+                    }
+                  >
+                    Override
+                  </button>
+                </div>
+
+                {winOverrideEnabled && (
+                  <div className="flex flex-wrap gap-2">
+                    {[7, 30, 90, 365].map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => setAgWin(String(d))}
+                        className="px-2 py-1 rounded-md text-xs font-medium border border-accent bg-accent/10 text-primary hover:bg-accent/20 transition-colors"
+                      >
+                        {d}d
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <input
+                  type="number"
+                  min={1}
+                  max={36500}
+                  step={1}
+                  className={RETENTION_INPUT_CLASS}
+                  value={agWin}
+                  onChange={(e) => setAgWin(e.target.value)}
+                  disabled={save || !winOverrideEnabled}
+                  placeholder="Inherit"
+                />
+                {parsedWin.error ? (
+                  <span className="text-xs text-danger">{parsedWin.error}</span>
+                ) : agWin.trim() ? (
+                  <span className="text-xs text-muted">
+                    Override: {fmtRetentionBrief(parsedWin.value)}
+                  </span>
+                ) : (
+                  <span className="text-xs text-muted">
+                    Inherit: {fmtRetentionBrief(agGlobal?.window_days)}
+                  </span>
+                )}
+              </label>
+            </div>
+
+            <div className="flex flex-col gap-4">
+              <label className="flex flex-col gap-1.5">
+                <span className="text-sm font-medium text-primary">URLs</span>
+                <span className="text-xs text-muted">
+                  Auto-delete days (blank = inherit defaults)
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setAgUrl("")}
+                    className={
+                      !urlOverrideEnabled
+                        ? "px-3 py-1.5 rounded-md text-xs font-medium border border-accent bg-accent/10 text-primary"
+                        : "px-3 py-1.5 rounded-md text-xs font-medium border border-border bg-surface text-muted hover:text-primary hover:bg-border/30 transition-colors"
+                    }
+                  >
+                    Inherit
+                  </button>
+                  <button
+                    type="button"
+                    onClick={enableUrlOverride}
+                    className={
+                      urlOverrideEnabled
+                        ? "px-3 py-1.5 rounded-md text-xs font-medium border border-accent bg-accent/10 text-primary"
+                        : "px-3 py-1.5 rounded-md text-xs font-medium border border-border bg-surface text-muted hover:text-primary hover:bg-border/30 transition-colors"
+                    }
+                  >
+                    Override
+                  </button>
+                </div>
+
+                {urlOverrideEnabled && (
+                  <div className="flex flex-wrap gap-2">
+                    {[7, 30, 90, 365].map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => setAgUrl(String(d))}
+                        className="px-2 py-1 rounded-md text-xs font-medium border border-accent bg-accent/10 text-primary hover:bg-accent/20 transition-colors"
+                      >
+                        {d}d
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <input
+                  type="number"
+                  min={1}
+                  max={36500}
+                  step={1}
+                  className={RETENTION_INPUT_CLASS}
+                  value={agUrl}
+                  onChange={(e) => setAgUrl(e.target.value)}
+                  disabled={save || !urlOverrideEnabled}
+                  placeholder="Inherit"
+                />
+                {parsedUrl.error ? (
+                  <span className="text-xs text-danger">{parsedUrl.error}</span>
+                ) : agUrl.trim() ? (
+                  <span className="text-xs text-muted">
+                    Override: {fmtRetentionBrief(parsedUrl.value)}
+                  </span>
+                ) : (
+                  <span className="text-xs text-muted">
+                    Inherit: {fmtRetentionBrief(agGlobal?.url_days)}
+                  </span>
+                )}
+              </label>
+
+              <div className="rounded-lg border border-border bg-bg/30 px-4 py-3 text-sm">
+                <div className="text-[11px] uppercase tracking-wide text-muted font-semibold mb-2">
+                  Apply
+                </div>
+                <p className="text-xs text-muted mb-3">
+                  Leaving a field blank means “inherit defaults” from Preferences.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={saveOverrides}
+                    disabled={save || hasRetentionErrors}
+                    className="px-4 py-2 rounded-md text-sm font-medium border border-accent bg-accent/10 text-primary hover:bg-accent/20 disabled:opacity-50"
+                  >
+                    {save ? "Saving…" : "Save"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearOverrides}
+                    disabled={save}
+                    className="px-4 py-2 rounded-md text-sm font-medium border border-border text-muted hover:text-primary hover:bg-border/30 disabled:opacity-50"
+                  >
+                    Use defaults only
+                  </button>
+                </div>
+              </div>
+            </div>
           </div>
 
-          <div className="flex flex-wrap gap-2 pt-1">
-            <button
-              type="button"
-              onClick={saveOverrides}
-              disabled={save}
-              className="px-4 py-2 rounded-md text-sm font-medium border border-accent bg-accent/10 text-primary hover:bg-accent/20 disabled:opacity-50"
-            >
-              {save ? "Saving…" : "Save"}
-            </button>
-            <button
-              type="button"
-              onClick={clearOverrides}
-              disabled={save}
-              className="px-4 py-2 rounded-md text-sm font-medium border border-border text-muted hover:text-primary hover:bg-border/30 disabled:opacity-50"
-            >
-              Use defaults only
-            </button>
-          </div>
+          {/* Action buttons moved into the right-side Apply card */}
 
           {err && <p className="text-sm text-danger">{err}</p>}
           {ok && <p className="text-sm text-ok">{ok}</p>}

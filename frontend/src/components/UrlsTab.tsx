@@ -87,6 +87,7 @@ export function UrlsTab({ agentId, refreshKey }: Props) {
       searchPlaceholder="Search by URL or browser…"
       isLoading={loading}
       emptyMessage="No URL visits recorded yet"
+      emptySubtitle="URLs are captured when the focused agent is browsing. Check Activity for the timeline context."
     />
   );
 }

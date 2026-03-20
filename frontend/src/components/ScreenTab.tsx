@@ -2,6 +2,8 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import { MousePointer, Expand, Bell } from "lucide-react";
 import { cn } from "../lib/utils";
 import { api } from "../lib/api";
+import { Modal } from "./ui/Modal";
+import { useToast } from "./ui/ToastProvider";
 
 interface Props {
   agentId: string;
@@ -13,9 +15,14 @@ export function ScreenTab({ agentId, online, onControl }: Props) {
   const [remoteOn, setRemoteOn] = useState(false);
   const [coords, setCoords] = useState<{ x: number; y: number } | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
+  const [notifyOpen, setNotifyOpen] = useState(false);
+  const [notifyTitle, setNotifyTitle] = useState("Sentinel");
+  const [notifyMessage, setNotifyMessage] = useState("");
+  const [notifySending, setNotifySending] = useState(false);
   const throttle = useRef(0);
   const imgRef = useRef<HTMLImageElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
+  const { pushToast } = useToast();
 
   // When the client disconnects, remote control should immediately disappear.
   // (Also prevents queued click/move events from firing after disconnect.)
@@ -173,11 +180,9 @@ export function ScreenTab({ agentId, online, onControl }: Props) {
         {online && (
           <button
             onClick={() => {
-              const title = window.prompt("Notification title", "Sentinel") ?? "";
-              if (title === null) return;
-              const message = window.prompt("Notification message", "") ?? "";
-              if (message === null) return;
-              onControl({ type: "Notify", title, message });
+              setNotifyTitle("Sentinel");
+              setNotifyMessage("");
+              setNotifyOpen(true);
             }}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium
                        border border-border bg-surface text-muted hover:text-primary transition-colors"
@@ -262,6 +267,75 @@ export function ScreenTab({ agentId, online, onControl }: Props) {
           Click the stream to focus, then type. Paste also works.
         </p>
       )}
+
+      <Modal
+        open={notifyOpen}
+        title="Send notification"
+        onClose={() => {
+          if (notifySending) return;
+          setNotifyOpen(false);
+        }}
+        actions={
+          <div className="flex items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setNotifyOpen(false)}
+              disabled={notifySending}
+              className="px-4 py-2 rounded-md text-sm font-medium border border-border text-muted hover:text-primary hover:bg-border/30 disabled:opacity-50 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const title = notifyTitle.trim() || "Sentinel";
+                const message = notifyMessage.trim();
+                setNotifySending(true);
+                try {
+                  onControl({ type: "Notify", title, message });
+                  pushToast({
+                    variant: "success",
+                    title: "Notification sent",
+                    message: message ? message : "Sent with an empty message.",
+                  });
+                  setNotifyOpen(false);
+                } finally {
+                  setNotifySending(false);
+                }
+              }}
+              disabled={notifySending}
+              className="px-4 py-2 rounded-md text-sm font-medium border border-accent bg-accent/10 text-primary hover:bg-accent/20 disabled:opacity-50 transition-colors"
+            >
+              {notifySending ? "Sending…" : "Send"}
+            </button>
+          </div>
+        }
+      >
+        <div className="flex flex-col gap-4">
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-muted uppercase tracking-widest">
+              Title
+            </span>
+            <input
+              type="text"
+              value={notifyTitle}
+              onChange={(e) => setNotifyTitle(e.target.value)}
+              className="w-full bg-surface border border-border rounded-md px-3 py-2 text-sm text-primary focus:outline-none focus:border-accent transition-colors"
+            />
+          </label>
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-medium text-muted uppercase tracking-widest">
+              Message
+            </span>
+            <textarea
+              value={notifyMessage}
+              onChange={(e) => setNotifyMessage(e.target.value)}
+              rows={3}
+              className="w-full bg-surface border border-border rounded-md px-3 py-2 text-sm text-primary focus:outline-none focus:border-accent transition-colors resize-y"
+            />
+          </label>
+        </div>
+      </Modal>
     </div>
   );
 }

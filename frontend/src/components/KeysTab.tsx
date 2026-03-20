@@ -107,6 +107,7 @@ export function KeysTab({ agentId, refreshKey }: Props) {
       searchPlaceholder="Search by app, window, or text…"
       isLoading={loading}
       emptyMessage="No keystroke sessions recorded yet"
+      emptySubtitle="Once agents start capturing input, keystroke buffers will appear here. Try the Activity tab for full context."
       toolbarRight={
         <button
           onClick={() => setCorrected((v) => !v)}

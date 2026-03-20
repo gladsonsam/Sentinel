@@ -49,6 +49,7 @@ interface DataTableProps {
   searchPlaceholder?: string;
   pageSize?: number;
   emptyMessage?: string;
+  emptySubtitle?: string;
   isLoading?: boolean;
   /** Prepend this node to the toolbar (right of the search bar). */
   toolbarRight?: ReactNode;
@@ -62,6 +63,7 @@ export function DataTable({
   searchPlaceholder = "Search…",
   pageSize = 25,
   emptyMessage = "No records found",
+  emptySubtitle,
   isLoading = false,
   toolbarRight,
 }: DataTableProps) {
@@ -168,6 +170,7 @@ export function DataTable({
                         "text-muted font-semibold whitespace-nowrap",
                         canSort &&
                           "cursor-pointer hover:text-primary select-none",
+                        "sticky top-0 z-10 bg-surface",
                         col.headerClass,
                       )}
                     >
@@ -216,7 +219,14 @@ export function DataTable({
                         <span className="text-primary">"{search}"</span>
                       </>
                     ) : (
-                      emptyMessage
+                      <div className="flex flex-col items-center justify-center gap-1">
+                        <div className="font-medium">{emptyMessage}</div>
+                        {emptySubtitle ? (
+                          <div className="text-xs text-muted max-w-[60ch]">
+                            {emptySubtitle}
+                          </div>
+                        ) : null}
+                      </div>
                     )}
                   </td>
                 </tr>
