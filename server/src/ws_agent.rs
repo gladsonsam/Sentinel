@@ -102,6 +102,9 @@ async fn run(mut ws: WebSocket, name: String, state: Arc<AppState>) {
         .unwrap()
         .insert(agent_id, cmd_tx.clone());
 
+    // Domain blocklists/WFP policies are intentionally not delivered over
+    // this WebSocket channel anymore (feature removed).
+
     // Notify dashboard viewers.
     state.broadcast(
         serde_json::json!({

@@ -1,0 +1,259 @@
+import { useEffect, useState } from "react";
+import type { ThemePreference } from "../lib/preferences";
+import {
+  saveNetworkIncludeIpv6,
+  saveActivityCorrectedKeysDefault,
+} from "../lib/preferences";
+import { cn } from "../lib/utils";
+import type { RetentionPolicy } from "../lib/types";
+import { api } from "../lib/api";
+import { Loader2 } from "lucide-react";
+import {
+  daysToField,
+  fieldToDays,
+  RETENTION_INPUT_CLASS,
+} from "../lib/retentionForm";
+
+interface Props {
+  themePref: ThemePreference;
+  onThemePrefChange: (t: ThemePreference) => void;
+  networkIncludeIpv6: boolean;
+  onNetworkIncludeIpv6Change: (v: boolean) => void;
+  activityCorrectedKeysDefault: boolean;
+  onActivityCorrectedKeysDefaultChange: (v: boolean) => void;
+}
+
+export function PreferencesTab({
+  themePref,
+  onThemePrefChange,
+  networkIncludeIpv6,
+  onNetworkIncludeIpv6Change,
+  activityCorrectedKeysDefault,
+  onActivityCorrectedKeysDefaultChange,
+}: Props) {
+  const [gKey, setGKey] = useState("");
+  const [gWin, setGWin] = useState("");
+  const [gUrl, setGUrl] = useState("");
+  const [gLoad, setGLoad] = useState(true);
+  const [gSave, setGSave] = useState(false);
+  const [gErr, setGErr] = useState<string | null>(null);
+  const [gOk, setGOk] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setGLoad(true);
+    setGErr(null);
+    api
+      .retentionGlobalGet()
+      .then((p) => {
+        if (cancelled) return;
+        setGKey(daysToField(p.keylog_days));
+        setGWin(daysToField(p.window_days));
+        setGUrl(daysToField(p.url_days));
+      })
+      .catch((e) => {
+        if (!cancelled) setGErr(String(e));
+      })
+      .finally(() => {
+        if (!cancelled) setGLoad(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const saveGlobal = () => {
+    setGErr(null);
+    setGOk(null);
+    let body: RetentionPolicy;
+    try {
+      body = {
+        keylog_days: fieldToDays(gKey),
+        window_days: fieldToDays(gWin),
+        url_days: fieldToDays(gUrl),
+      };
+    } catch (e) {
+      setGErr(e instanceof Error ? e.message : String(e));
+      return;
+    }
+    setGSave(true);
+    api
+      .retentionGlobalPut(body)
+      .then((p) => {
+        setGKey(daysToField(p.keylog_days));
+        setGWin(daysToField(p.window_days));
+        setGUrl(daysToField(p.url_days));
+        setGOk("Saved.");
+      })
+      .catch((e) => setGErr(String(e)))
+      .finally(() => setGSave(false));
+  };
+
+  return (
+    <div className="max-w-2xl flex flex-col gap-8">
+      <div>
+        <h2 className="text-sm font-semibold text-primary mb-1">Appearance</h2>
+        <p className="text-xs text-muted mb-3">
+          Theme is saved in this browser only.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {(
+            [
+              { value: "light" as const, label: "Light" },
+              { value: "dark" as const, label: "Dark" },
+              { value: "system" as const, label: "Match system" },
+            ] as const
+          ).map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => onThemePrefChange(value)}
+              className={cn(
+                "px-3 py-1.5 rounded-md text-xs font-medium border transition-colors",
+                themePref === value
+                  ? "border-accent text-primary bg-accent/10"
+                  : "border-border text-muted hover:text-primary hover:bg-border/30",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <h2 className="text-sm font-semibold text-primary mb-1">
+          Default data retention
+        </h2>
+        <p className="text-sm text-muted mb-1">
+          How long to keep keylogs, window history, and URLs for <strong>all</strong>{" "}
+          computers by default. Enter a number of days, or leave a box empty to keep
+          that data until you remove it yourself.
+        </p>
+        <p className="text-xs text-muted mb-4">
+          Different rules for one machine? Select it in the sidebar and open the{" "}
+          <span className="text-primary font-medium">Overrides</span> tab.
+        </p>
+
+        {gLoad ? (
+          <div className="flex items-center gap-2 text-sm text-muted py-2">
+            <Loader2 size={14} className="animate-spin" />
+            Loading…
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3 max-w-md">
+            <label className="flex flex-col gap-1">
+              <span className="text-sm font-medium text-primary">Keylogs</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                className={RETENTION_INPUT_CLASS}
+                value={gKey}
+                onChange={(e) => setGKey(e.target.value)}
+                placeholder="Leave blank to keep until removed"
+                disabled={gSave}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-sm font-medium text-primary">
+                Windows &amp; activity
+              </span>
+              <span className="text-xs text-muted">
+                Includes focus changes and AFK / active events
+              </span>
+              <input
+                type="text"
+                inputMode="numeric"
+                className={RETENTION_INPUT_CLASS}
+                value={gWin}
+                onChange={(e) => setGWin(e.target.value)}
+                placeholder="Leave blank to keep until removed"
+                disabled={gSave}
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-sm font-medium text-primary">URLs</span>
+              <input
+                type="text"
+                inputMode="numeric"
+                className={RETENTION_INPUT_CLASS}
+                value={gUrl}
+                onChange={(e) => setGUrl(e.target.value)}
+                placeholder="Leave blank to keep until removed"
+                disabled={gSave}
+              />
+            </label>
+            <div className="pt-1">
+              <button
+                type="button"
+                onClick={saveGlobal}
+                disabled={gSave}
+                className="px-4 py-2 rounded-md text-sm font-medium border border-accent bg-accent/10 text-primary hover:bg-accent/20 disabled:opacity-50"
+              >
+                {gSave ? "Saving…" : "Save defaults"}
+              </button>
+            </div>
+            {gErr && <p className="text-sm text-danger">{gErr}</p>}
+            {gOk && <p className="text-sm text-ok">{gOk}</p>}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <h2 className="text-sm font-semibold text-primary mb-1">Agent details</h2>
+        <p className="text-xs text-muted mb-3">
+          What to show in the Specs tab for each machine.
+        </p>
+        <label className="flex items-start gap-3 cursor-pointer group">
+          <input
+            type="checkbox"
+            className="mt-0.5 rounded border-border"
+            checked={networkIncludeIpv6}
+            onChange={(e) => {
+              const v = e.target.checked;
+              saveNetworkIncludeIpv6(v);
+              onNetworkIncludeIpv6Change(v);
+            }}
+          />
+          <span>
+            <span className="text-sm text-primary group-hover:underline">
+              Show IPv6 addresses
+            </span>
+            <span className="block text-xs text-muted mt-0.5">
+              Off by default — IPv6 lists are often long. Useful if you use IPv6 on
+              your network.
+            </span>
+          </span>
+        </label>
+      </div>
+
+      <div>
+        <h2 className="text-sm font-semibold text-primary mb-1">Activity tab</h2>
+        <p className="text-xs text-muted mb-3">
+          Default for the “Corrected / Raw” keystroke toggle.
+        </p>
+        <label className="flex items-start gap-3 cursor-pointer group">
+          <input
+            type="checkbox"
+            className="mt-0.5 rounded border-border"
+            checked={activityCorrectedKeysDefault}
+            onChange={(e) => {
+              const v = e.target.checked;
+              saveActivityCorrectedKeysDefault(v);
+              onActivityCorrectedKeysDefaultChange(v);
+            }}
+          />
+          <span>
+            <span className="text-sm text-primary group-hover:underline">
+              Apply keyboard corrections by default
+            </span>
+            <span className="block text-xs text-muted mt-0.5">
+              When on, backspaces in captured keystrokes are applied so text reads
+              more naturally. You can still toggle per session in the Activity tab.
+            </span>
+          </span>
+        </label>
+      </div>
+    </div>
+  );
+}

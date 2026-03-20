@@ -71,6 +71,7 @@ pub struct AppState {
     /// Active dashboard session tokens (random UUIDs issued on login).
     /// Stored in memory only — reset when the server restarts.
     pub sessions: Mutex<HashSet<String>>,
+
 }
 
 /// A cached screenshot frame with a monotonically increasing sequence number.

@@ -1,6 +1,7 @@
-import { X, LayoutGrid } from "lucide-react";
+import { X, LayoutGrid, Wifi, WifiOff, Loader2 } from "lucide-react";
 import { cn } from "../lib/utils";
 import type { Agent } from "../lib/types";
+import type { WsStatus } from "../hooks/useWebSocket";
 
 function relativeTime(iso: string | null | undefined): string {
   if (!iso) return "Never";
@@ -15,6 +16,7 @@ interface Props {
   agents: Record<string, Agent>;
   selectedId: string | null;
   view: "overview" | "detail";
+  wsStatus: WsStatus;
   onSelect: (id: string) => void;
   onOverview: () => void;
   open: boolean;
@@ -25,6 +27,7 @@ export function Sidebar({
   agents,
   selectedId,
   view,
+  wsStatus,
   onSelect,
   onOverview,
   open,
@@ -119,6 +122,33 @@ export function Sidebar({
             </button>
           ))
         )}
+      </div>
+
+      {/* ── Live connection (viewer WebSocket) ── */}
+      <div
+        className="flex-shrink-0 border-t border-border px-3.5 py-2.5
+                      bg-bg/30"
+      >
+        <div className="flex items-center gap-1.5 text-[11px] text-muted">
+          {wsStatus === "connected" && (
+            <>
+              <Wifi size={12} className="text-ok flex-shrink-0" />
+              <span className="text-primary">Connected</span>
+            </>
+          )}
+          {wsStatus === "disconnected" && (
+            <>
+              <WifiOff size={12} className="text-danger flex-shrink-0" />
+              <span className="text-danger">Disconnected</span>
+            </>
+          )}
+          {wsStatus === "connecting" && (
+            <>
+              <Loader2 size={12} className="animate-spin flex-shrink-0" />
+              <span>Connecting…</span>
+            </>
+          )}
+        </div>
       </div>
     </aside>
   );

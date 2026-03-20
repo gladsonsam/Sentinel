@@ -6,14 +6,13 @@ import {
   Layout,
   Activity,
   Info,
-  Wifi,
-  WifiOff,
   Loader2,
   Menu,
   ArrowLeft,
   LogOut,
-  Sun,
-  Moon,
+  Settings,
+  SlidersHorizontal,
+  Trash2,
 } from "lucide-react";
 
 import { useWebSocket, type WsStatus } from "./hooks/useWebSocket";
@@ -24,9 +23,17 @@ import { KeysTab } from "./components/KeysTab";
 import { WindowsTab } from "./components/WindowsTab";
 import { UrlsTab } from "./components/UrlsTab";
 import { ActivityTab } from "./components/ActivityTab";
+import { PreferencesTab } from "./components/PreferencesTab";
+import { AgentSettingsTab } from "./components/AgentSettingsTab";
 import { LoginPage } from "./components/LoginPage";
 import { cn } from "./lib/utils";
 import { api } from "./lib/api";
+import {
+  loadThemePreference,
+  loadNetworkIncludeIpv6,
+  loadActivityCorrectedKeysDefault,
+  type ThemePreference,
+} from "./lib/preferences";
 import type { Agent, AgentInfo, AgentLiveStatus, TabKey, WsEvent } from "./lib/types";
 
 // ── Tab definitions ───────────────────────────────────────────────────────────
@@ -38,6 +45,7 @@ const TABS: { key: TabKey; label: string; Icon: typeof Monitor }[] = [
   { key: "windows", label: "Windows", Icon: Layout },
   { key: "urls", label: "URLs", Icon: Globe },
   { key: "activity", label: "Activity", Icon: Activity },
+  { key: "settings", label: "Overrides", Icon: SlidersHorizontal },
 ];
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
@@ -53,31 +61,42 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     {},
   );
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [view, setView] = useState<"overview" | "detail">("overview");
+  const [view, setView] = useState<"overview" | "detail" | "settings">(
+    "overview",
+  );
+  const settingsReturnRef = useRef<"overview" | "detail">("overview");
   const [activeTab, setActiveTab] = useState<TabKey>("specs");
   const [wsStatus, setWsStatus] = useState<WsStatus>("connecting");
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  // Theme logic
-  const [theme, setTheme] = useState<"light" | "dark">(() => {
-    const saved = localStorage.getItem("theme");
-    if (saved === "light" || saved === "dark") return saved;
-    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-  });
-
+  const [themePref, setThemePref] = useState<ThemePreference>(() =>
+    loadThemePreference(),
+  );
   useEffect(() => {
     const root = window.document.documentElement;
-    if (theme === "dark") {
-      root.classList.add("dark");
-    } else {
-      root.classList.remove("dark");
+    const apply = (dark: boolean) => {
+      if (dark) root.classList.add("dark");
+      else root.classList.remove("dark");
+    };
+    if (themePref === "system") {
+      const mq = window.matchMedia("(prefers-color-scheme: dark)");
+      apply(mq.matches);
+      const onChange = () => apply(mq.matches);
+      mq.addEventListener("change", onChange);
+      localStorage.setItem("theme", "system");
+      return () => mq.removeEventListener("change", onChange);
     }
-    localStorage.setItem("theme", theme);
-  }, [theme]);
+    apply(themePref === "dark");
+    localStorage.setItem("theme", themePref);
+  }, [themePref]);
 
-  const toggleTheme = useCallback(() => {
-    setTheme((prev) => (prev === "light" ? "dark" : "light"));
-  }, []);
+  const [networkIncludeIpv6, setNetworkIncludeIpv6] = useState(
+    () => loadNetworkIncludeIpv6(),
+  );
+  const [activityCorrectedKeysDefault, setActivityCorrectedKeysDefault] =
+    useState(() => loadActivityCorrectedKeysDefault());
+
+  const [clearingHistory, setClearingHistory] = useState(false);
 
   const [refreshKey, setRefreshKey] = useState(0);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -231,12 +250,41 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
     setSidebarOpen(false);
   }, []);
 
+  const openSettings = useCallback(() => {
+    if (view === "overview" || view === "detail") {
+      settingsReturnRef.current = view;
+    }
+    setView("settings");
+    setSidebarOpen(false);
+  }, [view]);
+
+  const closeSettings = useCallback(() => {
+    setView(settingsReturnRef.current);
+  }, []);
+
   // ── Logout ─────────────────────────────────────────────────────────────────
 
   const handleLogout = useCallback(async () => {
     await api.logout().catch(() => {});
     onLogout();
   }, [onLogout]);
+
+  const handleClearHistory = useCallback(async () => {
+    if (!selectedId || clearingHistory) return;
+    const ok = window.confirm(
+      `Clear stored history for this agent?\n\nThis deletes windows, keystrokes, URLs, and AFK/active history for this client.`,
+    );
+    if (!ok) return;
+    setClearingHistory(true);
+    try {
+      await api.clearAgentHistory(selectedId);
+      forceRefresh();
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : String(e));
+    } finally {
+      setClearingHistory(false);
+    }
+  }, [selectedId, clearingHistory, forceRefresh]);
 
   const selectedAgent = selectedId ? agents[selectedId] : null;
   const selectedAgentInfo = selectedId ? agentInfo[selectedId] : null;
@@ -276,7 +324,20 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         </button>
 
         {/* Title / breadcrumb */}
-        {view === "detail" ? (
+        {view === "settings" ? (
+          <div className="flex items-center gap-2 min-w-0">
+            <button
+              onClick={closeSettings}
+              className="flex items-center gap-1 text-muted hover:text-primary
+                         text-sm transition-colors flex-shrink-0"
+            >
+              <ArrowLeft size={14} />
+              <span className="hidden sm:inline">Back</span>
+            </button>
+            <span className="text-border hidden sm:inline">/</span>
+            <span className="text-sm font-medium truncate">Preferences</span>
+          </div>
+        ) : view === "detail" ? (
           <div className="flex items-center gap-2 min-w-0">
             <button
               onClick={goOverview}
@@ -297,49 +358,29 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
           </span>
         )}
 
-        {/* Right side: WS status + logout */}
-        <div className="ml-auto flex items-center gap-3 flex-shrink-0">
-          {/* WS status pill */}
-          <div className="flex items-center gap-1.5 text-xs text-muted">
-            {wsStatus === "connected" && (
-              <>
-                <Wifi size={12} className="text-ok" />
-                <span className="hidden sm:inline">Connected</span>
-              </>
-            )}
-            {wsStatus === "disconnected" && (
-              <>
-                <WifiOff size={12} className="text-danger" />
-                <span className="hidden sm:inline">Disconnected</span>
-              </>
-            )}
-            {wsStatus === "connecting" && (
-              <>
-                <Loader2 size={12} className="animate-spin" />
-                <span className="hidden sm:inline">Connecting…</span>
-              </>
-            )}
-          </div>
-
-          {/* Theme toggle */}
+        {/* Right side: settings + sign out */}
+        <div className="ml-auto flex items-center gap-2 sm:gap-3 flex-shrink-0">
           <button
-            onClick={toggleTheme}
-            title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
-            className="flex flex-shrink-0 items-center justify-center w-6 h-6 rounded text-muted hover:text-primary hover:bg-border/40 transition-colors"
+            type="button"
+            onClick={openSettings}
+            className="flex items-center gap-1.5 px-2 py-1.5 rounded text-xs
+                       text-muted hover:text-primary hover:bg-border/40
+                       transition-colors outline-none focus-visible:ring-2
+                       focus-visible:ring-accent/50 focus-visible:ring-offset-0"
           >
-            {theme === "light" ? <Moon size={14} /> : <Sun size={14} />}
+            <Settings size={14} className="flex-shrink-0" />
+            <span>Settings</span>
           </button>
 
-          {/* Logout button */}
           <button
             onClick={handleLogout}
-            title="Sign out"
-            className="flex items-center gap-1.5 px-2 py-1 rounded text-xs
+            className="flex items-center gap-1.5 px-2 py-1.5 rounded text-xs
                        text-muted hover:text-primary hover:bg-border/40
-                       transition-colors"
+                       transition-colors outline-none focus-visible:ring-2
+                       focus-visible:ring-accent/50 focus-visible:ring-offset-0"
           >
-            <LogOut size={12} />
-            <span className="hidden sm:inline">Sign out</span>
+            <LogOut size={14} className="flex-shrink-0" />
+            <span>Sign out</span>
           </button>
         </div>
       </header>
@@ -358,7 +399,8 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
         <Sidebar
           agents={agents}
           selectedId={selectedId}
-          view={view}
+          view={view === "settings" ? "overview" : view}
+          wsStatus={wsStatus}
           onSelect={selectAgent}
           onOverview={goOverview}
           open={sidebarOpen}
@@ -378,30 +420,78 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
             </div>
           )}
 
+          {view === "settings" && (
+            <div className="flex-1 overflow-auto p-3 md:p-4">
+              <h1 className="text-lg font-semibold text-primary mb-4">
+                Preferences
+              </h1>
+              <PreferencesTab
+                themePref={themePref}
+                onThemePrefChange={setThemePref}
+                networkIncludeIpv6={networkIncludeIpv6}
+                onNetworkIncludeIpv6Change={setNetworkIncludeIpv6}
+                activityCorrectedKeysDefault={activityCorrectedKeysDefault}
+                onActivityCorrectedKeysDefaultChange={
+                  setActivityCorrectedKeysDefault
+                }
+              />
+            </div>
+          )}
+
           {/* ── Detail ── */}
           {view === "detail" && (
             <>
-              {/* Tab bar */}
+              {/* Tab bar + per-agent actions */}
               <div
-                className="flex bg-surface border-b border-border
-                              flex-shrink-0 overflow-x-auto"
+                className="flex items-stretch bg-surface border-b border-border
+                              flex-shrink-0 min-w-0"
               >
-                {TABS.map(({ key, label, Icon }) => (
-                  <button
-                    key={key}
-                    onClick={() => setActiveTab(key)}
-                    className={cn(
-                      "flex items-center gap-1.5 px-3 md:px-4 py-2.5 text-sm",
-                      "border-b-2 transition-colors whitespace-nowrap flex-shrink-0",
-                      activeTab === key
-                        ? "text-primary border-accent"
-                        : "text-muted border-transparent hover:text-primary",
-                    )}
+                <div className="flex overflow-x-auto min-w-0 flex-1">
+                  {TABS.map(({ key, label, Icon }) => (
+                    <button
+                      key={key}
+                      onClick={() => setActiveTab(key)}
+                      className={cn(
+                        "flex items-center gap-1.5 px-3 md:px-4 py-2.5 text-sm",
+                        "border-b-2 transition-colors whitespace-nowrap flex-shrink-0",
+                        activeTab === key
+                          ? "text-primary border-accent"
+                          : "text-muted border-transparent hover:text-primary",
+                      )}
+                    >
+                      <Icon size={13} />
+                      <span className="hidden sm:inline">{label}</span>
+                    </button>
+                  ))}
+                </div>
+                {selectedId && (
+                  <div
+                    className="flex-shrink-0 flex items-center gap-1 px-2 sm:px-3
+                                  border-l border-border bg-surface"
                   >
-                    <Icon size={13} />
-                    <span className="hidden sm:inline">{label}</span>
-                  </button>
-                ))}
+                    <button
+                      type="button"
+                      onClick={handleClearHistory}
+                      disabled={clearingHistory}
+                      className={cn(
+                        "flex items-center gap-1.5 px-2 sm:px-3 py-2 rounded text-xs font-medium",
+                        "text-danger bg-transparent hover:bg-danger/15",
+                        "focus-visible:bg-danger/15",
+                        "transition-colors whitespace-nowrap",
+                        "outline-none focus:outline-none focus-visible:outline-none",
+                        "disabled:opacity-50 disabled:cursor-not-allowed",
+                      )}
+                      title="Clear this agent’s stored history (windows, keys, URLs, activity)"
+                    >
+                      {clearingHistory ? (
+                        <Loader2 size={14} className="animate-spin flex-shrink-0" />
+                      ) : (
+                        <Trash2 size={14} className="flex-shrink-0" />
+                      )}
+                      <span className="hidden sm:inline">Clear history</span>
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* Tab content */}
@@ -409,7 +499,11 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
                 {selectedId && (
                   <>
                     {activeTab === "specs" && (
-                      <AgentInfoPanel agent={selectedAgent} info={selectedAgentInfo} />
+                      <AgentInfoPanel
+                        agent={selectedAgent}
+                        info={selectedAgentInfo}
+                        includeIpv6={networkIncludeIpv6}
+                      />
                     )}
                     {activeTab === "screen" && (
                       <ScreenTab
@@ -435,9 +529,17 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
                       <ActivityTab
                         agentId={selectedId}
                         refreshKey={refreshKey}
-                        onHistoryCleared={forceRefresh}
+                        defaultCorrectedKeys={activityCorrectedKeysDefault}
                       />
                     )}
+                    {activeTab === "settings" && selectedId && (
+                      <AgentSettingsTab
+                        key={selectedId}
+                        agentId={selectedId}
+                        agentName={selectedAgent?.name ?? "This computer"}
+                      />
+                    )}
+                    {/* Blocklists/WFP tab intentionally removed for now */}
                   </>
                 )}
               </div>
@@ -449,23 +551,85 @@ function Dashboard({ onLogout }: { onLogout: () => void }) {
   );
 }
 
-function fmtMb(mb?: number) {
+function fmtGb(mb?: number) {
   if (typeof mb !== "number" || !Number.isFinite(mb)) return "—";
-  return `${Math.round(mb)} MB`;
+  // Backward-compat: some agent builds send kB in *_mb fields.
+  // If the value is implausibly large for MB, normalize kB -> MB.
+  const normalizedMb = mb > 1_000_000 ? mb / 1000 : mb;
+  // We receive memory in MB; display in decimal GB with 1 decimal place.
+  // Use decimal GB (1 GB = 1000 MB) so the UI matches typical
+  // "RAM in GB" marketing-style numbers.
+  const gb = normalizedMb / 1000;
+  return `${gb.toFixed(1)} GB`;
+}
+
+function isIPv4(ip: string): boolean {
+  // Fast IPv4 check: four dot-separated numeric octets.
+  const parts = ip.trim().split(".");
+  if (parts.length !== 4) return false;
+  return parts.every((p) => {
+    if (!/^\d+$/.test(p)) return false;
+    const n = Number(p);
+    return n >= 0 && n <= 255;
+  });
+}
+
+function isLoopbackIp(ip: string): boolean {
+  const v = ip.trim().toLowerCase();
+  return v === "::1" || v.startsWith("127.");
+}
+
+/** IPv4 you’d actually use to reach the machine (LAN, VPN, or public). */
+function isUsefulIPv4(ip: string): boolean {
+  if (!isIPv4(ip)) return false;
+  const parts = ip.trim().split(".").map((p) => Number(p));
+  if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) return false;
+  const [a, b] = parts;
+  if (a === 0) return false;
+  if (a === 127) return false;
+  // APIPA / link-local IPv4
+  if (a === 169 && b === 254) return false;
+  // Multicast & reserved (not normal host unicast)
+  if (a >= 224) return false;
+  return true;
+}
+
+function ipv4SortPriority(ip: string): number {
+  const parts = ip.trim().split(".").map((p) => Number(p));
+  const [a, b] = parts;
+  if (a === 192 && b === 168) return 0;
+  if (a === 10) return 1;
+  if (a === 172 && b >= 16 && b <= 31) return 2;
+  return 3;
 }
 
 function AgentInfoPanel({
   agent,
   info,
+  includeIpv6,
 }: {
   agent: Agent | null;
   info: AgentInfo | null | undefined;
+  includeIpv6: boolean;
 }) {
   if (!agent) return null;
 
   const adapters = info?.adapters ?? [];
-  const primaryIps =
-    adapters.flatMap((a) => a.ips ?? []).filter(Boolean).slice(0, 6) ?? [];
+  const primaryIps = (() => {
+    const ips = adapters
+      .flatMap((a) => a.ips ?? [])
+      .filter(Boolean)
+      .filter((ip) => !isLoopbackIp(ip));
+    const uniqueIps = Array.from(new Set(ips));
+    const ipv4 = uniqueIps
+      .filter((ip) => isUsefulIPv4(ip))
+      .sort((a, b) => ipv4SortPriority(a) - ipv4SortPriority(b));
+    if (!includeIpv6) return ipv4.slice(0, 6);
+    const ipv6List = uniqueIps.filter(
+      (ip) => !isIPv4(ip) && !isLoopbackIp(ip),
+    );
+    return [...ipv4, ...ipv6List].slice(0, 12);
+  })();
 
   return (
     <div className="bg-surface border-b border-border px-3 md:px-4 py-3">
@@ -495,14 +659,14 @@ function AgentInfoPanel({
             </div>
             <div className="truncate">
               <span className="text-primary">RAM:</span>{" "}
-              {fmtMb(info?.memory_used_mb)} / {fmtMb(info?.memory_total_mb)}
+              {fmtGb(info?.memory_used_mb)} / {fmtGb(info?.memory_total_mb)}
             </div>
           </div>
         </div>
 
         <div className="rounded-lg border border-border bg-bg/20 px-3 py-2">
           <div className="text-[11px] uppercase tracking-widest text-muted font-semibold">
-            Network
+            {includeIpv6 ? "Network" : "Network (IPv4)"}
           </div>
           <div className="mt-1 text-xs text-muted">
             {primaryIps.length === 0 ? (

@@ -16,8 +16,6 @@ import {
   ChevronDown,
   ChevronRight,
   Search,
-  Trash2,
-  Loader2,
 } from "lucide-react";
 import { api } from "../lib/api";
 import { cn, truncate } from "../lib/utils";
@@ -402,23 +400,31 @@ function SessionCard({
 interface Props {
   agentId: string;
   refreshKey: number;
-  onHistoryCleared: () => void;
+  /** From Preferences — “Apply keyboard corrections by default”. */
+  defaultCorrectedKeys: boolean;
 }
 
-export function ActivityTab({ agentId, refreshKey, onHistoryCleared }: Props) {
+export function ActivityTab({
+  agentId,
+  refreshKey,
+  defaultCorrectedKeys,
+}: Props) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
-  const [clearing, setClearing] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Record<string, boolean>>({});
-  const [correctedKeys, setCorrectedKeys] = useState(true);
+  const [correctedKeys, setCorrectedKeys] = useState(defaultCorrectedKeys);
 
   // Reset UI state only when switching agents (not on live refresh).
   useEffect(() => {
     setSearch("");
     setExpandedIds({});
   }, [agentId]);
+
+  useEffect(() => {
+    setCorrectedKeys(defaultCorrectedKeys);
+  }, [agentId, defaultCorrectedKeys]);
 
   useEffect(() => {
     // Only show the big spinner on first load; silently refresh afterwards
@@ -526,35 +532,6 @@ export function ActivityTab({ agentId, refreshKey, onHistoryCleared }: Props) {
           {correctedLabel}
         </button>
 
-        <button
-          onClick={async () => {
-            if (clearing) return;
-            const ok = window.confirm(
-              `Clear activity history for this agent?\n\nThis will delete windows, keystrokes, URLs, and AFK/active history for the selected client.`,
-            );
-            if (!ok) return;
-            setClearing(true);
-            setError(null);
-            try {
-              await api.clearAgentHistory(agentId);
-              onHistoryCleared();
-            } catch (e) {
-              setError(String(e));
-            } finally {
-              setClearing(false);
-            }
-          }}
-          disabled={clearing}
-          className={cn(
-            "flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium",
-            "border border-danger text-danger hover:bg-white/[.03] transition-colors",
-            "disabled:opacity-50 disabled:cursor-not-allowed",
-          )}
-          title="Clear this agent's stored history"
-        >
-          {clearing ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-          Clear history
-        </button>
       </div>
 
       <p className="text-[11px] text-muted">

@@ -9,6 +9,8 @@
 //! | `GET /api/agents/:id/activity`  | Paginated AFK / active events          |
 //! | `GET /api/agents/:id/screen`    | Latest JPEG screenshot (single frame)  |
 //! | `GET /api/agents/:id/mjpeg`     | MJPEG stream (multipart/x-mixed-replace)|
+//! | `GET/PUT /api/settings/retention` | Global telemetry retention (days)    |
+//! | `GET/PUT/DELETE /api/agents/:id/retention` | Per-agent retention overrides   |
 
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -41,8 +43,17 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/agents/:id/urls", get(agent_urls))
         .route("/agents/:id/activity", get(agent_activity))
         .route("/agents/:id/history/clear", post(clear_agent_history))
+        .route(
+            "/agents/:id/retention",
+            get(agent_retention_get).put(agent_retention_put).delete(agent_retention_delete),
+        )
         .route("/agents/:id/screen", get(agent_screen))
         .route("/agents/:id/mjpeg", get(agent_mjpeg))
+        .route(
+            "/settings/retention",
+            get(retention_global_get).put(retention_global_put),
+        )
+        // Domain blocklists intentionally removed for now.
 }
 
 // ─── Handlers ─────────────────────────────────────────────────────────────────
@@ -163,6 +174,115 @@ async fn clear_agent_history(
 ) -> Response {
     match db::clear_agent_history(&s.db, id).await {
         Ok(cleared_rows) => Json(serde_json::json!({ "cleared_rows": cleared_rows })).into_response(),
+        Err(e) => err500(e),
+    }
+}
+
+// ─── Retention (telemetry auto-prune) ─────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct RetentionBody {
+    keylog_days: Option<i32>,
+    window_days: Option<i32>,
+    url_days: Option<i32>,
+}
+
+fn validate_retention_days(
+    keylog_days: Option<i32>,
+    window_days: Option<i32>,
+    url_days: Option<i32>,
+) -> Result<(), &'static str> {
+    for d in [keylog_days, window_days, url_days] {
+        if let Some(n) = d {
+            if !(1..=36_500).contains(&n) {
+                return Err("each retention value must be null (forever) or between 1 and 36500 days");
+            }
+        }
+    }
+    Ok(())
+}
+
+async fn retention_global_get(State(s): State<Arc<AppState>>) -> Response {
+    match db::get_retention_global(&s.db).await {
+        Ok(p) => Json(serde_json::json!({
+            "keylog_days": p.keylog_days,
+            "window_days": p.window_days,
+            "url_days": p.url_days,
+        }))
+        .into_response(),
+        Err(e) => err500(e),
+    }
+}
+
+async fn retention_global_put(
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<RetentionBody>,
+) -> Response {
+    if let Err(msg) = validate_retention_days(body.keylog_days, body.window_days, body.url_days) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+    }
+    let p = db::RetentionPolicy {
+        keylog_days: body.keylog_days,
+        window_days: body.window_days,
+        url_days: body.url_days,
+    };
+    match db::set_retention_global(&s.db, &p).await {
+        Ok(()) => retention_global_get(State(s.clone())).await,
+        Err(e) => err500(e),
+    }
+}
+
+async fn agent_retention_get(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Response {
+    let global = match db::get_retention_global(&s.db).await {
+        Ok(g) => g,
+        Err(e) => return err500(e),
+    };
+    let ov = match db::get_retention_agent(&s.db, id).await {
+        Ok(o) => o,
+        Err(e) => return err500(e),
+    };
+    let override_json = match &ov {
+        Some(o) => serde_json::json!({
+            "keylog_days": o.keylog_days,
+            "window_days": o.window_days,
+            "url_days": o.url_days,
+        }),
+        None => serde_json::Value::Null,
+    };
+
+    Json(serde_json::json!({
+        "global": {
+            "keylog_days": global.keylog_days,
+            "window_days": global.window_days,
+            "url_days": global.url_days,
+        },
+        "override": override_json,
+    }))
+    .into_response()
+}
+
+async fn agent_retention_put(
+    Path(id): Path<Uuid>,
+    State(s): State<Arc<AppState>>,
+    Json(body): Json<RetentionBody>,
+) -> Response {
+    if let Err(msg) = validate_retention_days(body.keylog_days, body.window_days, body.url_days) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+    }
+    let ov = db::RetentionAgentOverride {
+        keylog_days: body.keylog_days,
+        window_days: body.window_days,
+        url_days: body.url_days,
+    };
+    match db::set_retention_agent(&s.db, id, &ov).await {
+        Ok(()) => agent_retention_get(Path(id), State(s.clone())).await,
+        Err(e) => err500(e),
+    }
+}
+
+async fn agent_retention_delete(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Response {
+    match db::clear_retention_agent(&s.db, id).await {
+        Ok(()) => agent_retention_get(Path(id), State(s.clone())).await,
         Err(e) => err500(e),
     }
 }

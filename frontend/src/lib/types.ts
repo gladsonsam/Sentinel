@@ -93,6 +93,20 @@ export type WsEvent =
   | { event: "afk"; agent_id: string; idle_secs?: number }
   | { event: "active"; agent_id: string };
 
+/** Server-side telemetry retention; `null` = keep forever. */
+export interface RetentionPolicy {
+  keylog_days: number | null;
+  window_days: number | null;
+  url_days: number | null;
+}
+
 // ── UI ────────────────────────────────────────────────────────────────────────
 
-export type TabKey = "specs" | "screen" | "keys" | "windows" | "urls" | "activity";
+export type TabKey =
+  | "specs"
+  | "screen"
+  | "keys"
+  | "windows"
+  | "urls"
+  | "activity"
+  | "settings";

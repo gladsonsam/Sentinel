@@ -326,6 +326,7 @@ async fn run_agent_loop(
                             &mut frame_rx,
                             &mut key_rx,
                             &mut capture_stop,
+                            cfg.agent_name.clone(),
                         )
                         .await
                         {
@@ -407,6 +408,7 @@ async fn run_session(
     frame_rx: &mut mpsc::Receiver<Vec<u8>>,
     key_rx: &mut mpsc::UnboundedReceiver<InputEvent>,
     capture_stop: &mut Option<Arc<AtomicBool>>,
+    _agent_name: String,
 ) -> Result<()> {
     let (mut ws_tx, mut ws_rx) = ws_stream.split();
 
@@ -499,7 +501,9 @@ async fn run_session(
             // ── Branch 3: active browser URL ─────────────────────────────
             _ = url_ticker.tick() => {
                 if let Some(info) = url_scraper::get_active_url() {
-                    let payload = serde_json::json!({
+                    // WebSocket-first alerts (original behavior):
+                    // Always send URL events to the server over the agent WebSocket.
+                    let legacy = serde_json::json!({
                         "type"    : "url",
                         "url"     : info.url,
                         "title"   : info.title,
@@ -507,7 +511,7 @@ async fn run_session(
                         "ts"      : unix_timestamp_secs(),
                     })
                     .to_string();
-                    if out_tx.send(Message::Text(payload)).await.is_err() {
+                    if out_tx.send(Message::Text(legacy)).await.is_err() {
                         break Err(anyhow::anyhow!(
                             "Outbound channel closed; writer task exited unexpectedly."
                         ));

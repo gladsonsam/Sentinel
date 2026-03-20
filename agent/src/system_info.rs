@@ -26,9 +26,9 @@ pub fn collect_agent_info() -> serde_json::Value {
         .unwrap_or_default();
     let cpu_cores = sys.cpus().len() as u32;
 
-    // sysinfo returns memory in KiB.
-    let total_mem_mb = (sys.total_memory() / 1024) as u64;
-    let used_mem_mb = (sys.used_memory() / 1024) as u64;
+    // sysinfo 0.37 returns memory in bytes; convert to MB for the payload.
+    let total_mem_mb = (sys.total_memory() / 1024 / 1024) as u64;
+    let used_mem_mb = (sys.used_memory() / 1024 / 1024) as u64;
 
     let adapters = ipconfig::get_adapters()
         .ok()

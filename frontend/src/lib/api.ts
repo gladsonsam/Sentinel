@@ -5,6 +5,7 @@ import type {
   UrlVisit,
   ActivityEvent,
   AgentInfo,
+  RetentionPolicy,
 } from "./types";
 
 interface PageParams {
@@ -15,6 +16,19 @@ interface PageParams {
 async function get<T>(url: string): Promise<T> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP ${res.status} – ${url}`);
+  return res.json() as Promise<T>;
+}
+
+async function putJson<T>(url: string, body: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const errBody = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(errBody.error ?? `HTTP ${res.status}`);
+  }
   return res.json() as Promise<T>;
 }
 
@@ -93,4 +107,37 @@ export const api = {
   },
 
   mjpegUrl: (id: string) => `/api/agents/${id}/mjpeg`,
+
+  // ── Retention (server) ───────────────────────────────────────────────────
+
+  retentionGlobalGet: (): Promise<RetentionPolicy> =>
+    get("/api/settings/retention"),
+
+  retentionGlobalPut: (body: RetentionPolicy): Promise<RetentionPolicy> =>
+    putJson("/api/settings/retention", body),
+
+  retentionAgentGet: (
+    id: string,
+  ): Promise<{ global: RetentionPolicy; override: RetentionPolicy | null }> =>
+    get(`/api/agents/${id}/retention`),
+
+  retentionAgentPut: (
+    id: string,
+    body: RetentionPolicy,
+  ): Promise<{ global: RetentionPolicy; override: RetentionPolicy | null }> =>
+    putJson(`/api/agents/${id}/retention`, body),
+
+  retentionAgentDelete: async (
+    id: string,
+  ): Promise<{ global: RetentionPolicy; override: RetentionPolicy | null }> => {
+    const res = await fetch(`/api/agents/${id}/retention`, { method: "DELETE" });
+    if (!res.ok) {
+      const errBody = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(errBody.error ?? `HTTP ${res.status}`);
+    }
+    return res.json() as Promise<{
+      global: RetentionPolicy;
+      override: RetentionPolicy | null;
+    }>;
+  },
 };

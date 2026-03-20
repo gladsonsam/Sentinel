@@ -61,6 +61,22 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Database ready.");
 
+    // ── Periodic telemetry retention (keys / windows+activity / URLs) ───────
+    let pool_retention = pool.clone();
+    tokio::spawn(async move {
+        if let Err(e) = db::prune_telemetry_by_retention(&pool_retention).await {
+            tracing::warn!(error = %e, "initial retention prune failed");
+        }
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            if let Err(e) = db::prune_telemetry_by_retention(&pool_retention).await {
+                tracing::warn!(error = %e, "retention prune failed");
+            }
+        }
+    });
+
     // ── UI password ───────────────────────────────────────────────────────
     let ui_password = read_env_or_file("UI_PASSWORD").filter(|s| !s.is_empty());
 

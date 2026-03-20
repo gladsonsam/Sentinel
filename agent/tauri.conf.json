@@ -1,5 +1,5 @@
 {
-  "productName": "sentinel-agent",
+  "productName": "Sentinel Agent",
   "version": "0.1.0",
   "identifier": "com.sentinel.agent",
   "build": {
@@ -37,6 +37,7 @@
     ],
     "windows": {
       "wix": {
+        "template": "./wix/templates/main.noshortcuts.wxs",
         "fragmentPaths": ["./wix/fragments/run-at-logon.wxs"],
         "componentRefs": ["SentinelRunOnLogon"]
       }

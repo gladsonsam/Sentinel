@@ -137,6 +137,8 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>) {
         return;
     }
 
+    // WebSocket-first mode: forward commands to the connected agent over its
+    // per-agent command channel.
     let sent = state
         .agent_cmds
         .lock()
