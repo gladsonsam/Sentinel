@@ -8,6 +8,7 @@ interface OverviewPageProps {
   liveStatus: Record<string, AgentLiveStatus>;
   onSelectAgent: (agentId: string) => void;
   onRefresh: () => void;
+  onBatchWake: (agentIds: string[]) => void;
   onBatchRestart: (agentIds: string[]) => void;
   onBatchShutdown: (agentIds: string[]) => void;
 }
@@ -17,6 +18,7 @@ export function OverviewPage({
   liveStatus,
   onSelectAgent,
   onRefresh,
+  onBatchWake,
   onBatchRestart,
   onBatchShutdown,
 }: OverviewPageProps) {
@@ -30,6 +32,7 @@ export function OverviewPage({
           liveStatus={liveStatus}
           onSelectAgent={onSelectAgent}
           onRefresh={onRefresh}
+          onBatchWake={onBatchWake}
           onBatchRestart={onBatchRestart}
           onBatchShutdown={onBatchShutdown}
         />

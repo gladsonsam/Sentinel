@@ -17,6 +17,7 @@
 //! | `GET/PUT/DELETE /api/agents/:id/local-ui-password` | Per-agent override        |
 //! | `GET /api/audit`                | Operator audit log                      |
 //! | `GET /api/settings/storage`     | Database storage usage                  |
+//! | `POST /api/agents/:id/wake`     | Wake-on-LAN (UDP magic packet from stored MAC) |
 
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -51,6 +52,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/agents/:id/top-urls", get(agent_top_urls))
         .route("/agents/:id/top-windows", get(agent_top_windows))
         .route("/agents/:id/history/clear", post(clear_agent_history))
+        .route("/agents/:id/wake", post(agent_wake))
         .route("/audit", get(audit_log))
         .route(
             "/agents/:id/retention",
@@ -346,6 +348,110 @@ async fn clear_agent_history(
         }
         Err(e) => err500(e),
     }
+}
+
+#[derive(Deserialize, Default)]
+struct WakeQuery {
+    /// IPv4 broadcast address (default `255.255.255.255`).
+    broadcast: Option<String>,
+    /// UDP port (default 9).
+    port: Option<u16>,
+}
+
+/// Send a Wake-on-LAN magic packet using MAC from stored `agent_info`.
+async fn agent_wake(
+    Path(id): Path<Uuid>,
+    Query(q): Query<WakeQuery>,
+    State(s): State<Arc<AppState>>,
+) -> Response {
+    if let Err(retry_secs) = s.wol_throttle_check(id) {
+        let _ = db::insert_audit_log(
+            &s.db,
+            "dashboard",
+            Some(id),
+            "wake_on_lan",
+            "rate_limited",
+            &serde_json::json!({ "retry_after_secs": retry_secs }),
+        )
+        .await;
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({
+                "error": format!("Wake-on-LAN for this agent was sent recently; try again in about {retry_secs}s."),
+                "retry_after_secs": retry_secs,
+            })),
+        )
+            .into_response();
+    }
+
+    let info_val = match db::get_agent_info(&s.db, id).await {
+        Ok(v) => v,
+        Err(e) => return err500(e),
+    };
+    let Some(info) = info_val else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "No stored system info for this agent. Connect it once so a MAC address is recorded."
+            })),
+        )
+            .into_response();
+    };
+    let Some(mac) = crate::wol::mac_bytes_from_agent_info(&info) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "error": "No usable MAC address in stored network adapters."
+            })),
+        )
+            .into_response();
+    };
+
+    let broadcast = q
+        .broadcast
+        .as_deref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("255.255.255.255");
+    let port = q.port.unwrap_or(9);
+
+    if let Err(e) = crate::wol::send_wake(mac, broadcast, port).await {
+        tracing::warn!("WoL UDP send failed for {id}: {e}");
+        let _ = db::insert_audit_log(
+            &s.db,
+            "dashboard",
+            Some(id),
+            "wake_on_lan",
+            "error",
+            &serde_json::json!({ "error": e.to_string(), "broadcast": broadcast, "port": port }),
+        )
+        .await;
+        return (
+            StatusCode::BAD_GATEWAY,
+            Json(serde_json::json!({ "error": format!("Could not send magic packet: {e}") })),
+        )
+            .into_response();
+    }
+
+    let mac_str = crate::wol::format_mac_colon(&mac);
+    s.wol_mark_sent(id);
+    let _ = db::insert_audit_log(
+        &s.db,
+        "dashboard",
+        Some(id),
+        "wake_on_lan",
+        "ok",
+        &serde_json::json!({ "mac": mac_str, "broadcast": broadcast, "port": port }),
+    )
+    .await;
+
+    Json(serde_json::json!({
+        "ok": true,
+        "mac": mac_str,
+        "broadcast": broadcast,
+        "port": port,
+    }))
+    .into_response()
 }
 
 async fn audit_log(

@@ -19,14 +19,19 @@ interface PageParams {
   offset?: number;
 }
 
-async function get<T>(url: string): Promise<T> {
-  const res = await fetch(url, { credentials: "include" });
-  if (!res.ok) throw new Error(`HTTP ${res.status} – ${url}`);
+/** Paths are relative to `apiPrefix` (e.g. `/agents`, `/settings/retention`), not including `/api` twice. */
+export function apiUrl(path: string): string {
+  return buildApiUrl(path);
+}
+
+async function get<T>(path: string): Promise<T> {
+  const res = await fetch(apiUrl(path), { credentials: "include" });
+  if (!res.ok) throw new Error(`HTTP ${res.status} – ${path}`);
   return res.json() as Promise<T>;
 }
 
-async function putJson<T>(url: string, body: unknown): Promise<T> {
-  const res = await fetch(url, {
+async function putJson<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(apiUrl(path), {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
@@ -39,9 +44,28 @@ async function putJson<T>(url: string, body: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-/** Helper to build API URLs */
-export function apiUrl(path: string): string {
-  return buildApiUrl(path);
+async function postEmpty<T>(path: string): Promise<T> {
+  const res = await fetch(apiUrl(path), {
+    method: "POST",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+async function delJson<T>(path: string): Promise<T> {
+  const res = await fetch(apiUrl(path), {
+    method: "DELETE",
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const errBody = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(errBody.error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<T>;
 }
 
 export const api = {
@@ -52,15 +76,14 @@ export const api = {
     authenticated: boolean;
     password_required: boolean;
   }> => {
-    const res = await fetch("/api/auth/status", { credentials: "include" });
-    // 401 is a normal "not logged in" response — still parse it.
+    const res = await fetch(apiUrl("/auth/status"), { credentials: "include" });
     if (!res.ok && res.status !== 401) throw new Error(`HTTP ${res.status}`);
     return res.json();
   },
 
   /** Submit the UI password; throws with the server error message on failure. */
   login: async (password: string): Promise<void> => {
-    const res = await fetch("/api/login", {
+    const res = await fetch(apiUrl("/login"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password }),
@@ -74,135 +97,137 @@ export const api = {
 
   /** Clear the current session cookie. */
   logout: async (): Promise<void> => {
-    await fetch("/api/logout", { method: "POST", credentials: "include" });
+    await fetch(apiUrl("/logout"), { method: "POST", credentials: "include" });
   },
 
   // ── Dashboard data ────────────────────────────────────────────────────────
 
-  agents: (): Promise<{ agents: Agent[] }> => get("/api/agents"),
+  agents: (): Promise<{ agents: Agent[] }> => get("/agents"),
 
   windows: (
     id: string,
     { limit = 100, offset = 0 }: PageParams = {},
   ): Promise<{ rows: WindowEvent[] }> =>
-    get(`/api/agents/${id}/windows?limit=${limit}&offset=${offset}`),
+    get(`/agents/${id}/windows?limit=${limit}&offset=${offset}`),
 
   keys: (
     id: string,
     { limit = 100, offset = 0 }: PageParams = {},
   ): Promise<{ rows: KeySession[] }> =>
-    get(`/api/agents/${id}/keys?limit=${limit}&offset=${offset}`),
+    get(`/agents/${id}/keys?limit=${limit}&offset=${offset}`),
 
   urls: (
     id: string,
     { limit = 100, offset = 0 }: PageParams = {},
   ): Promise<{ rows: UrlVisit[] }> =>
-    get(`/api/agents/${id}/urls?limit=${limit}&offset=${offset}`),
+    get(`/agents/${id}/urls?limit=${limit}&offset=${offset}`),
 
   activity: (
     id: string,
     { limit = 100, offset = 0 }: PageParams = {},
   ): Promise<{ rows: ActivityEvent[] }> =>
-    get(`/api/agents/${id}/activity?limit=${limit}&offset=${offset}`),
+    get(`/agents/${id}/activity?limit=${limit}&offset=${offset}`),
 
   agentInfo: (id: string): Promise<{ info: AgentInfo | null }> =>
-    get(`/api/agents/${id}/info`),
+    get(`/agents/${id}/info`),
 
   topUrls: (
     id: string,
     { limit = 100, offset = 0 }: PageParams = {},
   ): Promise<{ rows: UrlTopRow[] }> =>
-    get(`/api/agents/${id}/top-urls?limit=${limit}&offset=${offset}`),
+    get(`/agents/${id}/top-urls?limit=${limit}&offset=${offset}`),
 
   topWindows: (
     id: string,
     { limit = 100, offset = 0 }: PageParams = {},
   ): Promise<{ rows: WindowTopRow[] }> =>
-    get(`/api/agents/${id}/top-windows?limit=${limit}&offset=${offset}`),
+    get(`/agents/${id}/top-windows?limit=${limit}&offset=${offset}`),
 
   // ── Destructive actions ────────────────────────────────────────────────
   /** Clear all stored telemetry history for this agent (windows/keys/urls/activity). */
-  clearAgentHistory: async (id: string): Promise<{ cleared_rows: number }> => {
-    const res = await fetch(`/api/agents/${id}/history/clear`, {
-      method: "POST",
-      credentials: "include",
-    });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new Error(body.error ?? `HTTP ${res.status}`);
-    }
-    return (await res.json()) as { cleared_rows: number };
-  },
+  clearAgentHistory: (id: string): Promise<{ cleared_rows: number }> =>
+    postEmpty(`/agents/${id}/history/clear`),
 
-  mjpegUrl: (id: string) => `/api/agents/${id}/mjpeg`,
+  mjpegUrl: (id: string) => apiUrl(`/agents/${id}/mjpeg`),
 
   // ── Retention (server) ───────────────────────────────────────────────────
 
-  retentionGlobalGet: (): Promise<RetentionPolicy> =>
-    get("/api/settings/retention"),
+  retentionGlobalGet: (): Promise<RetentionPolicy> => get("/settings/retention"),
 
   retentionGlobalPut: (body: RetentionPolicy): Promise<RetentionPolicy> =>
-    putJson("/api/settings/retention", body),
+    putJson("/settings/retention", body),
 
   retentionAgentGet: (
     id: string,
   ): Promise<{ global: RetentionPolicy; override: RetentionPolicy | null }> =>
-    get(`/api/agents/${id}/retention`),
+    get(`/agents/${id}/retention`),
 
   retentionAgentPut: (
     id: string,
     body: RetentionPolicy,
   ): Promise<{ global: RetentionPolicy; override: RetentionPolicy | null }> =>
-    putJson(`/api/agents/${id}/retention`, body),
+    putJson(`/agents/${id}/retention`, body),
 
-  retentionAgentDelete: async (
+  retentionAgentDelete: (
     id: string,
-  ): Promise<{ global: RetentionPolicy; override: RetentionPolicy | null }> => {
-    const res = await fetch(`/api/agents/${id}/retention`, { method: "DELETE" });
-    if (!res.ok) {
-      const errBody = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new Error(errBody.error ?? `HTTP ${res.status}`);
-    }
-    return res.json() as Promise<{
-      global: RetentionPolicy;
-      override: RetentionPolicy | null;
-    }>;
+  ): Promise<{ global: RetentionPolicy; override: RetentionPolicy | null }> =>
+    delJson(`/agents/${id}/retention`),
+
+  /** Wake-on-LAN using MAC from last stored system info (`POST`, optional `broadcast`, `port`). */
+  wakeAgent: async (
+    id: string,
+    opts?: { broadcast?: string; port?: number },
+  ): Promise<{ ok: boolean; mac: string; broadcast: string; port: number }> => {
+    const p = new URLSearchParams();
+    if (opts?.broadcast) p.set("broadcast", opts.broadcast);
+    if (opts?.port != null) p.set("port", String(opts.port));
+    const qs = p.toString();
+    const res = await fetch(apiUrl(`/agents/${id}/wake${qs ? `?${qs}` : ""}`), {
+      method: "POST",
+      credentials: "include",
+    });
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      ok?: boolean;
+      mac?: string;
+      broadcast?: string;
+      port?: number;
+      retry_after_secs?: number;
+    };
+    if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+    return {
+      ok: body.ok ?? true,
+      mac: body.mac ?? "",
+      broadcast: body.broadcast ?? "",
+      port: body.port ?? 9,
+    };
   },
 
   // ── Agent local settings window password (pushed to Windows agents) ───────
 
   localUiPasswordGlobalGet: (): Promise<LocalUiPasswordGlobalState> =>
-    get("/api/settings/local-ui-password"),
+    get("/settings/local-ui-password"),
 
   localUiPasswordGlobalPut: (body: {
     password: string | null;
   }): Promise<LocalUiPasswordGlobalState> =>
-    putJson("/api/settings/local-ui-password", body),
+    putJson("/settings/local-ui-password", body),
 
   localUiPasswordAgentGet: (
     id: string,
   ): Promise<LocalUiPasswordAgentState> =>
-    get(`/api/agents/${id}/local-ui-password`),
+    get(`/agents/${id}/local-ui-password`),
 
   localUiPasswordAgentPut: (
     id: string,
     body: { password: string | null },
   ): Promise<LocalUiPasswordAgentState> =>
-    putJson(`/api/agents/${id}/local-ui-password`, body),
+    putJson(`/agents/${id}/local-ui-password`, body),
 
-  localUiPasswordAgentDelete: async (
+  localUiPasswordAgentDelete: (
     id: string,
-  ): Promise<LocalUiPasswordAgentState> => {
-    const res = await fetch(`/api/agents/${id}/local-ui-password`, {
-      method: "DELETE",
-      credentials: "include",
-    });
-    if (!res.ok) {
-      const errBody = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new Error(errBody.error ?? `HTTP ${res.status}`);
-    }
-    return res.json() as Promise<LocalUiPasswordAgentState>;
-  },
+  ): Promise<LocalUiPasswordAgentState> =>
+    delJson(`/agents/${id}/local-ui-password`),
 
-  storageUsage: (): Promise<StorageUsage> => get("/api/settings/storage"),
+  storageUsage: (): Promise<StorageUsage> => get("/settings/storage"),
 };

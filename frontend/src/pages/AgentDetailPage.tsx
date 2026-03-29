@@ -13,7 +13,7 @@ import { FilesTab } from "../components/tabs/FilesTab";
 import { AuditTab } from "../components/tabs/AuditTab";
 import { ActivityTimeline } from "../components/timeline/ActivityTimeline";
 import { aggregateSessions } from "../lib/session-aggregator";
-import { apiUrl } from "../lib/api";
+import { api, apiUrl } from "../lib/api";
 import type { Agent, AgentInfo } from "../lib/types";
 import { PageHeader, type AgentAction } from "../components/detail/PageHeader";
 import { GeneralConfig } from "../components/detail/GeneralConfig";
@@ -176,6 +176,19 @@ export function AgentDetailPage({
     (action: AgentAction) => {
       if (!agent.online) {
         onNotifyWarning("Agent offline", `Cannot run "${action}" while ${agent.name} is offline.`);
+        return;
+      }
+
+      if (action === "wake-lan") {
+        void api
+          .wakeAgent(agent.id)
+          .then((r) =>
+            onNotifyInfo(
+              "Wake on LAN sent",
+              `Magic packet sent to ${r.mac} (${r.broadcast}:${r.port}). WoL must be enabled on the PC; the server must reach the subnet broadcast.`,
+            ),
+          )
+          .catch((e) => onNotifyError("Wake on LAN failed", String(e)));
         return;
       }
 

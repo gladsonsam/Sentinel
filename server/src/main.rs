@@ -9,6 +9,7 @@
 //! | `STATIC_DIR`   | `./static`                                          |
 //! | `UI_PASSWORD`  | *(unset – deny access; set ALLOW_INSECURE_DASHBOARD_OPEN=true to allow)* |
 //! | `RUST_LOG`     | `info`                                              |
+//! | `WOL_MIN_INTERVAL_SECS` | Minimum seconds between Wake-on-LAN for the same agent (`0` = off; default `15`) |
 //!
 //! Set `UI_PASSWORD` to enable password protection for the dashboard.
 //! The agent WebSocket (`/ws/agent`) uses a shared secret (`AGENT_SECRET`)
@@ -18,6 +19,7 @@ mod api;
 mod auth;
 mod db;
 mod state;
+mod wol;
 mod ws_agent;
 mod ws_viewer;
 
@@ -114,12 +116,22 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    let wol_min_interval_secs: u64 = std::env::var("WOL_MIN_INTERVAL_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(15);
+    let wol_min_interval = std::time::Duration::from_secs(wol_min_interval_secs);
+    if !wol_min_interval.is_zero() {
+        info!("Wake-on-LAN per-agent throttle: {}s.", wol_min_interval_secs);
+    }
+
     let state = Arc::new(state::AppState::new(
         pool,
         ui_password,
         allow_insecure_dashboard_open,
         agent_secret,
         allow_insecure_agent_auth,
+        wol_min_interval,
     ));
 
     // ── Routes ────────────────────────────────────────────────────────────

@@ -12,16 +12,9 @@ import {
   daysToField,
   fieldToDays,
   fmtRetentionBrief,
+  parseRetentionField,
   RETENTION_INPUT_CLASS,
 } from "../lib/retentionForm";
-
-function parseRetentionField(s: string): { value: number | null; error: string | null } {
-  try {
-    return { value: fieldToDays(s), error: null };
-  } catch (e) {
-    return { value: null, error: e instanceof Error ? e.message : String(e) };
-  }
-}
 
 interface Props {
   themePref: ThemePreference;

@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
@@ -80,6 +81,10 @@ pub struct AppState {
     /// Stored in memory only — reset when the server restarts.
     pub sessions: Mutex<HashSet<String>>,
 
+    /// Last successful Wake-on-LAN per agent (in-memory throttle).
+    wol_last_wake: Mutex<HashMap<Uuid, Instant>>,
+    /// Minimum time between WoL magic packets for the same agent (`0` = no limit).
+    pub wol_min_interval: Duration,
 }
 
 /// A cached screenshot frame with a monotonically increasing sequence number.
@@ -99,6 +104,7 @@ impl AppState {
         allow_insecure_dashboard_open: bool,
         agent_secret: Option<String>,
         allow_insecure_agent_auth: bool,
+        wol_min_interval: Duration,
     ) -> Self {
         let (tx, _) = broadcast::channel(4096);
         Self {
@@ -113,7 +119,36 @@ impl AppState {
             agent_secret,
             allow_insecure_agent_auth,
             sessions: Mutex::new(HashSet::new()),
+            wol_last_wake: Mutex::new(HashMap::new()),
+            wol_min_interval,
         }
+    }
+
+    /// Returns `Err(retry_after_secs)` when WoL for this agent is throttled.
+    pub fn wol_throttle_check(&self, agent_id: Uuid) -> Result<(), u64> {
+        if self.wol_min_interval.is_zero() {
+            return Ok(());
+        }
+        let map = self.wol_last_wake.lock().unwrap();
+        let now = Instant::now();
+        if let Some(last) = map.get(&agent_id) {
+            let elapsed = now.saturating_duration_since(*last);
+            if elapsed < self.wol_min_interval {
+                let wait = (self.wol_min_interval - elapsed).as_secs().max(1);
+                return Err(wait);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn wol_mark_sent(&self, agent_id: Uuid) {
+        if self.wol_min_interval.is_zero() {
+            return;
+        }
+        self.wol_last_wake
+            .lock()
+            .unwrap()
+            .insert(agent_id, Instant::now());
     }
 
     /// Send a JSON string to every connected viewer (fire-and-forget).

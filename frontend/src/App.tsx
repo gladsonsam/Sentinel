@@ -11,7 +11,7 @@ import { useWebSocket } from "./hooks/useWebSocket";
 import { useAgents } from "./hooks/useAgents";
 import { useTheme } from "./hooks/useTheme";
 import { useNotifications } from "./hooks/useNotifications";
-import { apiUrl } from "./lib/api";
+import { api, apiUrl } from "./lib/api";
 
 type ViewMode = "overview" | "detail" | "settings";
 
@@ -205,6 +205,46 @@ export function App() {
     setViewMode(settingsReturnRef.current);
   };
 
+  const runBatchWake = useCallback(
+    async (agentIds: string[]) => {
+      if (agentIds.length === 0) return;
+      const results = await Promise.allSettled(
+        agentIds.map((id) => api.wakeAgent(id)),
+      );
+      let ok = 0;
+      const errors: string[] = [];
+      results.forEach((r, i) => {
+        const name = agents[agentIds[i]]?.name ?? agentIds[i];
+        if (r.status === "fulfilled") ok += 1;
+        else errors.push(`${name}: ${r.reason}`);
+      });
+      const fail = results.length - ok;
+      if (fail === 0) {
+        info(
+          `Wake on LAN sent to ${ok} machine(s)`,
+          "Magic packets use the MAC from each agent’s last stored system info.",
+        );
+      } else if (ok === 0) {
+        error(
+          "Wake on LAN failed",
+          errors
+            .slice(0, 3)
+            .map((s) => String(s).replace(/^Error: /, ""))
+            .join(" · ") + (errors.length > 3 ? " …" : ""),
+        );
+      } else {
+        warning(
+          `Wake sent to ${ok}; ${fail} failed`,
+          errors
+            .slice(0, 2)
+            .map((s) => String(s).replace(/^Error: /, ""))
+            .join(" · "),
+        );
+      }
+    },
+    [agents, error, info, warning],
+  );
+
   const runBatchAction = useCallback(
     (agentIds: string[], cmdType: "RestartHost" | "ShutdownHost") => {
       const onlineIds = agentIds.filter((id) => agents[id]?.online);
@@ -259,6 +299,7 @@ export function App() {
             liveStatus={liveStatus}
             onSelectAgent={handleSelectAgent}
             onRefresh={checkAuth}
+            onBatchWake={(ids) => void runBatchWake(ids)}
             onBatchRestart={(agentIds) => {
               runBatchAction(agentIds, "RestartHost");
             }}

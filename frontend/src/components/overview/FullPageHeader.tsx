@@ -6,6 +6,7 @@ interface FullPageHeaderProps {
   totalAgents: number;
   selectedCount: number;
   onRefresh: () => void;
+  onWakeSelected: () => void;
   onRestartSelected: () => void;
   onShutdownSelected: () => void;
 }
@@ -14,6 +15,7 @@ export function FullPageHeader({
   totalAgents,
   selectedCount,
   onRefresh,
+  onWakeSelected,
   onRestartSelected,
   onShutdownSelected,
 }: FullPageHeaderProps) {
@@ -26,6 +28,9 @@ export function FullPageHeader({
         <SpaceBetween direction="horizontal" size="xs">
           <Button onClick={onRefresh} iconName="refresh">
             Refresh
+          </Button>
+          <Button disabled={selectedCount === 0} onClick={onWakeSelected}>
+            Wake selected
           </Button>
           <Button disabled={selectedCount === 0} onClick={onRestartSelected}>
             Restart selected

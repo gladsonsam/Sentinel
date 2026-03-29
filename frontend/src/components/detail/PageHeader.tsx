@@ -6,7 +6,11 @@ import type { ButtonDropdownProps } from "@cloudscape-design/components/button-d
 import type { Agent } from "../../lib/types";
 import { fmtDateTime } from "../../lib/utils";
 
-export type AgentAction = "restart-host" | "shutdown-host" | "request-info";
+export type AgentAction =
+  | "restart-host"
+  | "shutdown-host"
+  | "request-info"
+  | "wake-lan";
 
 interface PageHeaderProps {
   agent: Agent;
@@ -40,9 +44,10 @@ export function PageHeader({
           <Button onClick={onOpenHelp}>Open help</Button>
           <ButtonDropdown
             items={[
+              { id: "wake-lan", text: "Wake on LAN" },
+              { id: "request-info", text: "Request fresh system info" },
               { id: "restart-host", text: "Restart computer" },
               { id: "shutdown-host", text: "Shutdown computer" },
-              { id: "request-info", text: "Request fresh system info" },
             ]}
             onItemClick={handleItemClick}
           >

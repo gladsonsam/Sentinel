@@ -21,6 +21,7 @@ interface AgentCardProps {
   liveStatus: Record<string, AgentLiveStatus>;
   onSelectAgent: (agentId: string) => void;
   onRefresh: () => void;
+  onBatchWake: (agentIds: string[]) => void;
   onBatchRestart: (agentIds: string[]) => void;
   onBatchShutdown: (agentIds: string[]) => void;
 }
@@ -30,6 +31,7 @@ export function AgentCard({
   liveStatus,
   onSelectAgent,
   onRefresh,
+  onBatchWake,
   onBatchRestart,
   onBatchShutdown,
 }: AgentCardProps) {
@@ -90,6 +92,7 @@ export function AgentCard({
           totalAgents={agentsWithStatus.length}
           selectedCount={selectedItems.length}
           onRefresh={onRefresh}
+          onWakeSelected={() => onBatchWake(selectedItems.map((item) => item.id))}
           onRestartSelected={() => onBatchRestart(selectedItems.map((item) => item.id))}
           onShutdownSelected={() => onBatchShutdown(selectedItems.map((item) => item.id))}
         />

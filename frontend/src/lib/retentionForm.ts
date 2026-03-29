@@ -4,6 +4,17 @@ export function daysToField(v: number | null | undefined): string {
   return v == null ? "" : String(v);
 }
 
+export function parseRetentionField(s: string): {
+  value: number | null;
+  error: string | null;
+} {
+  try {
+    return { value: fieldToDays(s), error: null };
+  } catch (e) {
+    return { value: null, error: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 /** Blank → use default / no limit. Whole days 1–36500. */
 export function fieldToDays(s: string): number | null {
   const t = s.trim();
