@@ -5,8 +5,8 @@ import Box from "@cloudscape-design/components/box";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Button from "@cloudscape-design/components/button";
 import Toggle from "@cloudscape-design/components/toggle";
-import Modal from "@cloudscape-design/components/modal";
 import FormField from "@cloudscape-design/components/form-field";
+import Modal from "@cloudscape-design/components/modal";
 import Input from "@cloudscape-design/components/input";
 import { apiUrl } from "../../lib/api";
 import { StreamStatus } from "../common/StatusIndicator";
@@ -132,13 +132,17 @@ export function ScreenTab({ agentId, sendWsMessage }: ScreenTabProps) {
             variant="h2"
             actions={
               <SpaceBetween direction="horizontal" size="xs">
-                <StreamStatus streaming={streaming} />
-                <Toggle
-                  checked={remoteControl}
-                  onChange={({ detail }) => setRemoteControl(detail.checked)}
-                >
-                  Remote control
-                </Toggle>
+                <Box padding={{ top: "xs" }}>
+                  <StreamStatus streaming={streaming} />
+                </Box>
+                <Box padding={{ top: "xs" }}>
+                  <Toggle
+                    checked={remoteControl}
+                    onChange={({ detail }) => setRemoteControl(detail.checked)}
+                  >
+                    Remote control
+                  </Toggle>
+                </Box>
                 <Button
                   iconName="notification"
                   onClick={() => setShowNotificationModal(true)}

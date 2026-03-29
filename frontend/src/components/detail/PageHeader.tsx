@@ -2,20 +2,30 @@ import Header from "@cloudscape-design/components/header";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Button from "@cloudscape-design/components/button";
 import ButtonDropdown from "@cloudscape-design/components/button-dropdown";
+import type { ButtonDropdownProps } from "@cloudscape-design/components/button-dropdown";
 import type { Agent } from "../../lib/types";
 import { fmtDateTime } from "../../lib/utils";
+
+export type AgentAction = "restart-host" | "shutdown-host" | "request-info";
 
 interface PageHeaderProps {
   agent: Agent;
   onBackToOverview?: () => void;
   onOpenHelp: () => void;
+  onRunAction: (action: AgentAction) => void;
 }
 
 export function PageHeader({
   agent,
   onBackToOverview,
   onOpenHelp,
+  onRunAction,
 }: PageHeaderProps) {
+  const handleItemClick: ButtonDropdownProps["onItemClick"] = ({ detail }) => {
+    const id = detail.id as AgentAction;
+    onRunAction(id);
+  };
+
   return (
     <Header
       variant="h1"
@@ -30,11 +40,11 @@ export function PageHeader({
           <Button onClick={onOpenHelp}>Open help</Button>
           <ButtonDropdown
             items={[
-              { id: "restart", text: "Restart agent" },
-              { id: "shutdown", text: "Shutdown agent" },
+              { id: "restart-host", text: "Restart computer" },
+              { id: "shutdown-host", text: "Shutdown computer" },
               { id: "request-info", text: "Request fresh system info" },
             ]}
-            onItemClick={() => {}}
+            onItemClick={handleItemClick}
           >
             Actions
           </ButtonDropdown>

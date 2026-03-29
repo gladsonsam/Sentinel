@@ -39,6 +39,9 @@
 //! | Local UI password| `Text` (JSON) | `"set_local_ui_password_hash"` |
 //! | Mouse move       | `Text` (JSON) | `"MouseMove"`         |
 //! | Mouse click      | `Text` (JSON) | `"MouseClick"`        |
+//! | Request info     | `Text` (JSON) | `"RequestInfo"`       |
+//! | Restart host     | `Text` (JSON) | `"RestartHost"`       |
+//! | Shutdown host    | `Text` (JSON) | `"ShutdownHost"`      |
 
 // In release builds: suppress the console window so the agent runs silently.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -604,6 +607,60 @@ fn handle_server_command(
     };
 
     match val["type"].as_str().unwrap_or("") {
+        "RequestInfo" => {
+            let payload = system_info::collect_agent_info().to_string();
+            let tx = out_tx.clone();
+            tokio::spawn(async move {
+                let _ = tx.send(Message::Text(payload)).await;
+            });
+            info!("Received RequestInfo command; pushed fresh system info.");
+        }
+        "RestartHost" => {
+            #[cfg(target_os = "windows")]
+            {
+                match std::process::Command::new("shutdown")
+                    .args(["/r", "/t", "0", "/f"])
+                    .status()
+                {
+                    Ok(status) if status.success() => {
+                        info!("Received RestartHost command; restart initiated.");
+                    }
+                    Ok(status) => {
+                        warn!("RestartHost command failed with status: {status}");
+                    }
+                    Err(e) => {
+                        warn!("Failed to execute RestartHost command: {e}");
+                    }
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                warn!("RestartHost command received on non-Windows build; ignored.");
+            }
+        }
+        "ShutdownHost" => {
+            #[cfg(target_os = "windows")]
+            {
+                match std::process::Command::new("shutdown")
+                    .args(["/s", "/t", "0", "/f"])
+                    .status()
+                {
+                    Ok(status) if status.success() => {
+                        info!("Received ShutdownHost command; shutdown initiated.");
+                    }
+                    Ok(status) => {
+                        warn!("ShutdownHost command failed with status: {status}");
+                    }
+                    Err(e) => {
+                        warn!("Failed to execute ShutdownHost command: {e}");
+                    }
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                warn!("ShutdownHost command received on non-Windows build; ignored.");
+            }
+        }
         "set_local_ui_password_hash" => {
             if let Some(hash) = val["hash"].as_str() {
                 if let Ok(mut c) = shared_cfg.lock() {

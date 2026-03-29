@@ -14,14 +14,18 @@ import { ActivityTimeline } from "../components/timeline/ActivityTimeline";
 import { aggregateSessions } from "../lib/session-aggregator";
 import { apiUrl } from "../lib/api";
 import type { Agent, AgentInfo } from "../lib/types";
-import { PageHeader } from "../components/detail/PageHeader";
+import { PageHeader, type AgentAction } from "../components/detail/PageHeader";
 import { GeneralConfig } from "../components/detail/GeneralConfig";
 import { parseTimestamp } from "../lib/utils";
+import { AgentSettingsTab } from "../components/AgentSettingsTab";
 
 interface AgentDetailPageProps {
   agent: Agent;
   agentInfo: AgentInfo | null;
   sendWsMessage: (msg: any) => void;
+  onNotifyInfo: (header: string, content?: string) => void;
+  onNotifyWarning: (header: string, content?: string) => void;
+  onNotifyError: (header: string, content?: string) => void;
   activeTab: TabKey;
   onTabChange: (tab: TabKey) => void;
   onBackToOverview?: () => void;
@@ -32,6 +36,9 @@ export function AgentDetailPage({
   agent,
   agentInfo,
   sendWsMessage,
+  onNotifyInfo,
+  onNotifyWarning,
+  onNotifyError,
   activeTab,
   onTabChange,
   onBackToOverview,
@@ -138,6 +145,48 @@ export function AgentDetailPage({
     };
   }, [activeTab, agent.id, loadActivityData]);
 
+  const runAgentAction = useCallback(
+    (action: AgentAction) => {
+      if (!agent.online) {
+        onNotifyWarning("Agent offline", `Cannot run "${action}" while ${agent.name} is offline.`);
+        return;
+      }
+
+      if (action === "request-info") {
+        sendWsMessage({
+          type: "control",
+          agent_id: agent.id,
+          cmd: { type: "RequestInfo" },
+        });
+        onNotifyInfo("Requested system info", `Asked ${agent.name} to send fresh specs.`);
+        return;
+      }
+
+      if (action === "restart-host") {
+        sendWsMessage({
+          type: "control",
+          agent_id: agent.id,
+          cmd: { type: "RestartHost" },
+        });
+        onNotifyWarning("Restart sent", `Sent restart command to ${agent.name}.`);
+        return;
+      }
+
+      if (action === "shutdown-host") {
+        sendWsMessage({
+          type: "control",
+          agent_id: agent.id,
+          cmd: { type: "ShutdownHost" },
+        });
+        onNotifyWarning("Shutdown sent", `Sent shutdown command to ${agent.name}.`);
+        return;
+      }
+
+      onNotifyError("Unsupported action", `Action "${action}" is not implemented.`);
+    },
+    [agent.id, agent.name, agent.online, sendWsMessage, onNotifyInfo, onNotifyWarning, onNotifyError]
+  );
+
   const renderTabContent = (tab: TabKey) => {
     switch (tab) {
       case "activity":
@@ -161,7 +210,7 @@ export function AgentDetailPage({
       case "files":
         return <FilesTab agentId={agent.id} sendWsMessage={sendWsMessage} />;
       case "settings":
-        return <div>Settings Tab - Coming Soon</div>;
+        return <AgentSettingsTab agentId={agent.id} agentName={agent.name} />;
       default:
         return null;
     }
@@ -197,7 +246,12 @@ export function AgentDetailPage({
           }}
         />
 
-        <PageHeader agent={agent} onBackToOverview={onBackToOverview} onOpenHelp={onOpenHelp} />
+        <PageHeader
+          agent={agent}
+          onBackToOverview={onBackToOverview}
+          onOpenHelp={onOpenHelp}
+          onRunAction={runAgentAction}
+        />
 
         <GeneralConfig agent={agent} info={agentInfo} onOpenHelp={onOpenHelp} />
 

@@ -66,6 +66,18 @@ function mergeAdjacentByApp(sessions: Session[]): Session[] {
   return out;
 }
 
+function dedupeWindowsByTimestampAndTitle(windows: Session["windows"]) {
+  const seen = new Set<string>();
+  const out: Session["windows"] = [];
+  for (const win of windows) {
+    const key = `${win.timestamp}::${win.window_title}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(win);
+  }
+  return out;
+}
+
 
 function SessionItem({ session, isLast }: { session: Session; isLast: boolean }) {
   const [expanded, setExpanded] = useState(false);
@@ -210,7 +222,11 @@ function SessionItem({ session, isLast }: { session: Session; isLast: boolean })
 
 export function ActivityTimeline({ sessions, loading, onRefresh }: ActivityTimelineProps) {
   const sorted = useMemo(
-    () => mergeAdjacentByApp([...sessions].reverse()),
+    () =>
+      mergeAdjacentByApp([...sessions].reverse()).map((s) => ({
+        ...s,
+        windows: dedupeWindowsByTimestampAndTitle(s.windows),
+      })),
     [sessions]
   );
 

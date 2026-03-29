@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import "@cloudscape-design/global-styles/index.css";
 import "./styles/cloudscape-theme.css";
 import { DashboardLayout } from "./layouts/DashboardLayout";
@@ -34,7 +34,7 @@ export function App() {
     setSelectedAgentId,
   } = useAgents();
   
-  const { notifications, removeNotification, success, warning, info } = useNotifications();
+  const { notifications, removeNotification, success, warning, info, error } = useNotifications();
   const { themeMode, changeTheme } = useTheme();
   const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disconnectNotifiedRef = useRef(false);
@@ -194,6 +194,43 @@ export function App() {
     setSelectedAgentId(null);
   };
 
+  const runBatchAction = useCallback(
+    (agentIds: string[], cmdType: "RestartHost" | "ShutdownHost") => {
+      const onlineIds = agentIds.filter((id) => agents[id]?.online);
+      const offlineCount = agentIds.length - onlineIds.length;
+
+      if (onlineIds.length === 0) {
+        warning(
+          "No online agents selected",
+          "Select at least one online agent to send this action."
+        );
+        return;
+      }
+
+      for (const id of onlineIds) {
+        send({
+          type: "control",
+          agent_id: id,
+          cmd: { type: cmdType },
+        });
+      }
+
+      const actionLabel = cmdType === "RestartHost" ? "restart" : "shutdown";
+      if (offlineCount > 0) {
+        warning(
+          `Sent ${actionLabel} to ${onlineIds.length} agent(s)`,
+          `${offlineCount} offline agent(s) were skipped.`
+        );
+      } else {
+        info(
+          `Sent ${actionLabel} to ${onlineIds.length} agent(s)`,
+          "Commands queued over WebSocket."
+        );
+      }
+    },
+    [agents, info, warning, send]
+  );
+
   if (authenticated === null) {
     return <div>Loading...</div>;
   }
@@ -213,10 +250,10 @@ export function App() {
               onSelectAgent={handleSelectAgent}
               onRefresh={checkAuth}
               onBatchRestart={(agentIds) => {
-                info("Batch action", `Restart requested for ${agentIds.length} agent(s)`);
+                runBatchAction(agentIds, "RestartHost");
               }}
               onBatchShutdown={(agentIds) => {
-                warning("Batch action", `Shutdown requested for ${agentIds.length} agent(s)`);
+                runBatchAction(agentIds, "ShutdownHost");
               }}
             />
           }
@@ -225,6 +262,7 @@ export function App() {
         contentType="cards"
         notifications={notifications}
           onDismissNotification={removeNotification}
+          showTools={false}
           toolsOpen={toolsOpen}
           onToolsChange={setToolsOpen}
         />
@@ -248,6 +286,9 @@ export function App() {
               agent={selectedAgent}
               agentInfo={agentInfo[selectedAgent.id] || null}
               sendWsMessage={send}
+              onNotifyInfo={info}
+              onNotifyWarning={warning}
+              onNotifyError={error}
               activeTab={activeTab}
               onTabChange={setActiveTab}
               onBackToOverview={handleBackToOverview}
@@ -260,6 +301,7 @@ export function App() {
           contentType="default"
           notifications={notifications}
           onDismissNotification={removeNotification}
+          showTools={true}
           toolsOpen={toolsOpen}
           onToolsChange={setToolsOpen}
         />

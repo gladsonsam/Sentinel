@@ -6,6 +6,7 @@ import Box from "@cloudscape-design/components/box";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Spinner from "@cloudscape-design/components/spinner";
 import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
+import ExpandableSection from "@cloudscape-design/components/expandable-section";
 import { apiUrl } from "../../lib/api";
 import type { AgentInfo } from "../../lib/types";
 
@@ -73,10 +74,80 @@ export function SpecsTab({ agentId, cachedInfo }: SpecsTabProps) {
     );
   }
 
-  const formatMemory = (bytes: number) => {
-    const gb = (bytes / (1024 * 1024 * 1024)).toFixed(2);
+  const formatMemoryFromMb = (mb: number) => {
+    const gb = (mb / 1024).toFixed(2);
     return `${gb} GB`;
   };
+
+  const adapters = info.adapters ?? [];
+  const loopbackPattern = /\b(loopback|pseudo-interface|localhost)\b/i;
+  const [primaryAdapters, loopbackAdapters] = adapters.reduce(
+    (acc, adapter) => {
+      const name = adapter.name ?? "";
+      const description = adapter.description ?? "";
+      const ips = adapter.ips ?? [];
+      const isLoopbackByText = loopbackPattern.test(name) || loopbackPattern.test(description);
+      const isAllLocalIps =
+        ips.length > 0 &&
+        ips.every((ip) => {
+          const v = ip.toLowerCase();
+          return v === "127.0.0.1" || v === "::1";
+        });
+
+      if (isLoopbackByText || isAllLocalIps) {
+        acc[1].push(adapter);
+      } else {
+        acc[0].push(adapter);
+      }
+      return acc;
+    },
+    [[], []] as [NonNullable<AgentInfo["adapters"]>, NonNullable<AgentInfo["adapters"]>]
+  );
+
+  const renderAdapter = (adapter: NonNullable<AgentInfo["adapters"]>[number], idx: number) => (
+    <Box key={`${adapter.name || "adapter"}-${idx}`}>
+      <Box variant="h3" margin={{ bottom: "s" }}>
+        {adapter.name || `Adapter ${idx + 1}`}
+      </Box>
+      <ColumnLayout columns={2} variant="text-grid">
+        <KeyValuePairs
+          columns={1}
+          items={[
+            {
+              label: "MAC Address",
+              value: adapter.mac || "—",
+            },
+            {
+              label: "IP Addresses",
+              value:
+                adapter.ips && adapter.ips.length > 0
+                  ? adapter.ips.join(", ")
+                  : "—",
+            },
+          ]}
+        />
+        <KeyValuePairs
+          columns={1}
+          items={[
+            {
+              label: "Gateway",
+              value:
+                adapter.gateways && adapter.gateways.length > 0
+                  ? adapter.gateways.join(", ")
+                  : "—",
+            },
+            {
+              label: "DNS Servers",
+              value:
+                adapter.dns && adapter.dns.length > 0
+                  ? adapter.dns.join(", ")
+                  : "—",
+            },
+          ]}
+        />
+      </ColumnLayout>
+    </Box>
+  );
 
   return (
     <SpaceBetween size="l">
@@ -99,7 +170,7 @@ export function SpecsTab({ agentId, cachedInfo }: SpecsTabProps) {
               {
                 label: "Memory",
                 value: info.memory_total_mb
-                  ? `${formatMemory(info.memory_used_mb || 0)} / ${formatMemory(info.memory_total_mb)}`
+                  ? `${formatMemoryFromMb(info.memory_used_mb || 0)} / ${formatMemoryFromMb(info.memory_total_mb)}`
                   : "—",
               },
             ]}
@@ -108,56 +179,28 @@ export function SpecsTab({ agentId, cachedInfo }: SpecsTabProps) {
       </Container>
 
       <Container header={<Header variant="h2">Network Adapters</Header>}>
-        {info.adapters && info.adapters.length > 0 ? (
+        {adapters.length > 0 ? (
           <SpaceBetween size="l">
-            {info.adapters.map((adapter, idx) => (
-              <Box key={idx}>
-                <Box variant="h3" margin={{ bottom: "s" }}>
-                  {adapter.name || `Adapter ${idx + 1}`}
-                </Box>
-                <ColumnLayout columns={2} variant="text-grid">
-                  <KeyValuePairs
-                    columns={1}
-                    items={[
-                      {
-                        label: "MAC Address",
-                        value: adapter.mac || "—",
-                      },
-                      {
-                        label: "IPv4 Addresses",
-                        value:
-                          adapter.ips && adapter.ips.length > 0
-                            ? adapter.ips.join(", ")
-                            : "—",
-                      },
-                      {
-                        label: "IPv6 Addresses",
-                        value: "—", // IPv6 not in current schema
-                      },
-                    ]}
-                  />
-                  <KeyValuePairs
-                    columns={1}
-                    items={[
-                      {
-                        label: "Gateway",
-                        value:
-                          adapter.gateways && adapter.gateways.length > 0
-                            ? adapter.gateways.join(", ")
-                            : "—",
-                      },
-                      {
-                        label: "DNS Servers",
-                        value:
-                          adapter.dns && adapter.dns.length > 0
-                            ? adapter.dns.join(", ")
-                            : "—",
-                      },
-                    ]}
-                  />
-                </ColumnLayout>
+            {primaryAdapters.length > 0 ? (
+              <SpaceBetween size="l">
+                {primaryAdapters.map((adapter, idx) => renderAdapter(adapter, idx))}
+              </SpaceBetween>
+            ) : (
+              <Box variant="p" color="text-body-secondary">
+                No primary adapters found.
               </Box>
-            ))}
+            )}
+            {loopbackAdapters.length > 0 && (
+              <ExpandableSection
+                headerText={`Loopback & local adapters (${loopbackAdapters.length})`}
+              >
+                <SpaceBetween size="l">
+                  {loopbackAdapters.map((adapter, idx) =>
+                    renderAdapter(adapter, primaryAdapters.length + idx)
+                  )}
+                </SpaceBetween>
+              </ExpandableSection>
+            )}
           </SpaceBetween>
         ) : (
           <Box textAlign="center" padding="l">

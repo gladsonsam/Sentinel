@@ -15,6 +15,7 @@ interface DashboardLayoutProps {
   contentType?: "default" | "table" | "form" | "cards";
   notifications: NotificationItem[];
   onDismissNotification: (id: string) => void;
+  showTools?: boolean;
   toolsOpen?: boolean;
   onToolsChange?: (open: boolean) => void;
 }
@@ -28,6 +29,7 @@ export function DashboardLayout({
   contentType = "default",
   notifications,
   onDismissNotification,
+  showTools = false,
   toolsOpen = false,
   onToolsChange,
 }: DashboardLayoutProps) {
@@ -55,8 +57,8 @@ export function DashboardLayout({
         }
         content={content}
         navigationWidth={280}
-        toolsHide={false}
-        tools={<ToolsContent />}
+        toolsHide={!showTools}
+        tools={showTools ? <ToolsContent /> : undefined}
         toolsOpen={toolsOpen}
         onToolsChange={({ detail }) => onToolsChange?.(detail.open)}
         contentType={contentType}

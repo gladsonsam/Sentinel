@@ -197,6 +197,7 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>) {
         }
         "ListDir" => val["cmd"]["path"].as_str().is_some(),
         "ReadFile" => val["cmd"]["path"].as_str().is_some(),
+        "RequestInfo" | "RestartHost" | "ShutdownHost" => true,
         _ => false,
     };
 
