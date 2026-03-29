@@ -16,12 +16,20 @@ interface WindowEvent {
   timestamp: string;
 }
 
+interface TopWindowRow {
+  app: string;
+  title: string;
+  focus_count: number;
+  last_ts: string;
+}
+
 interface WindowsTabProps {
   agentId: string;
 }
 
 export function WindowsTab({ agentId }: WindowsTabProps) {
   const [items, setItems] = useState<WindowEvent[]>([]);
+  const [topItems, setTopItems] = useState<TopWindowRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -44,6 +52,22 @@ export function WindowsTab({ agentId }: WindowsTabProps) {
             window_title: row.window_title ?? row.title ?? "—",
             exe_name: row.exe_name ?? row.app ?? "—",
             timestamp: row.timestamp ?? row.ts ?? row.created ?? "",
+          }))
+        );
+      }
+
+      const topRes = await fetch(apiUrl(`/agents/${agentId}/top-windows?limit=20`), {
+        credentials: "include",
+      });
+      if (topRes.ok) {
+        const topData = await topRes.json();
+        const topRows = Array.isArray(topData?.rows) ? topData.rows : [];
+        setTopItems(
+          topRows.map((row: any) => ({
+            app: row.app ?? "",
+            title: row.title ?? "",
+            focus_count: row.focus_count ?? 0,
+            last_ts: row.last_ts ?? "",
           }))
         );
       }
@@ -115,6 +139,11 @@ export function WindowsTab({ agentId }: WindowsTabProps) {
             <Button iconName="refresh" onClick={fetchWindows}>
               Refresh
             </Button>
+          }
+          description={
+            topItems.length > 0
+              ? `Top windows retained long-term: ${topItems.slice(0, 2).map((t) => `${t.app} (${t.focus_count})`).join(" • ")}`
+              : "Top window aggregates are retained after raw windows retention expiry."
           }
         >
           Window Focus History

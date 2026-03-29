@@ -6,6 +6,9 @@ import type {
   ActivityEvent,
   AgentInfo,
   RetentionPolicy,
+  StorageUsage,
+  UrlTopRow,
+  WindowTopRow,
   LocalUiPasswordGlobalState,
   LocalUiPasswordAgentState,
 } from "./types";
@@ -105,6 +108,18 @@ export const api = {
   agentInfo: (id: string): Promise<{ info: AgentInfo | null }> =>
     get(`/api/agents/${id}/info`),
 
+  topUrls: (
+    id: string,
+    { limit = 100, offset = 0 }: PageParams = {},
+  ): Promise<{ rows: UrlTopRow[] }> =>
+    get(`/api/agents/${id}/top-urls?limit=${limit}&offset=${offset}`),
+
+  topWindows: (
+    id: string,
+    { limit = 100, offset = 0 }: PageParams = {},
+  ): Promise<{ rows: WindowTopRow[] }> =>
+    get(`/api/agents/${id}/top-windows?limit=${limit}&offset=${offset}`),
+
   // ── Destructive actions ────────────────────────────────────────────────
   /** Clear all stored telemetry history for this agent (windows/keys/urls/activity). */
   clearAgentHistory: async (id: string): Promise<{ cleared_rows: number }> => {
@@ -188,4 +203,6 @@ export const api = {
     }
     return res.json() as Promise<LocalUiPasswordAgentState>;
   },
+
+  storageUsage: (): Promise<StorageUsage> => get("/api/settings/storage"),
 };

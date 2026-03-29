@@ -61,9 +61,45 @@
 /* Screen viewer */
 .sentinel-screen-viewer {
   position: relative;
-  background: var(--awsui-color-background-container-content);
+  background: #000;
   border-radius: var(--awsui-border-radius-container);
   overflow: hidden;
+  width: 100%;
+  min-height: 320px;
+}
+
+.sentinel-screen-frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.sentinel-screen-image {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.sentinel-screen-viewer:fullscreen,
+.sentinel-screen-viewer-fullscreen {
+  width: 100vw;
+  height: 100vh;
+  min-height: 100vh;
+  border-radius: 0;
+}
+
+.sentinel-screen-viewer:fullscreen .sentinel-screen-frame,
+.sentinel-screen-viewer-fullscreen .sentinel-screen-frame {
+  width: 100%;
+  height: 100%;
+}
+
+.sentinel-screen-viewer:fullscreen .sentinel-screen-image,
+.sentinel-screen-viewer-fullscreen .sentinel-screen-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  object-position: center center;
 }
 
 /* Remote control overlay */

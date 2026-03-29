@@ -54,6 +54,12 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
   const keyOverrideEnabled = agKey.trim().length > 0;
   const winOverrideEnabled = agWin.trim().length > 0;
   const urlOverrideEnabled = agUrl.trim().length > 0;
+  const modeWrapClass =
+    "inline-flex rounded-lg border border-border bg-bg/40 p-0.5 gap-1";
+  const modeButtonClass = (active: boolean) =>
+    active
+      ? "px-3 py-1.5 rounded-md text-xs font-semibold border border-accent bg-accent/15 text-primary"
+      : "px-3 py-1.5 rounded-md text-xs font-medium border border-transparent text-muted hover:text-primary hover:bg-border/30 transition-colors";
 
   const enableKeyOverride = () => {
     if (keyOverrideEnabled) return;
@@ -305,26 +311,18 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
                 <span className="text-xs text-muted">
                   Auto-delete days (blank = inherit defaults)
                 </span>
-                <div className="flex flex-wrap gap-2">
+                <div className={modeWrapClass}>
                   <button
                     type="button"
                     onClick={() => setAgKey("")}
-                    className={
-                      !keyOverrideEnabled
-                        ? "px-3 py-1.5 rounded-md text-xs font-medium border border-accent bg-accent/10 text-primary"
-                        : "px-3 py-1.5 rounded-md text-xs font-medium border border-border bg-surface text-muted hover:text-primary hover:bg-border/30 transition-colors"
-                    }
+                    className={modeButtonClass(!keyOverrideEnabled)}
                   >
                     Inherit
                   </button>
                   <button
                     type="button"
                     onClick={enableKeyOverride}
-                    className={
-                      keyOverrideEnabled
-                        ? "px-3 py-1.5 rounded-md text-xs font-medium border border-accent bg-accent/10 text-primary"
-                        : "px-3 py-1.5 rounded-md text-xs font-medium border border-border bg-surface text-muted hover:text-primary hover:bg-border/30 transition-colors"
-                    }
+                    className={modeButtonClass(keyOverrideEnabled)}
                   >
                     Override
                   </button>
@@ -375,26 +373,18 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
                 <span className="text-xs text-muted">
                   How long to keep focus history and AFK/active events for this PC
                 </span>
-                <div className="flex flex-wrap gap-2">
+                <div className={modeWrapClass}>
                   <button
                     type="button"
                     onClick={() => setAgWin("")}
-                    className={
-                      !winOverrideEnabled
-                        ? "px-3 py-1.5 rounded-md text-xs font-medium border border-accent bg-accent/10 text-primary"
-                        : "px-3 py-1.5 rounded-md text-xs font-medium border border-border bg-surface text-muted hover:text-primary hover:bg-border/30 transition-colors"
-                    }
+                    className={modeButtonClass(!winOverrideEnabled)}
                   >
                     Inherit
                   </button>
                   <button
                     type="button"
                     onClick={enableWinOverride}
-                    className={
-                      winOverrideEnabled
-                        ? "px-3 py-1.5 rounded-md text-xs font-medium border border-accent bg-accent/10 text-primary"
-                        : "px-3 py-1.5 rounded-md text-xs font-medium border border-border bg-surface text-muted hover:text-primary hover:bg-border/30 transition-colors"
-                    }
+                    className={modeButtonClass(winOverrideEnabled)}
                   >
                     Override
                   </button>
@@ -445,26 +435,18 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
                 <span className="text-xs text-muted">
                   Auto-delete days (blank = inherit defaults)
                 </span>
-                <div className="flex flex-wrap gap-2">
+                <div className={modeWrapClass}>
                   <button
                     type="button"
                     onClick={() => setAgUrl("")}
-                    className={
-                      !urlOverrideEnabled
-                        ? "px-3 py-1.5 rounded-md text-xs font-medium border border-accent bg-accent/10 text-primary"
-                        : "px-3 py-1.5 rounded-md text-xs font-medium border border-border bg-surface text-muted hover:text-primary hover:bg-border/30 transition-colors"
-                    }
+                    className={modeButtonClass(!urlOverrideEnabled)}
                   >
                     Inherit
                   </button>
                   <button
                     type="button"
                     onClick={enableUrlOverride}
-                    className={
-                      urlOverrideEnabled
-                        ? "px-3 py-1.5 rounded-md text-xs font-medium border border-accent bg-accent/10 text-primary"
-                        : "px-3 py-1.5 rounded-md text-xs font-medium border border-border bg-surface text-muted hover:text-primary hover:bg-border/30 transition-colors"
-                    }
+                    className={modeButtonClass(urlOverrideEnabled)}
                   >
                     Override
                   </button>

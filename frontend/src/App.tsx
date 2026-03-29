@@ -5,23 +5,23 @@ import { DashboardLayout } from "./layouts/DashboardLayout";
 import { LoginPage } from "./pages/LoginPage";
 import { OverviewPage } from "./pages/OverviewPage";
 import { AgentDetailPage } from "./pages/AgentDetailPage";
+import { SettingsPage } from "./pages/SettingsPage";
 import { SideNav, type TabKey } from "./components/navigation/SideNav";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { useAgents } from "./hooks/useAgents";
 import { useTheme } from "./hooks/useTheme";
 import { useNotifications } from "./hooks/useNotifications";
 import { apiUrl } from "./lib/api";
-import { ServerSettingsModal } from "./components/settings/ServerSettingsModal";
 
-type ViewMode = "overview" | "detail";
+type ViewMode = "overview" | "detail" | "settings";
 
 export function App() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("overview");
   const [activeTab, setActiveTab] = useState<TabKey>("activity");
   const [toolsOpen, setToolsOpen] = useState(false);
-  const [settingsVisible, setSettingsVisible] = useState(false);
-  
+  const settingsReturnRef = useRef<"overview" | "detail">("overview");
+
   const {
     agents,
     liveStatus,
@@ -39,11 +39,7 @@ export function App() {
   const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disconnectNotifiedRef = useRef(false);
 
-  useEffect(() => {
-    checkAuth();
-  }, []);
-
-  const checkAuth = async () => {
+  const checkAuth = useCallback(async () => {
     try {
       const response = await fetch(apiUrl("/auth/status"), {
         credentials: "include",
@@ -52,7 +48,11 @@ export function App() {
     } catch {
       setAuthenticated(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    checkAuth();
+  }, [checkAuth]);
 
   const { send } = useWebSocket({
     onMessage: (event: any) => {
@@ -194,6 +194,17 @@ export function App() {
     setSelectedAgentId(null);
   };
 
+  const handleOpenSettings = () => {
+    if (viewMode === "overview" || viewMode === "detail") {
+      settingsReturnRef.current = viewMode;
+    }
+    setViewMode("settings");
+  };
+
+  const handleCloseSettings = () => {
+    setViewMode(settingsReturnRef.current);
+  };
+
   const runBatchAction = useCallback(
     (agentIds: string[], cmdType: "RestartHost" | "ShutdownHost") => {
       const onlineIds = agentIds.filter((id) => agents[id]?.online);
@@ -241,79 +252,103 @@ export function App() {
 
   if (viewMode === "overview") {
     return (
-      <>
-        <DashboardLayout
-          content={
-            <OverviewPage
-              agents={agents}
-              liveStatus={liveStatus}
-              onSelectAgent={handleSelectAgent}
-              onRefresh={checkAuth}
-              onBatchRestart={(agentIds) => {
-                runBatchAction(agentIds, "RestartHost");
-              }}
-              onBatchShutdown={(agentIds) => {
-                runBatchAction(agentIds, "ShutdownHost");
-              }}
-            />
-          }
+      <DashboardLayout
+        content={
+          <OverviewPage
+            agents={agents}
+            liveStatus={liveStatus}
+            onSelectAgent={handleSelectAgent}
+            onRefresh={checkAuth}
+            onBatchRestart={(agentIds) => {
+              runBatchAction(agentIds, "RestartHost");
+            }}
+            onBatchShutdown={(agentIds) => {
+              runBatchAction(agentIds, "ShutdownHost");
+            }}
+          />
+        }
         onLogout={handleLogout}
-        onShowPreferences={() => setSettingsVisible(true)}
+        onShowPreferences={handleOpenSettings}
         contentType="cards"
         notifications={notifications}
-          onDismissNotification={removeNotification}
-          showTools={false}
-          toolsOpen={toolsOpen}
-          onToolsChange={setToolsOpen}
-        />
-        <ServerSettingsModal
-          visible={settingsVisible}
-          onDismiss={() => setSettingsVisible(false)}
-          themeMode={themeMode}
-          onThemeChange={changeTheme}
-        />
-      </>
-      );
+        onDismissNotification={removeNotification}
+        showTools={false}
+        toolsOpen={toolsOpen}
+        onToolsChange={setToolsOpen}
+      />
+    );
   }
 
   if (viewMode === "detail" && selectedAgent) {
     return (
-      <>
       <DashboardLayout
         navigation={<SideNav activeTab={activeTab} onTabChange={setActiveTab} />}
         content={
-            <AgentDetailPage
-              agent={selectedAgent}
-              agentInfo={agentInfo[selectedAgent.id] || null}
-              sendWsMessage={send}
-              onNotifyInfo={info}
-              onNotifyWarning={warning}
-              onNotifyError={error}
-              activeTab={activeTab}
-              onTabChange={setActiveTab}
-              onBackToOverview={handleBackToOverview}
-              onOpenHelp={() => setToolsOpen(true)}
-            />
-          }
+          <AgentDetailPage
+            agent={selectedAgent}
+            agentInfo={agentInfo[selectedAgent.id] || null}
+            sendWsMessage={send}
+            onNotifyInfo={info}
+            onNotifyWarning={warning}
+            onNotifyError={error}
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            onBackToOverview={handleBackToOverview}
+            onOpenHelp={() => setToolsOpen(true)}
+          />
+        }
         onLogout={handleLogout}
-        onShowPreferences={() => setSettingsVisible(true)}
-          onBackToOverview={handleBackToOverview}
-          contentType="default"
-          notifications={notifications}
-          onDismissNotification={removeNotification}
-          showTools={true}
-          toolsOpen={toolsOpen}
-          onToolsChange={setToolsOpen}
-        />
-        <ServerSettingsModal
-          visible={settingsVisible}
-          onDismiss={() => setSettingsVisible(false)}
-          themeMode={themeMode}
-          onThemeChange={changeTheme}
-        />
-      </>
-      );
+        onShowPreferences={handleOpenSettings}
+        onBackToOverview={handleBackToOverview}
+        contentType="default"
+        notifications={notifications}
+        onDismissNotification={removeNotification}
+        showTools={true}
+        toolsOpen={toolsOpen}
+        onToolsChange={setToolsOpen}
+      />
+    );
   }
 
-  return null;
+  if (viewMode === "settings") {
+    return (
+      <DashboardLayout
+        content={
+          <SettingsPage
+            themeMode={themeMode}
+            onThemeChange={changeTheme}
+            onBack={handleCloseSettings}
+          />
+        }
+        onLogout={handleLogout}
+        onShowPreferences={handleOpenSettings}
+        contentType="default"
+        notifications={notifications}
+        onDismissNotification={removeNotification}
+        showTools={false}
+        toolsOpen={toolsOpen}
+        onToolsChange={setToolsOpen}
+      />
+    );
+  }
+
+  return (
+    <DashboardLayout
+      content={
+        <SettingsPage
+          themeMode={themeMode}
+          onThemeChange={changeTheme}
+          onBack={handleCloseSettings}
+        />
+      }
+      onLogout={handleLogout}
+      onShowPreferences={handleOpenSettings}
+      contentType="default"
+      notifications={notifications}
+      onDismissNotification={removeNotification}
+      showTools={false}
+      toolsOpen={toolsOpen}
+      onToolsChange={setToolsOpen}
+    />
+  );
 }

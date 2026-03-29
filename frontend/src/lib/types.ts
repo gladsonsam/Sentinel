@@ -129,6 +129,29 @@ export interface RetentionPolicy {
   url_days: number | null;
 }
 
+export interface UrlTopRow {
+  url: string;
+  visit_count: number;
+  last_ts: string;
+}
+
+export interface WindowTopRow {
+  app: string;
+  title: string;
+  focus_count: number;
+  last_ts: string;
+}
+
+export interface StorageTableUsage {
+  name: string;
+  bytes: number;
+}
+
+export interface StorageUsage {
+  database_bytes: number;
+  tables: StorageTableUsage[];
+}
+
 /** Windows agent “Sentinel settings” window lock; hash is server-side only. */
 export interface LocalUiPasswordGlobalState {
   password_set: boolean;

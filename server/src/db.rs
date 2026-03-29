@@ -40,6 +40,21 @@ pub struct AuditRecord {
     pub detail: serde_json::Value,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct UrlTopRow {
+    pub url: String,
+    pub visit_count: i64,
+    pub last_ts: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct WindowTopRow {
+    pub app: String,
+    pub title: String,
+    pub focus_count: i64,
+    pub last_ts: DateTime<Utc>,
+}
+
 // ─── Agents ───────────────────────────────────────────────────────────────────
 
 /// Insert the agent if it doesn't exist yet; always bump `last_seen`.
@@ -159,6 +174,22 @@ pub async fn insert_window(pool: &PgPool, agent: Uuid, v: &serde_json::Value) ->
     .execute(pool)
     .await?;
 
+    sqlx::query(
+        r#"
+        INSERT INTO window_top_stats (agent_id, app, title, focus_count, last_ts)
+        VALUES ($1, $2, $3, 1, $4)
+        ON CONFLICT (agent_id, app, title) DO UPDATE
+        SET focus_count = window_top_stats.focus_count + 1,
+            last_ts = GREATEST(window_top_stats.last_ts, EXCLUDED.last_ts)
+        "#,
+    )
+    .bind(agent)
+    .bind(app)
+    .bind(title)
+    .bind(ts)
+    .execute(pool)
+    .await?;
+
     Ok(())
 }
 
@@ -235,6 +266,21 @@ pub async fn insert_url(pool: &PgPool, agent: Uuid, v: &serde_json::Value) -> Re
     .bind(url)
     .bind(title)
     .bind(browser)
+    .bind(ts)
+    .execute(pool)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO url_top_stats (agent_id, url, visit_count, last_ts)
+        VALUES ($1, $2, 1, $3)
+        ON CONFLICT (agent_id, url) DO UPDATE
+        SET visit_count = url_top_stats.visit_count + 1,
+            last_ts = GREATEST(url_top_stats.last_ts, EXCLUDED.last_ts)
+        "#,
+    )
+    .bind(agent)
+    .bind(url)
     .bind(ts)
     .execute(pool)
     .await?;
@@ -388,6 +434,110 @@ pub async fn query_audit_log(
                 .unwrap_or_else(|_| serde_json::json!({})),
         })
         .collect())
+}
+
+pub async fn query_top_urls(
+    pool: &PgPool,
+    agent: Uuid,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<UrlTopRow>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT url, visit_count, last_ts
+        FROM url_top_stats
+        WHERE agent_id = $1
+        ORDER BY visit_count DESC, last_ts DESC
+        LIMIT $2 OFFSET $3
+        "#,
+    )
+    .bind(agent)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .iter()
+        .map(|r| UrlTopRow {
+            url: r.try_get("url").unwrap_or_default(),
+            visit_count: r.try_get("visit_count").unwrap_or_default(),
+            last_ts: r.try_get("last_ts").unwrap_or_else(|_| Utc::now()),
+        })
+        .collect())
+}
+
+pub async fn query_top_windows(
+    pool: &PgPool,
+    agent: Uuid,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<WindowTopRow>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT app, title, focus_count, last_ts
+        FROM window_top_stats
+        WHERE agent_id = $1
+        ORDER BY focus_count DESC, last_ts DESC
+        LIMIT $2 OFFSET $3
+        "#,
+    )
+    .bind(agent)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .iter()
+        .map(|r| WindowTopRow {
+            app: r.try_get("app").unwrap_or_default(),
+            title: r.try_get("title").unwrap_or_default(),
+            focus_count: r.try_get("focus_count").unwrap_or_default(),
+            last_ts: r.try_get("last_ts").unwrap_or_else(|_| Utc::now()),
+        })
+        .collect())
+}
+
+pub async fn query_database_storage(pool: &PgPool) -> Result<serde_json::Value> {
+    let db_size_bytes: i64 = sqlx::query_scalar("SELECT pg_database_size(current_database())")
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
+
+    let table_rows = sqlx::query(
+        r#"
+        SELECT
+            relname::text AS name,
+            pg_total_relation_size(c.oid)::bigint AS bytes
+        FROM pg_class c
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE c.relkind = 'r'
+          AND n.nspname = 'public'
+          AND relname IN (
+            'window_events', 'key_sessions', 'url_visits', 'activity_log',
+            'url_top_stats', 'window_top_stats', 'audit_log', 'agent_info'
+          )
+        ORDER BY bytes DESC
+        "#
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let tables = table_rows
+        .iter()
+        .map(|r| {
+            serde_json::json!({
+                "name": r.try_get::<String, _>("name").unwrap_or_default(),
+                "bytes": r.try_get::<i64, _>("bytes").unwrap_or_default(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Ok(serde_json::json!({
+        "database_bytes": db_size_bytes,
+        "tables": tables
+    }))
 }
 
 pub async fn query_windows(

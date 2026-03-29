@@ -17,12 +17,19 @@ interface URLEvent {
   timestamp: string;
 }
 
+interface TopUrlRow {
+  url: string;
+  visit_count: number;
+  last_ts: string;
+}
+
 interface UrlsTabProps {
   agentId: string;
 }
 
 export function UrlsTab({ agentId }: UrlsTabProps) {
   const [items, setItems] = useState<URLEvent[]>([]);
+  const [topItems, setTopItems] = useState<TopUrlRow[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -45,6 +52,21 @@ export function UrlsTab({ agentId }: UrlsTabProps) {
             url: row.url ?? "",
             browser: row.browser ?? "—",
             timestamp: row.timestamp ?? row.ts ?? "",
+          }))
+        );
+      }
+
+      const topRes = await fetch(apiUrl(`/agents/${agentId}/top-urls?limit=20`), {
+        credentials: "include",
+      });
+      if (topRes.ok) {
+        const topData = await topRes.json();
+        const topRows = Array.isArray(topData?.rows) ? topData.rows : [];
+        setTopItems(
+          topRows.map((row: any) => ({
+            url: row.url ?? "",
+            visit_count: row.visit_count ?? 0,
+            last_ts: row.last_ts ?? "",
           }))
         );
       }
@@ -120,6 +142,11 @@ export function UrlsTab({ agentId }: UrlsTabProps) {
             <Button iconName="refresh" onClick={fetchUrls}>
               Refresh
             </Button>
+          }
+          description={
+            topItems.length > 0
+              ? `Top URLs retained long-term: ${topItems.slice(0, 3).map((t) => t.url).join(" • ")}`
+              : "Top URL aggregates are retained after raw URL retention expiry."
           }
         >
           URL History

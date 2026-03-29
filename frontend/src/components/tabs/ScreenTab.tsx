@@ -164,33 +164,31 @@ export function ScreenTab({ agentId, sendWsMessage }: ScreenTabProps) {
       >
         <div
           ref={containerRef}
-          className="sentinel-screen-viewer"
+          className={`sentinel-screen-viewer${fullscreen ? " sentinel-screen-viewer-fullscreen" : ""}`}
           style={{ position: "relative", background: "#000" }}
         >
-          <img
-            ref={imgRef}
-            src={streamUrl}
-            alt="Agent screen"
-            style={{
-              width: "100%",
-              height: "auto",
-              display: "block",
-            }}
-            onLoad={() => setStreaming(true)}
-            onError={() => setStreaming(false)}
-          />
-          {remoteControl && (
-            <div
-              className="sentinel-remote-overlay"
-              onMouseMove={handleMouseMove}
-              onClick={handleMouseClick}
-              onContextMenu={handleMouseClick}
-              onKeyDown={handleKeyPress}
-              tabIndex={0}
-              role="button"
-              aria-label="Remote control overlay"
+          <div className="sentinel-screen-frame">
+            <img
+              ref={imgRef}
+              src={streamUrl}
+              alt="Agent screen"
+              className="sentinel-screen-image"
+              onLoad={() => setStreaming(true)}
+              onError={() => setStreaming(false)}
             />
-          )}
+            {remoteControl && (
+              <div
+                className="sentinel-remote-overlay"
+                onMouseMove={handleMouseMove}
+                onClick={handleMouseClick}
+                onContextMenu={handleMouseClick}
+                onKeyDown={handleKeyPress}
+                tabIndex={0}
+                role="button"
+                aria-label="Remote control overlay"
+              />
+            )}
+          </div>
         </div>
         
         {!streaming && (

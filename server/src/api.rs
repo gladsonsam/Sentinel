@@ -11,9 +11,12 @@
 //! | `GET /api/agents/:id/mjpeg`     | MJPEG stream (multipart/x-mixed-replace)|
 //! | `GET/PUT /api/settings/retention` | Global telemetry retention (days)    |
 //! | `GET/PUT/DELETE /api/agents/:id/retention` | Per-agent retention overrides   |
+//! | `GET /api/agents/:id/top-urls`    | Top URLs (long-lived aggregate)        |
+//! | `GET /api/agents/:id/top-windows` | Top windows (long-lived aggregate)     |
 //! | `GET/PUT /api/settings/local-ui-password` | Agent local settings UI password |
 //! | `GET/PUT/DELETE /api/agents/:id/local-ui-password` | Per-agent override        |
 //! | `GET /api/audit`                | Operator audit log                      |
+//! | `GET /api/settings/storage`     | Database storage usage                  |
 
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -45,6 +48,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/agents/:id/keys", get(agent_keys))
         .route("/agents/:id/urls", get(agent_urls))
         .route("/agents/:id/activity", get(agent_activity))
+        .route("/agents/:id/top-urls", get(agent_top_urls))
+        .route("/agents/:id/top-windows", get(agent_top_windows))
         .route("/agents/:id/history/clear", post(clear_agent_history))
         .route("/audit", get(audit_log))
         .route(
@@ -61,6 +66,7 @@ pub fn router() -> Router<Arc<AppState>> {
             "/settings/local-ui-password",
             get(local_ui_password_global_get).put(local_ui_password_global_put),
         )
+        .route("/settings/storage", get(storage_usage))
         .route(
             "/agents/:id/local-ui-password",
             get(local_ui_password_agent_get)
@@ -288,6 +294,34 @@ async fn agent_info(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Res
             .await;
             Json(serde_json::json!({ "info": info })).into_response()
         }
+        Err(e) => err500(e),
+    }
+}
+
+async fn agent_top_urls(
+    Path(id): Path<Uuid>,
+    Query(p): Query<PageParams>,
+    State(s): State<Arc<AppState>>,
+) -> Response {
+    if let Err(msg) = validate_page_params(&p) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+    }
+    match db::query_top_urls(&s.db, id, p.limit, p.offset).await {
+        Ok(rows) => Json(serde_json::json!({ "rows": rows })).into_response(),
+        Err(e) => err500(e),
+    }
+}
+
+async fn agent_top_windows(
+    Path(id): Path<Uuid>,
+    Query(p): Query<PageParams>,
+    State(s): State<Arc<AppState>>,
+) -> Response {
+    if let Err(msg) = validate_page_params(&p) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+    }
+    match db::query_top_windows(&s.db, id, p.limit, p.offset).await {
+        Ok(rows) => Json(serde_json::json!({ "rows": rows })).into_response(),
         Err(e) => err500(e),
     }
 }
@@ -635,6 +669,13 @@ async fn local_ui_password_agent_delete(Path(id): Path<Uuid>, State(s): State<Ar
             ws_agent::push_local_ui_password_hash_to_agent(&s, id).await;
             local_ui_password_agent_get(Path(id), State(s.clone())).await
         }
+        Err(e) => err500(e),
+    }
+}
+
+async fn storage_usage(State(s): State<Arc<AppState>>) -> Response {
+    match db::query_database_storage(&s.db).await {
+        Ok(v) => Json(v).into_response(),
         Err(e) => err500(e),
     }
 }
