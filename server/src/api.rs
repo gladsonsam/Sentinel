@@ -13,6 +13,7 @@
 //! | `GET/PUT/DELETE /api/agents/:id/retention` | Per-agent retention overrides   |
 //! | `GET/PUT /api/settings/local-ui-password` | Agent local settings UI password |
 //! | `GET/PUT/DELETE /api/agents/:id/local-ui-password` | Per-agent override        |
+//! | `GET /api/audit`                | Operator audit log                      |
 
 use std::convert::Infallible;
 use std::sync::Arc;
@@ -45,6 +46,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/agents/:id/urls", get(agent_urls))
         .route("/agents/:id/activity", get(agent_activity))
         .route("/agents/:id/history/clear", post(clear_agent_history))
+        .route("/audit", get(audit_log))
         .route(
             "/agents/:id/retention",
             get(agent_retention_get).put(agent_retention_put).delete(agent_retention_delete),
@@ -124,6 +126,17 @@ struct PageParams {
     offset: i64,
 }
 
+#[derive(Deserialize)]
+struct AuditParams {
+    agent_id: Option<Uuid>,
+    action: Option<String>,
+    status: Option<String>,
+    #[serde(default = "default_limit")]
+    limit: i64,
+    #[serde(default)]
+    offset: i64,
+}
+
 fn default_limit() -> i64 {
     50
 }
@@ -137,6 +150,21 @@ fn validate_page_params(p: &PageParams) -> Result<(), &'static str> {
     }
     if p.offset < 0 || p.offset > 100_000 {
         return Err("offset must be between 0 and 100000");
+    }
+    Ok(())
+}
+
+fn validate_audit_params(p: &AuditParams) -> Result<(), &'static str> {
+    if !(1..=1000).contains(&p.limit) {
+        return Err("limit must be between 1 and 1000");
+    }
+    if p.offset < 0 || p.offset > 100_000 {
+        return Err("offset must be between 0 and 100000");
+    }
+    if let Some(ref s) = p.status {
+        if !matches!(s.as_str(), "ok" | "error" | "rejected") {
+            return Err("status must be one of: ok, error, rejected");
+        }
     }
     Ok(())
 }
@@ -210,7 +238,41 @@ async fn clear_agent_history(
     State(s): State<Arc<AppState>>,
 ) -> Response {
     match db::clear_agent_history(&s.db, id).await {
-        Ok(cleared_rows) => Json(serde_json::json!({ "cleared_rows": cleared_rows })).into_response(),
+        Ok(cleared_rows) => {
+            let _ = db::insert_audit_log(
+                &s.db,
+                "dashboard",
+                Some(id),
+                "clear_agent_history",
+                "ok",
+                &serde_json::json!({ "cleared_rows": cleared_rows }),
+            )
+            .await;
+            Json(serde_json::json!({ "cleared_rows": cleared_rows })).into_response()
+        }
+        Err(e) => err500(e),
+    }
+}
+
+async fn audit_log(
+    Query(p): Query<AuditParams>,
+    State(s): State<Arc<AppState>>,
+) -> Response {
+    if let Err(msg) = validate_audit_params(&p) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+    }
+
+    match db::query_audit_log(
+        &s.db,
+        p.agent_id,
+        p.action.as_deref(),
+        p.status.as_deref(),
+        p.limit,
+        p.offset,
+    )
+    .await
+    {
+        Ok(rows) => Json(serde_json::json!({ "rows": rows })).into_response(),
         Err(e) => err500(e),
     }
 }
@@ -264,7 +326,22 @@ async fn retention_global_put(
         url_days: body.url_days,
     };
     match db::set_retention_global(&s.db, &p).await {
-        Ok(()) => retention_global_get(State(s.clone())).await,
+        Ok(()) => {
+            let _ = db::insert_audit_log(
+                &s.db,
+                "dashboard",
+                None,
+                "set_retention_global",
+                "ok",
+                &serde_json::json!({
+                    "keylog_days": p.keylog_days,
+                    "window_days": p.window_days,
+                    "url_days": p.url_days
+                }),
+            )
+            .await;
+            retention_global_get(State(s.clone())).await
+        }
         Err(e) => err500(e),
     }
 }
@@ -312,14 +389,40 @@ async fn agent_retention_put(
         url_days: body.url_days,
     };
     match db::set_retention_agent(&s.db, id, &ov).await {
-        Ok(()) => agent_retention_get(Path(id), State(s.clone())).await,
+        Ok(()) => {
+            let _ = db::insert_audit_log(
+                &s.db,
+                "dashboard",
+                Some(id),
+                "set_retention_agent",
+                "ok",
+                &serde_json::json!({
+                    "keylog_days": ov.keylog_days,
+                    "window_days": ov.window_days,
+                    "url_days": ov.url_days
+                }),
+            )
+            .await;
+            agent_retention_get(Path(id), State(s.clone())).await
+        }
         Err(e) => err500(e),
     }
 }
 
 async fn agent_retention_delete(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Response {
     match db::clear_retention_agent(&s.db, id).await {
-        Ok(()) => agent_retention_get(Path(id), State(s.clone())).await,
+        Ok(()) => {
+            let _ = db::insert_audit_log(
+                &s.db,
+                "dashboard",
+                Some(id),
+                "clear_retention_agent",
+                "ok",
+                &serde_json::json!({}),
+            )
+            .await;
+            agent_retention_get(Path(id), State(s.clone())).await
+        }
         Err(e) => err500(e),
     }
 }
@@ -368,6 +471,15 @@ async fn local_ui_password_global_put(
     };
     match db::set_local_ui_global_hash(&s.db, hash.as_deref()).await {
         Ok(()) => {
+            let _ = db::insert_audit_log(
+                &s.db,
+                "dashboard",
+                None,
+                "set_local_ui_password_global",
+                "ok",
+                &serde_json::json!({ "password_set": hash.is_some() }),
+            )
+            .await;
             ws_agent::push_local_ui_password_to_all_connected(&s).await;
             local_ui_password_global_get(State(s.clone())).await
         }
@@ -415,6 +527,15 @@ async fn local_ui_password_agent_put(
     };
     match db::set_local_ui_override_hash(&s.db, id, hash.as_deref()).await {
         Ok(()) => {
+            let _ = db::insert_audit_log(
+                &s.db,
+                "dashboard",
+                Some(id),
+                "set_local_ui_password_override",
+                "ok",
+                &serde_json::json!({ "password_set": hash.is_some() }),
+            )
+            .await;
             ws_agent::push_local_ui_password_hash_to_agent(&s, id).await;
             local_ui_password_agent_get(Path(id), State(s.clone())).await
         }
@@ -425,6 +546,15 @@ async fn local_ui_password_agent_put(
 async fn local_ui_password_agent_delete(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Response {
     match db::clear_local_ui_override(&s.db, id).await {
         Ok(()) => {
+            let _ = db::insert_audit_log(
+                &s.db,
+                "dashboard",
+                Some(id),
+                "clear_local_ui_password_override",
+                "ok",
+                &serde_json::json!({}),
+            )
+            .await;
             ws_agent::push_local_ui_password_hash_to_agent(&s, id).await;
             local_ui_password_agent_get(Path(id), State(s.clone())).await
         }

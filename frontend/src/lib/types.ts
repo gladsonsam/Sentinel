@@ -57,8 +57,18 @@ export interface NetworkAdapterInfo {
   dns?: string[];
 }
 
+export interface DriveInfo {
+  name?: string;
+  mount_point?: string;
+  file_system?: string;
+  total_gb?: number;
+  available_gb?: number;
+}
+
 export interface AgentInfo {
+  agent_version?: string;
   hostname?: string;
+  uptime_secs?: number;
   os_name?: string;
   os_version?: string | null;
   os_long_version?: string | null;
@@ -68,6 +78,7 @@ export interface AgentInfo {
   memory_total_mb?: number;
   memory_used_mb?: number;
   adapters?: NetworkAdapterInfo[];
+  drives?: DriveInfo[];
   ts?: number;
 }
 
@@ -133,5 +144,6 @@ export type TabKey =
   | "windows"
   | "urls"
   | "files"
+  | "audit"
   | "activity"
   | "settings";

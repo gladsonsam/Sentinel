@@ -8,6 +8,7 @@ export type TabKey =
   | "windows"
   | "urls"
   | "files"
+  | "audit"
   | "settings";
 
 interface SideNavProps {
@@ -60,6 +61,11 @@ const NAV_ITEMS: SideNavigationProps.Item[] = [
         type: "link",
         text: "Files",
         href: "#files",
+      },
+      {
+        type: "link",
+        text: "Audit Log",
+        href: "#audit",
       },
     ],
   },

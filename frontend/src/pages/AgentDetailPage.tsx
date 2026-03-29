@@ -10,6 +10,7 @@ import { KeysTab } from "../components/tabs/KeysTab";
 import { WindowsTab } from "../components/tabs/WindowsTab";
 import { UrlsTab } from "../components/tabs/UrlsTab";
 import { FilesTab } from "../components/tabs/FilesTab";
+import { AuditTab } from "../components/tabs/AuditTab";
 import { ActivityTimeline } from "../components/timeline/ActivityTimeline";
 import { aggregateSessions } from "../lib/session-aggregator";
 import { apiUrl } from "../lib/api";
@@ -209,6 +210,8 @@ export function AgentDetailPage({
         return <UrlsTab agentId={agent.id} />;
       case "files":
         return <FilesTab agentId={agent.id} sendWsMessage={sendWsMessage} />;
+      case "audit":
+        return <AuditTab agentId={agent.id} />;
       case "settings":
         return <AgentSettingsTab agentId={agent.id} agentName={agent.name} />;
       default:
@@ -224,6 +227,7 @@ export function AgentDetailPage({
     { id: "windows", label: "Windows", content: activeTab === "windows" ? renderTabContent("windows") : null },
     { id: "urls", label: "URLs", content: activeTab === "urls" ? renderTabContent("urls") : null },
     { id: "files", label: "Files", content: activeTab === "files" ? renderTabContent("files") : null },
+    { id: "audit", label: "Audit", content: activeTab === "audit" ? renderTabContent("audit") : null },
     { id: "settings", label: "Settings", content: activeTab === "settings" ? renderTabContent("settings") : null },
   ];
   const breadcrumbTabLabel = activeTab.charAt(0).toUpperCase() + activeTab.slice(1);

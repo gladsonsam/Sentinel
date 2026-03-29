@@ -29,6 +29,17 @@ pub struct RetentionAgentOverride {
     pub url_days: Option<i32>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct AuditRecord {
+    pub id: i64,
+    pub ts: DateTime<Utc>,
+    pub actor: String,
+    pub agent_id: Option<Uuid>,
+    pub action: String,
+    pub status: String,
+    pub detail: serde_json::Value,
+}
+
 // ─── Agents ───────────────────────────────────────────────────────────────────
 
 /// Insert the agent if it doesn't exist yet; always bump `last_seen`.
@@ -267,6 +278,71 @@ pub async fn list_agents(pool: &PgPool) -> Result<Vec<serde_json::Value>> {
             let first: DateTime<Utc> = r.try_get("first_seen").unwrap_or_else(|_| Utc::now());
             let last: DateTime<Utc> = r.try_get("last_seen").unwrap_or_else(|_| Utc::now());
             serde_json::json!({ "id": id, "name": name, "first_seen": first, "last_seen": last })
+        })
+        .collect())
+}
+
+pub async fn insert_audit_log(
+    pool: &PgPool,
+    actor: &str,
+    agent_id: Option<Uuid>,
+    action: &str,
+    status: &str,
+    detail: &serde_json::Value,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO audit_log (actor, agent_id, action, status, detail) VALUES ($1, $2, $3, $4, $5)",
+    )
+    .bind(actor)
+    .bind(agent_id)
+    .bind(action)
+    .bind(status)
+    .bind(detail)
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+pub async fn query_audit_log(
+    pool: &PgPool,
+    agent_id: Option<Uuid>,
+    action: Option<&str>,
+    status: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<AuditRecord>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT id, ts, actor, agent_id, action, status, detail
+        FROM audit_log
+        WHERE ($1::uuid IS NULL OR agent_id = $1)
+          AND ($2::text IS NULL OR action = $2)
+          AND ($3::text IS NULL OR status = $3)
+        ORDER BY ts DESC
+        LIMIT $4 OFFSET $5
+        "#,
+    )
+    .bind(agent_id)
+    .bind(action)
+    .bind(status)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .iter()
+        .map(|r| AuditRecord {
+            id: r.try_get("id").unwrap_or_default(),
+            ts: r.try_get("ts").unwrap_or_else(|_| Utc::now()),
+            actor: r.try_get("actor").unwrap_or_else(|_| "dashboard".to_string()),
+            agent_id: r.try_get("agent_id").ok(),
+            action: r.try_get("action").unwrap_or_default(),
+            status: r.try_get("status").unwrap_or_else(|_| "ok".to_string()),
+            detail: r
+                .try_get("detail")
+                .unwrap_or_else(|_| serde_json::json!({})),
         })
         .collect())
 }

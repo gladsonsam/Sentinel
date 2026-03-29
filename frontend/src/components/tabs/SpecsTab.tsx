@@ -7,6 +7,7 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import Spinner from "@cloudscape-design/components/spinner";
 import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
+import ProgressBar from "@cloudscape-design/components/progress-bar";
 import { apiUrl } from "../../lib/api";
 import type { AgentInfo } from "../../lib/types";
 
@@ -78,6 +79,15 @@ export function SpecsTab({ agentId, cachedInfo }: SpecsTabProps) {
     const gb = (mb / 1024).toFixed(2);
     return `${gb} GB`;
   };
+  const formatUptime = (secs?: number) => {
+    if (!secs || secs < 0) return "—";
+    const days = Math.floor(secs / 86400);
+    const hours = Math.floor((secs % 86400) / 3600);
+    const mins = Math.floor((secs % 3600) / 60);
+    if (days > 0) return `${days}d ${hours}h ${mins}m`;
+    if (hours > 0) return `${hours}h ${mins}m`;
+    return `${mins}m`;
+  };
 
   const adapters = info.adapters ?? [];
   const loopbackPattern = /\b(loopback|pseudo-interface|localhost)\b/i;
@@ -103,6 +113,11 @@ export function SpecsTab({ agentId, cachedInfo }: SpecsTabProps) {
     },
     [[], []] as [NonNullable<AgentInfo["adapters"]>, NonNullable<AgentInfo["adapters"]>]
   );
+
+  const memoryPct =
+    info.memory_total_mb && info.memory_total_mb > 0
+      ? Math.min(100, Math.max(0, ((info.memory_used_mb || 0) / info.memory_total_mb) * 100))
+      : undefined;
 
   const renderAdapter = (adapter: NonNullable<AgentInfo["adapters"]>[number], idx: number) => (
     <Box key={`${adapter.name || "adapter"}-${idx}`}>
@@ -157,6 +172,7 @@ export function SpecsTab({ agentId, cachedInfo }: SpecsTabProps) {
             columns={1}
             items={[
               { label: "Hostname", value: info.hostname || "—" },
+              { label: "Agent Version", value: info.agent_version || "—" },
               { label: "Operating System", value: info.os_name || "—" },
               { label: "OS Version", value: info.os_version || "—" },
               { label: "Kernel Version", value: info.kernel_version || "—" },
@@ -167,6 +183,7 @@ export function SpecsTab({ agentId, cachedInfo }: SpecsTabProps) {
             items={[
               { label: "CPU", value: info.cpu_brand || "—" },
               { label: "CPU Cores", value: info.cpu_cores?.toString() || "—" },
+              { label: "Uptime", value: formatUptime(info.uptime_secs) },
               {
                 label: "Memory",
                 value: info.memory_total_mb
@@ -176,6 +193,64 @@ export function SpecsTab({ agentId, cachedInfo }: SpecsTabProps) {
             ]}
           />
         </ColumnLayout>
+        {memoryPct !== undefined && (
+          <Box margin={{ top: "m" }}>
+            <ProgressBar
+              label="Memory usage"
+              value={Math.round(memoryPct)}
+              additionalInfo={`${formatMemoryFromMb(info.memory_used_mb || 0)} used`}
+            />
+          </Box>
+        )}
+      </Container>
+
+      <Container header={<Header variant="h2">Drives</Header>}>
+        {info.drives && info.drives.length > 0 ? (
+          <SpaceBetween size="l">
+            {info.drives.map((drive, idx) => {
+              const total = drive.total_gb ?? 0;
+              const available = drive.available_gb ?? 0;
+              const used = Math.max(0, total - available);
+              const pct = total > 0 ? Math.round((used / total) * 100) : 0;
+              return (
+                <Box key={`${drive.mount_point || drive.name || "drive"}-${idx}`}>
+                  <Box variant="h3" margin={{ bottom: "s" }}>
+                    {drive.name || drive.mount_point || `Drive ${idx + 1}`}
+                  </Box>
+                  <ColumnLayout columns={2} variant="text-grid">
+                    <KeyValuePairs
+                      columns={1}
+                      items={[
+                        { label: "Mount", value: drive.mount_point || "—" },
+                        { label: "File system", value: drive.file_system || "—" },
+                      ]}
+                    />
+                    <KeyValuePairs
+                      columns={1}
+                      items={[
+                        { label: "Total", value: total > 0 ? `${total.toFixed(2)} GB` : "—" },
+                        { label: "Available", value: `${available.toFixed(2)} GB` },
+                      ]}
+                    />
+                  </ColumnLayout>
+                  <Box margin={{ top: "s" }}>
+                    <ProgressBar
+                      label="Disk usage"
+                      value={pct}
+                      additionalInfo={`${used.toFixed(2)} GB used`}
+                    />
+                  </Box>
+                </Box>
+              );
+            })}
+          </SpaceBetween>
+        ) : (
+          <Box textAlign="center" padding="l">
+            <Box variant="p" color="text-body-secondary">
+              No drive info available
+            </Box>
+          </Box>
+        )}
       </Container>
 
       <Container header={<Header variant="h2">Network Adapters</Header>}>

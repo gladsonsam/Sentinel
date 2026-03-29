@@ -202,6 +202,23 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>) {
     };
 
     if !cmd_ok {
+        let cmd_type = if cmd_type.is_empty() { "unknown" } else { cmd_type };
+        let detail = serde_json::json!({
+            "cmd_type": cmd_type,
+            "reason": "invalid cmd type/shape",
+        });
+        let pool = state.db.clone();
+        tokio::spawn(async move {
+            let _ = crate::db::insert_audit_log(
+                &pool,
+                "dashboard",
+                Some(agent_id),
+                "control_command",
+                "rejected",
+                &detail,
+            )
+            .await;
+        });
         warn!("Dropping viewer control command: invalid cmd type/shape");
         return;
     }
@@ -220,6 +237,30 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>) {
         .unwrap()
         .get(&agent_id)
         .map(|tx| tx.send(cmd).is_ok());
+
+    let status = if sent == Some(true) {
+        "ok"
+    } else if sent == Some(false) {
+        "error"
+    } else {
+        "error"
+    };
+    let detail = serde_json::json!({
+        "cmd_type": cmd_type,
+        "agent_online": sent.is_some(),
+    });
+    let pool = state.db.clone();
+    tokio::spawn(async move {
+        let _ = crate::db::insert_audit_log(
+            &pool,
+            "dashboard",
+            Some(agent_id),
+            "control_command",
+            status,
+            &detail,
+        )
+        .await;
+    });
 
     if sent == Some(false) {
         warn!("Agent {agent_id} command channel closed");
