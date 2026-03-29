@@ -195,6 +195,8 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>) {
                 .unwrap_or(false);
             title_ok && msg_ok
         }
+        "ListDir" => val["cmd"]["path"].as_str().is_some(),
+        "ReadFile" => val["cmd"]["path"].as_str().is_some(),
         _ => false,
     };
 

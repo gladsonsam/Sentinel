@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from "react";
 import type { WsEvent } from "../lib/types";
+import { buildViewerWsUrl } from "../lib/serverSettings";
 
 export type WsStatus = "connecting" | "connected" | "disconnected";
 
@@ -18,8 +19,7 @@ export function useWebSocket({ onMessage, onStatusChange }: Options) {
   statusCbRef.current = onStatusChange;
 
   const connect = useCallback(() => {
-    const proto = location.protocol === "https:" ? "wss" : "ws";
-    const ws = new WebSocket(`${proto}://${location.host}/ws/view`);
+    const ws = new WebSocket(buildViewerWsUrl());
     wsRef.current = ws;
 
     statusCbRef.current("connecting");
@@ -38,7 +38,9 @@ export function useWebSocket({ onMessage, onStatusChange }: Options) {
         // The WS viewer sends `event` for its own messages (init).
         // Agent broadcasts use `type`.  Normalise so all consumers use `ev.event`.
         if (!raw.event && raw.type) raw.event = raw.type;
-        msgCbRef.current(raw as WsEvent);
+        const normalized = raw as WsEvent;
+        window.dispatchEvent(new CustomEvent("sentinel-ws-event", { detail: normalized }));
+        msgCbRef.current(normalized);
       } catch {
         /* ignore malformed */
       }

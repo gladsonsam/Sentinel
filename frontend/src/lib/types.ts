@@ -91,7 +91,20 @@ export type WsEvent =
     }
   | { event: "url"; agent_id: string; url?: string; browser?: string }
   | { event: "afk"; agent_id: string; idle_secs?: number }
-  | { event: "active"; agent_id: string };
+  | { event: "active"; agent_id: string }
+  | {
+      event: "dir_list";
+      agent_id: string;
+      data: {
+        path: string;
+        items: { name: string; is_dir: boolean; size: number }[];
+      };
+    }
+  | {
+      event: "file_chunk";
+      agent_id: string;
+      data: { path: string; data: string; chunk_index: number; total_chunks: number; is_error: boolean };
+    };
 
 /** Server-side telemetry retention; `null` = keep forever. */
 export interface RetentionPolicy {
@@ -119,5 +132,6 @@ export type TabKey =
   | "keys"
   | "windows"
   | "urls"
+  | "files"
   | "activity"
   | "settings";

@@ -32,6 +32,15 @@ export function ScreenTab({ agentId, online, onControl }: Props) {
     if (!online) setCoords(null);
   }, [online]);
 
+  // Ensure MJPEG HTTP connection drops immediately on unmount.
+  useEffect(() => {
+    return () => {
+      if (imgRef.current) {
+        imgRef.current.src = "";
+      }
+    };
+  }, []);
+
   // ── Coordinate mapping ──────────────────────────────────────────────────────
   const toNative = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();

@@ -9,6 +9,7 @@ import type {
   LocalUiPasswordGlobalState,
   LocalUiPasswordAgentState,
 } from "./types";
+import { buildApiUrl } from "./serverSettings";
 
 interface PageParams {
   limit?: number;
@@ -33,6 +34,11 @@ async function putJson<T>(url: string, body: unknown): Promise<T> {
     throw new Error(errBody.error ?? `HTTP ${res.status}`);
   }
   return res.json() as Promise<T>;
+}
+
+/** Helper to build API URLs */
+export function apiUrl(path: string): string {
+  return buildApiUrl(path);
 }
 
 export const api = {

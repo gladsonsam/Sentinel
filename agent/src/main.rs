@@ -462,6 +462,7 @@ async fn run_session(
                             &mut controller,
                             &shared_cfg,
                             &config_tx,
+                            out_tx.clone(),
                         );
                     }
                     Some(Ok(Message::Close(frame))) => {
@@ -595,6 +596,7 @@ fn handle_server_command(
     controller: &mut InputController,
     shared_cfg: &Arc<Mutex<Config>>,
     config_tx: &tokio::sync::watch::Sender<Option<Config>>,
+    out_tx: mpsc::Sender<Message>,
 ) {
     let val: serde_json::Value = match serde_json::from_str(text) {
         Ok(v) => v,
@@ -635,6 +637,88 @@ fn handle_server_command(
                 stop.store(true, Ordering::Relaxed);
                 info!("Screen capture stopped (no viewers remaining).");
             }
+        }
+        "ListDir" => {
+            let path = val["path"].as_str().unwrap_or("C:\\").to_string();
+            tokio::spawn(async move {
+                let mut items = Vec::new();
+                if let Ok(mut entries) = tokio::fs::read_dir(&path).await {
+                    while let Ok(Some(entry)) = entries.next_entry().await {
+                        let name = entry.file_name().to_string_lossy().to_string();
+                        let meta = entry.metadata().await.ok();
+                        let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
+                        let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                        items.push(serde_json::json!({
+                            "name": name,
+                            "is_dir": is_dir,
+                            "size": size
+                        }));
+                    }
+                }
+                items.sort_by(|a, b| {
+                    let a_dir = a["is_dir"].as_bool().unwrap_or(false);
+                    let b_dir = b["is_dir"].as_bool().unwrap_or(false);
+                    if a_dir != b_dir {
+                        b_dir.cmp(&a_dir)
+                    } else {
+                        a["name"].as_str().unwrap_or("").to_lowercase().cmp(&b["name"].as_str().unwrap_or("").to_lowercase())
+                    }
+                });
+                let payload = serde_json::json!({
+                    "type": "dir_list",
+                    "path": path,
+                    "items": items
+                }).to_string();
+                let _ = out_tx.send(Message::Text(payload)).await;
+            });
+        }
+        "ReadFile" => {
+            let path = val["path"].as_str().unwrap_or("").to_string();
+            tokio::spawn(async move {
+                use base64::{Engine as _, engine::general_purpose};
+                match tokio::fs::read(&path).await {
+                    Ok(bytes) => {
+                        let chunk_size = 1024 * 1024 * 3; // 3MB chunks
+                        let total_chunks = if bytes.is_empty() { 1 } else { (bytes.len() + chunk_size - 1) / chunk_size };
+                        if bytes.is_empty() {
+                            let payload = serde_json::json!({
+                                "type": "file_chunk",
+                                "path": path,
+                                "data": "",
+                                "chunk_index": 0,
+                                "total_chunks": 1,
+                                "is_error": false
+                            }).to_string();
+                            let _ = out_tx.send(Message::Text(payload)).await;
+                        } else {
+                            for (i, chunk) in bytes.chunks(chunk_size).enumerate() {
+                                let data = general_purpose::STANDARD.encode(chunk);
+                                let payload = serde_json::json!({
+                                    "type": "file_chunk",
+                                    "path": path,
+                                    "data": data,
+                                    "chunk_index": i,
+                                    "total_chunks": total_chunks,
+                                    "is_error": false
+                                }).to_string();
+                                let _ = out_tx.send(Message::Text(payload)).await;
+                                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let payload = serde_json::json!({
+                            "type": "file_chunk",
+                            "path": path,
+                            "data": e.to_string(),
+                            "chunk_index": 0,
+                            "total_chunks": 1,
+                            "is_error": true
+                        }).to_string();
+                        let _ = out_tx.send(Message::Text(payload)).await;
+                    }
+                }
+            });
         }
         _ => {
             if let Err(e) = controller.handle_command(text) {

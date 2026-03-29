@@ -30,7 +30,7 @@ use crate::{db, state::{AppState, Frame}};
 // Conservative bounds to mitigate memory/DB-flood DoS.
 // These can be tuned later (or moved to env/config).
 const MAX_AGENT_NAME_CHARS: usize = 128;
-const MAX_AGENT_TEXT_BYTES: usize = 128 * 1024; // JSON events
+const MAX_AGENT_TEXT_BYTES: usize = 6 * 1024 * 1024; // JSON events (expanded for file explorer)
 const MAX_AGENT_BINARY_BYTES: usize = 8 * 1024 * 1024; // JPEG frames
 
 const MAX_KEYS_TEXT_CHARS: usize = 4_000;
@@ -308,6 +308,7 @@ async fn dispatch_text(text: &str, agent_id: uuid::Uuid, name: &str, state: &Arc
         }
         "afk" | "active" => db::insert_activity(&state.db, agent_id, &val).await,
         "agent_info" => db::upsert_agent_info(&state.db, agent_id, &val).await,
+        "dir_list" | "file_chunk" => Ok(()),
         other => {
             warn!("Unknown event type '{other}' from {agent_id}");
             Ok(())

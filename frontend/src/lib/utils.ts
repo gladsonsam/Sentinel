@@ -6,18 +6,37 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+function normalizeTimestampInput(ts: string | number): string | number {
+  if (typeof ts === "number") return ts;
+  const trimmed = ts.trim();
+  if (!trimmed) return trimmed;
+  if (/^\d+$/.test(trimmed)) {
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric)) {
+      return trimmed.length > 10 ? Math.floor(numeric / 1000) : numeric;
+    }
+  }
+  return trimmed;
+}
+
+export function parseTimestamp(ts: string | number | undefined): Date | null {
+  if (ts === undefined || ts === null) return null;
+  const normalized = normalizeTimestampInput(ts);
+  const date =
+    typeof normalized === "number" ? new Date(normalized * 1000) : new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 /** Format an ISO string or unix-seconds timestamp to a short time string. */
 export function fmtTime(ts: string | number | undefined): string {
-  if (!ts) return "—";
-  const d = typeof ts === "number" ? new Date(ts * 1000) : new Date(ts);
-  return isNaN(d.getTime()) ? String(ts) : d.toLocaleTimeString();
+  const d = parseTimestamp(ts);
+  return d ? d.toLocaleTimeString() : "—";
 }
 
 /** Format an ISO string or unix-seconds timestamp to a full date-time string. */
 export function fmtDateTime(ts: string | number | undefined): string {
-  if (!ts) return "—";
-  const d = typeof ts === "number" ? new Date(ts * 1000) : new Date(ts);
-  return isNaN(d.getTime()) ? String(ts) : d.toLocaleString();
+  const d = parseTimestamp(ts);
+  return d ? d.toLocaleString() : "—";
 }
 
 /** Truncate a string to `maxLen` characters, appending '…' if truncated. */

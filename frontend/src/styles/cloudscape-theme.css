@@ -1,0 +1,568 @@
+/* Cloudscape Design System Theme Customizations */
+
+/* Import Cloudscape global styles */
+@import "@cloudscape-design/global-styles/index.css";
+
+/* Custom theme variables for Sentinel */
+:root {
+  /* Brand colors */
+  --sentinel-primary: #0972d3;
+  --sentinel-success: #037f0c;
+  --sentinel-warning: #f89256;
+  --sentinel-danger: #d91515;
+  
+  /* Status colors for agents */
+  --status-online: #037f0c;
+  --status-offline: #5f6b7a;
+  --status-active: #0972d3;
+  --status-afk: #f89256;
+  
+  /* Custom spacing */
+  --sentinel-card-padding: 1rem;
+  --sentinel-section-gap: 1.5rem;
+}
+
+/* Dark mode overrides */
+.awsui-dark-mode {
+  /* Keep Cloudscape dark mode defaults */
+}
+
+/* Custom component styles */
+.sentinel-agent-card {
+  transition: all 0.2s ease;
+}
+
+.sentinel-agent-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--awsui-shadow-panel-hover);
+}
+
+.sentinel-status-online {
+  color: var(--status-online);
+}
+
+.sentinel-status-offline {
+  color: var(--status-offline);
+}
+
+.sentinel-status-active {
+  color: var(--status-active);
+}
+
+.sentinel-status-afk {
+  color: var(--status-afk);
+}
+
+/* Timeline customizations */
+.sentinel-timeline-container {
+  margin-top: var(--sentinel-section-gap);
+}
+
+/* Screen viewer */
+.sentinel-screen-viewer {
+  position: relative;
+  background: var(--awsui-color-background-container-content);
+  border-radius: var(--awsui-border-radius-container);
+  overflow: hidden;
+}
+
+/* Remote control overlay */
+.sentinel-remote-overlay {
+  cursor: crosshair;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 10;
+}
+
+/* File browser */
+.sentinel-file-row-clickable {
+  cursor: pointer;
+}
+
+.sentinel-file-row-clickable:hover {
+  background: var(--awsui-color-background-cell-shaded);
+}
+
+/* Loading states */
+.sentinel-loading-overlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+}
+
+/* Responsive utilities */
+@media (max-width: 688px) {
+  .sentinel-hide-mobile {
+    display: none !important;
+  }
+}
+
+@media (min-width: 689px) {
+  .sentinel-hide-desktop {
+    display: none !important;
+  }
+}
+
+/* Accessibility improvements */
+.sentinel-focus-visible:focus-visible {
+  outline: 2px solid var(--sentinel-primary);
+  outline-offset: 2px;
+}
+
+/* Animation utilities */
+@keyframes sentinel-pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.sentinel-pulse {
+  animation: sentinel-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Typography helpers */
+.sentinel-monospace {
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+  font-size: 0.875rem;
+}
+
+/* Custom scrollbar for webkit browsers */
+.sentinel-custom-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.sentinel-custom-scroll::-webkit-scrollbar-track {
+  background: var(--awsui-color-background-container-content);
+}
+
+.sentinel-custom-scroll::-webkit-scrollbar-thumb {
+  background: var(--awsui-color-border-divider-default);
+  border-radius: 4px;
+}
+
+.sentinel-custom-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--awsui-color-text-interactive-hover);
+}
+
+.sentinel-auth-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--awsui-color-background-layout-main);
+}
+
+.sentinel-auth-shell > .awsui_container {
+  width: 100%;
+  max-width: 680px;
+  border-radius: 16px;
+  border: 1px solid var(--awsui-color-border-container-top);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.25);
+}
+
+.sentinel-auth-form-wrap {
+  width: 100%;
+}
+
+/* ── Custom Vertical Timeline (vtl) ──────────────────────────────────────── */
+
+/* Loading / empty states */
+.vtl-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 200px;
+  color: #6b7090;
+  font-size: 14px;
+  font-family: Inter, "Segoe UI", Roboto, sans-serif;
+}
+
+.vtl-spinner {
+  width: 28px;
+  height: 28px;
+  border: 2px solid #2a2d3a;
+  border-top-color: #5b8def;
+  border-radius: 50%;
+  animation: vtl-spin 0.75s linear infinite;
+}
+
+@keyframes vtl-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Root wrapper */
+.vtl-root {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  font-family: Inter, "Segoe UI", Roboto, sans-serif;
+}
+
+/* ── Header ── */
+.vtl-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 14px 16px;
+  background: #1a1d27;
+  border: 1px solid #2a2d3a;
+  border-radius: 10px;
+  margin-bottom: 20px;
+}
+
+.vtl-header-title {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #d4d8f0;
+  letter-spacing: -0.01em;
+  font-family: Inter, "Segoe UI", Roboto, sans-serif;
+}
+
+.vtl-header-sub {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: #6b7090;
+  font-family: Inter, "Segoe UI", Roboto, sans-serif;
+}
+
+.vtl-header-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.vtl-hbadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: Inter, "Segoe UI", Roboto, sans-serif;
+}
+
+.vtl-hbadge-keys {
+  background: rgba(76, 175, 120, 0.12);
+  color: #4caf78;
+  border: 1px solid rgba(76, 175, 120, 0.2);
+}
+
+.vtl-hbadge-urls {
+  background: rgba(91, 141, 239, 0.12);
+  color: #5b8def;
+  border: 1px solid rgba(91, 141, 239, 0.2);
+}
+
+/* ── Timeline list ── */
+.vtl-list {
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Single timeline item ── */
+.vtl-item {
+  display: grid;
+  grid-template-columns: 72px 24px 1fr;
+  gap: 0 0;
+  align-items: start;
+  min-height: 0;
+}
+
+/* Left column: timestamp */
+.vtl-timestamp {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  padding-right: 10px;
+  padding-top: 10px;
+  gap: 2px;
+}
+
+.vtl-time {
+  font-size: 11px;
+  font-weight: 600;
+  color: #8891b0;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-family: Inter, "Segoe UI", Roboto, sans-serif;
+}
+
+.vtl-dur {
+  font-size: 10px;
+  color: #555870;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  font-family: Inter, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Center column: dot + vertical rail */
+.vtl-spine {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  position: relative;
+}
+
+.vtl-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid #5b8def;
+  background: #12141e;
+  flex-shrink: 0;
+  margin-top: 12px;
+  position: relative;
+  z-index: 1;
+  transition: box-shadow 0.2s;
+}
+
+.vtl-rail {
+  width: 2px;
+  flex: 1;
+  background: #2a2d3a;
+  min-height: 24px;
+}
+
+/* Right column: the card */
+.vtl-card {
+  margin-left: 10px;
+  margin-bottom: 12px;
+  background: #1a1d27;
+  border: 1px solid #2a2d3a;
+  border-radius: 8px;
+  overflow: hidden;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.vtl-card:hover {
+  border-color: #3a3d50;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+}
+
+.vtl-card-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  background: none;
+  border: none;
+  padding: 10px 12px;
+  text-align: left;
+  transition: background 0.12s;
+  font-family: Inter, "Segoe UI", Roboto, sans-serif;
+}
+
+.vtl-card-header:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.vtl-card-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.vtl-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #d4d8f0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: Inter, "Segoe UI", Roboto, sans-serif;
+}
+
+.vtl-card-subtitle {
+  font-size: 11px;
+  color: #6b7090;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: Inter, "Segoe UI", Roboto, sans-serif;
+}
+
+.vtl-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.vtl-meta-time {
+  font-size: 10px;
+  color: #555870;
+  font-variant-numeric: tabular-nums;
+  font-family: Inter, "Segoe UI", Roboto, sans-serif;
+}
+
+.vtl-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 500;
+  font-family: Inter, "Segoe UI", Roboto, sans-serif;
+}
+
+.vtl-pill-keys {
+  background: rgba(76, 175, 120, 0.1);
+  color: #4caf78;
+}
+
+.vtl-pill-urls {
+  background: rgba(91, 141, 239, 0.1);
+  color: #5b8def;
+}
+
+.vtl-chevron {
+  color: #555870;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* ── Expanded body ── */
+.vtl-card-body {
+  padding: 0 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid #2a2d3a;
+  padding-top: 10px;
+}
+
+.vtl-section {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.vtl-section-label {
+  margin: 0;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: #555870;
+  font-weight: 600;
+  font-family: Inter, "Segoe UI", Roboto, sans-serif;
+}
+
+/* URLs */
+.vtl-url-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.vtl-url-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  text-decoration: none;
+  color: #5b8def;
+  font-size: 11px;
+  font-family: Inter, "Segoe UI", Roboto, sans-serif;
+  transition: opacity 0.15s;
+}
+
+.vtl-url-row:hover {
+  opacity: 0.8;
+  text-decoration: underline;
+}
+
+.vtl-url-icon {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+
+.vtl-url-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vtl-url-browser {
+  font-size: 10px;
+  color: #555870;
+  flex-shrink: 0;
+  margin-left: 2px;
+}
+
+/* Keystrokes */
+.vtl-key-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vtl-key-block {
+  display: block;
+  background: rgba(76, 175, 120, 0.07);
+  border: 1px solid rgba(76, 175, 120, 0.15);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-family: 'Monaco', 'Menlo', 'Consolas', monospace !important;
+  color: #c0c8e0;
+  word-break: break-all;
+}
+
+.vtl-more {
+  margin: 2px 0 0;
+  font-size: 10px;
+  color: #555870;
+  font-family: Inter, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Window titles in expanded session */
+.vtl-window-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.vtl-window-row {
+  display: grid;
+  grid-template-columns: 14px 92px 1fr;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #c0c8e0;
+  min-width: 0;
+}
+
+.vtl-window-icon {
+  color: #8891b0;
+  opacity: 0.8;
+}
+
+.vtl-window-time {
+  color: #8891b0;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.vtl-window-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
