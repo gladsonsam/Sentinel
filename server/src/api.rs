@@ -178,7 +178,19 @@ async fn agent_windows(
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
     }
     match db::query_windows(&s.db, id, p.limit, p.offset).await {
-        Ok(rows) => Json(serde_json::json!({ "rows": rows })).into_response(),
+        Ok(rows) => {
+            let _ = db::insert_audit_log_dedup(
+                &s.db,
+                "dashboard",
+                Some(id),
+                "view_windows",
+                "ok",
+                &serde_json::json!({ "limit": p.limit, "offset": p.offset }),
+                10,
+            )
+            .await;
+            Json(serde_json::json!({ "rows": rows })).into_response()
+        }
         Err(e) => err500(e),
     }
 }
@@ -192,7 +204,19 @@ async fn agent_keys(
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
     }
     match db::query_keys(&s.db, id, p.limit, p.offset).await {
-        Ok(rows) => Json(serde_json::json!({ "rows": rows })).into_response(),
+        Ok(rows) => {
+            let _ = db::insert_audit_log_dedup(
+                &s.db,
+                "dashboard",
+                Some(id),
+                "view_keys",
+                "ok",
+                &serde_json::json!({ "limit": p.limit, "offset": p.offset }),
+                10,
+            )
+            .await;
+            Json(serde_json::json!({ "rows": rows })).into_response()
+        }
         Err(e) => err500(e),
     }
 }
@@ -206,7 +230,19 @@ async fn agent_urls(
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
     }
     match db::query_urls(&s.db, id, p.limit, p.offset).await {
-        Ok(rows) => Json(serde_json::json!({ "rows": rows })).into_response(),
+        Ok(rows) => {
+            let _ = db::insert_audit_log_dedup(
+                &s.db,
+                "dashboard",
+                Some(id),
+                "view_urls",
+                "ok",
+                &serde_json::json!({ "limit": p.limit, "offset": p.offset }),
+                10,
+            )
+            .await;
+            Json(serde_json::json!({ "rows": rows })).into_response()
+        }
         Err(e) => err500(e),
     }
 }
@@ -220,14 +256,38 @@ async fn agent_activity(
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
     }
     match db::query_activity(&s.db, id, p.limit, p.offset).await {
-        Ok(rows) => Json(serde_json::json!({ "rows": rows })).into_response(),
+        Ok(rows) => {
+            let _ = db::insert_audit_log_dedup(
+                &s.db,
+                "dashboard",
+                Some(id),
+                "view_activity",
+                "ok",
+                &serde_json::json!({ "limit": p.limit, "offset": p.offset }),
+                10,
+            )
+            .await;
+            Json(serde_json::json!({ "rows": rows })).into_response()
+        }
         Err(e) => err500(e),
     }
 }
 
 async fn agent_info(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Response {
     match db::get_agent_info(&s.db, id).await {
-        Ok(info) => Json(serde_json::json!({ "info": info })).into_response(),
+        Ok(info) => {
+            let _ = db::insert_audit_log_dedup(
+                &s.db,
+                "dashboard",
+                Some(id),
+                "view_specs",
+                "ok",
+                &serde_json::json!({}),
+                15,
+            )
+            .await;
+            Json(serde_json::json!({ "info": info })).into_response()
+        }
         Err(e) => err500(e),
     }
 }
@@ -272,7 +332,24 @@ async fn audit_log(
     )
     .await
     {
-        Ok(rows) => Json(serde_json::json!({ "rows": rows })).into_response(),
+        Ok(rows) => {
+            let _ = db::insert_audit_log_dedup(
+                &s.db,
+                "dashboard",
+                p.agent_id,
+                "view_audit_log",
+                "ok",
+                &serde_json::json!({
+                    "action_filter": p.action,
+                    "status_filter": p.status,
+                    "limit": p.limit,
+                    "offset": p.offset
+                }),
+                10,
+            )
+            .await;
+            Json(serde_json::json!({ "rows": rows })).into_response()
+        }
         Err(e) => err500(e),
     }
 }

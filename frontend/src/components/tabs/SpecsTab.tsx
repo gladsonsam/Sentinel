@@ -173,9 +173,13 @@ export function SpecsTab({ agentId, cachedInfo }: SpecsTabProps) {
             items={[
               { label: "Hostname", value: info.hostname || "—" },
               { label: "Agent Version", value: info.agent_version || "—" },
+              { label: "System model", value: info.system_model || "—" },
+              { label: "System manufacturer", value: info.system_manufacturer || "—" },
+              { label: "System serial", value: info.system_serial || "—" },
+              { label: "Motherboard", value: info.motherboard_model || "—" },
+              { label: "Board maker", value: info.motherboard_manufacturer || "—" },
               { label: "Operating System", value: info.os_name || "—" },
               { label: "OS Version", value: info.os_version || "—" },
-              { label: "Kernel Version", value: info.kernel_version || "—" },
             ]}
           />
           <KeyValuePairs

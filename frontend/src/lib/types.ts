@@ -69,6 +69,11 @@ export interface AgentInfo {
   agent_version?: string;
   hostname?: string;
   uptime_secs?: number;
+  system_model?: string;
+  system_manufacturer?: string;
+  system_serial?: string;
+  motherboard_model?: string;
+  motherboard_manufacturer?: string;
   os_name?: string;
   os_version?: string | null;
   os_long_version?: string | null;

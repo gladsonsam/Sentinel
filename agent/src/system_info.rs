@@ -1,5 +1,6 @@
 use serde_json::json;
 use sysinfo::{Disks, System};
+use std::process::Command;
 
 fn format_mac(bytes: &[u8]) -> String {
     bytes
@@ -7,6 +8,36 @@ fn format_mac(bytes: &[u8]) -> String {
         .map(|b| format!("{:02X}", b))
         .collect::<Vec<_>>()
         .join(":")
+}
+
+fn parse_first_json_string(raw: &[u8], key: &str) -> Option<String> {
+    let val: serde_json::Value = serde_json::from_slice(raw).ok()?;
+    let obj = if val.is_array() {
+        val.as_array()?.first()?.clone()
+    } else {
+        val
+    };
+    obj.get(key)?.as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+#[cfg(target_os = "windows")]
+fn powershell_cim_value(class_name: &str, property: &str) -> Option<String> {
+    let script = format!(
+        "Get-CimInstance {class_name} | Select-Object -First 1 {property} | ConvertTo-Json -Compress"
+    );
+    let out = Command::new("powershell")
+        .args(["-NoProfile", "-Command", &script])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    parse_first_json_string(&out.stdout, property)
+}
+
+#[cfg(not(target_os = "windows"))]
+fn powershell_cim_value(_class_name: &str, _property: &str) -> Option<String> {
+    None
 }
 
 pub fn collect_agent_info() -> serde_json::Value {
@@ -18,7 +49,11 @@ pub fn collect_agent_info() -> serde_json::Value {
     let os_name = System::name().unwrap_or_else(|| "Windows".into());
     let os_version = System::os_version();
     let os_long_version = System::long_os_version();
-    let kernel_version = System::kernel_version();
+    let system_model = powershell_cim_value("Win32_ComputerSystem", "Model");
+    let system_manufacturer = powershell_cim_value("Win32_ComputerSystem", "Manufacturer");
+    let system_serial = powershell_cim_value("Win32_BIOS", "SerialNumber");
+    let motherboard_model = powershell_cim_value("Win32_BaseBoard", "Product");
+    let motherboard_manufacturer = powershell_cim_value("Win32_BaseBoard", "Manufacturer");
 
     let cpu_brand = sys
         .cpus()
@@ -91,7 +126,11 @@ pub fn collect_agent_info() -> serde_json::Value {
         "os_name": os_name,
         "os_version": os_version,
         "os_long_version": os_long_version,
-        "kernel_version": kernel_version,
+        "system_model": system_model,
+        "system_manufacturer": system_manufacturer,
+        "system_serial": system_serial,
+        "motherboard_model": motherboard_model,
+        "motherboard_manufacturer": motherboard_manufacturer,
         "cpu_brand": cpu_brand,
         "cpu_cores": cpu_cores,
         "memory_total_mb": total_mem_mb,

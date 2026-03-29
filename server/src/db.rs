@@ -304,6 +304,49 @@ pub async fn insert_audit_log(
     Ok(())
 }
 
+/// Insert an audit row unless an identical recent row already exists.
+///
+/// "Identical" means same actor/agent/action/status/detail JSON and within
+/// `dedup_window_secs` from now.
+pub async fn insert_audit_log_dedup(
+    pool: &PgPool,
+    actor: &str,
+    agent_id: Option<Uuid>,
+    action: &str,
+    status: &str,
+    detail: &serde_json::Value,
+    dedup_window_secs: i64,
+) -> Result<()> {
+    let exists: Option<i64> = sqlx::query_scalar(
+        r#"
+        SELECT id
+        FROM audit_log
+        WHERE actor = $1
+          AND (($2::uuid IS NULL AND agent_id IS NULL) OR agent_id = $2)
+          AND action = $3
+          AND status = $4
+          AND detail = $5::jsonb
+          AND ts > NOW() - ($6::bigint * INTERVAL '1 second')
+        ORDER BY ts DESC
+        LIMIT 1
+        "#,
+    )
+    .bind(actor)
+    .bind(agent_id)
+    .bind(action)
+    .bind(status)
+    .bind(detail)
+    .bind(dedup_window_secs)
+    .fetch_optional(pool)
+    .await?;
+
+    if exists.is_none() {
+        insert_audit_log(pool, actor, agent_id, action, status, detail).await?;
+    }
+
+    Ok(())
+}
+
 pub async fn query_audit_log(
     pool: &PgPool,
     agent_id: Option<Uuid>,

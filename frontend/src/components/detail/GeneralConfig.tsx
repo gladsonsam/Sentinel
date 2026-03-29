@@ -39,7 +39,7 @@ export function GeneralConfig({ agent, info, onOpenHelp }: GeneralConfigProps) {
         </div>
         <div>
           <Box variant="awsui-key-label">Hostname</Box>
-          <div>{info?.hostname || "—"}</div>
+          <div>{info?.hostname || agent.name || "—"}</div>
         </div>
       </ColumnLayout>
     </Container>

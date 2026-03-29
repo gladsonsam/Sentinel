@@ -209,13 +209,14 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>) {
         });
         let pool = state.db.clone();
         tokio::spawn(async move {
-            let _ = crate::db::insert_audit_log(
+            let _ = crate::db::insert_audit_log_dedup(
                 &pool,
                 "dashboard",
                 Some(agent_id),
                 "control_command",
                 "rejected",
                 &detail,
+                2,
             )
             .await;
         });
@@ -250,14 +251,16 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>) {
         "agent_online": sent.is_some(),
     });
     let pool = state.db.clone();
+    let dedup_window_secs = if cmd_type == "MouseMove" { 5 } else { 2 };
     tokio::spawn(async move {
-        let _ = crate::db::insert_audit_log(
+        let _ = crate::db::insert_audit_log_dedup(
             &pool,
             "dashboard",
             Some(agent_id),
             "control_command",
             status,
             &detail,
+            dedup_window_secs,
         )
         .await;
     });

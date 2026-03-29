@@ -47,12 +47,38 @@ export function AgentDetailPage({
 }: AgentDetailPageProps) {
   const [sessions, setSessions] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [resolvedInfo, setResolvedInfo] = useState<AgentInfo | null>(agentInfo ?? null);
   const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeTabRef = useRef(activeTab);
 
   useEffect(() => {
     activeTabRef.current = activeTab;
   }, [activeTab]);
+
+  useEffect(() => {
+    if (agentInfo) {
+      setResolvedInfo(agentInfo);
+      return;
+    }
+    let cancelled = false;
+    const loadInfo = async () => {
+      try {
+        const response = await fetch(apiUrl(`/agents/${agent.id}/info`), {
+          credentials: "include",
+        });
+        if (!response.ok || cancelled) return;
+        const data = await response.json();
+        const next = (data?.info ?? data ?? null) as AgentInfo | null;
+        if (!cancelled) setResolvedInfo(next);
+      } catch {
+        // Keep stale value if fetch fails.
+      }
+    };
+    loadInfo();
+    return () => {
+      cancelled = true;
+    };
+  }, [agent.id, agentInfo]);
 
   const loadActivityData = useCallback(async () => {
     try {
@@ -199,7 +225,7 @@ export function AgentDetailPage({
           />
         );
       case "specs":
-        return <SpecsTab agentId={agent.id} cachedInfo={agentInfo} />;
+        return <SpecsTab agentId={agent.id} cachedInfo={resolvedInfo} />;
       case "screen":
         return <ScreenTab agentId={agent.id} sendWsMessage={sendWsMessage} />;
       case "keys":
@@ -257,7 +283,7 @@ export function AgentDetailPage({
           onRunAction={runAgentAction}
         />
 
-        <GeneralConfig agent={agent} info={agentInfo} onOpenHelp={onOpenHelp} />
+        <GeneralConfig agent={agent} info={resolvedInfo} onOpenHelp={onOpenHelp} />
 
         <Tabs
           activeTabId={activeTab}
