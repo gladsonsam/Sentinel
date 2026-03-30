@@ -7,91 +7,32 @@ A lightweight, self-hosted monitoring system built with Rust and React. A Window
 
 ## Features
 
-- **Real-time Dashboard** — Live WebSocket feed of window focus, keystrokes, URLs, and activity state.
-- **MJPEG Screen Streaming** — Demand-driven screen capture; the agent stops capturing when no viewers are watching.
-- **Remote Control** — Send mouse and keyboard commands from the dashboard to the agent.
-- **Secure by Default** — Agent auth via shared secret, dashboard via password-protected sessions.
-- **PostgreSQL Persistence** — Full historical record of keys, windows, URLs, and activity.
-- **Single-container Deploy** — The Rust server embeds the compiled React frontend; no separate web server needed.
+- **Real-time dashboard** — Live WebSocket feed of window focus, keystrokes, URLs, and activity state.
+- **MJPEG screen streaming** — Demand-driven screen capture; the agent stops capturing when no viewers are watching.
+- **Remote control** — Send mouse and keyboard commands from the dashboard to the agent.
+- **Agent and UI auth** — Shared secret for agents; password-protected dashboard sessions.
+- **PostgreSQL persistence** — Historical record of keys, windows, URLs, and activity.
+- **Single-container deploy** — The Rust server embeds the compiled React frontend; no separate web server needed.
 
-## Tech Stack
+## Tech stack
 
 | Component | Technology |
-|---|---|
+|-----------|------------|
 | **sentinel-agent** | Rust (Windows, egui tray, xcap, enigo) |
 | **sentinel-server** | Rust (Axum, Tokio, SQLx, PostgreSQL) |
 | **sentinel-dashboard** | React 18, Vite, TailwindCSS |
 
----
+## Documentation
 
-## Quick Deploy (Docker + Traefik)
+**Deploy, configure, use the dashboard and agent, and develop:** see the **[GitHub wiki](https://github.com/gladsonsam/Sentinel/wiki)**.
 
-### 1. Configure
-
-```bash
-cp env.example .env
-```
-
-Edit `.env` and set the required values:
-
-| Variable | Description |
-|---|---|
-| `POSTGRES_PASSWORD` | Database password (required) |
-| `UI_PASSWORD` | Dashboard login password |
-| `AGENT_SECRET` | Shared secret for agent authentication |
-| `TRAEFIK_HOST` | Your domain (e.g. `sentinel.example.com`) |
-
-### 2. Deploy
-
-```bash
-docker compose up -d --build
-```
-
-The dashboard will be available at `http://localhost:9000` or your Traefik domain.
-
----
-
-## 🛠 Development
-
-### Server
-```bash
-cd server
-cargo run
-```
-
-### Frontend
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-### Agent (Windows, cross-compile from Linux)
-```bash
-cd agent
-cargo xwin build --release
-```
-
----
-
-## Connecting an Agent
-
-Once the server is running, configure the agent on each Windows machine with:
-
-```
-AGENT_SERVER_URL=ws://<server>:9000/ws/agent
-AGENT_NAME=<hostname>
-AGENT_SECRET=<your-secret>
-```
-
-The agent will appear in the dashboard automatically on connect.
-
-## Healthcheck
+## Health check
 
 ```bash
 curl http://127.0.0.1:9000/healthz
-# → 200 OK
 ```
+
+Expect `200 OK`.
 
 ## License
 
