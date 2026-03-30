@@ -1,28 +1,21 @@
 import { DashboardLayout } from "../layouts/DashboardLayout";
-import { SettingsPage } from "../pages/SettingsPage";
+import { LogsPage } from "../pages/LogsPage";
 import type { NotificationItem } from "../hooks/useNotifications";
-import type { ThemeMode } from "../hooks/useTheme";
 
 interface Props {
-  themeMode: ThemeMode;
-  onThemeChange: (mode: ThemeMode) => void;
   onBack: () => void;
   onLogout: () => void;
   onShowPreferences: () => void;
-  onOpenActivityLog: () => void;
   notifications: NotificationItem[];
   onDismissNotification: (id: string) => void;
   toolsOpen: boolean;
   onToolsChange: (open: boolean) => void;
 }
 
-export function AuthenticatedSettings({
-  themeMode,
-  onThemeChange,
+export function AuthenticatedLogs({
   onBack,
   onLogout,
   onShowPreferences,
-  onOpenActivityLog,
   notifications,
   onDismissNotification,
   toolsOpen,
@@ -30,10 +23,10 @@ export function AuthenticatedSettings({
 }: Props) {
   return (
     <DashboardLayout
-      content={<SettingsPage themeMode={themeMode} onThemeChange={onThemeChange} onBack={onBack} />}
+      content={<LogsPage />}
       onLogout={onLogout}
       onShowPreferences={onShowPreferences}
-      onOpenActivityLog={onOpenActivityLog}
+      onBackToOverview={onBack}
       contentType="default"
       notifications={notifications}
       onDismissNotification={onDismissNotification}

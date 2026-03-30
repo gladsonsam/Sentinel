@@ -38,8 +38,30 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
       if (response.ok) {
         onLoginSuccess();
       } else {
-        const data = await response.json().catch(() => ({}));
-        setError(data.error || "Invalid password");
+        const data = (await response.json().catch(() => ({}))) as {
+          error?: string;
+          attempts_remaining?: number;
+          max_attempts_per_window?: number;
+          retry_after_secs?: number;
+        };
+        const base = data.error ?? "Invalid password";
+        if (response.status === 429 && typeof data.retry_after_secs === "number") {
+          setError(
+            `${base} Retry in about ${Math.ceil(data.retry_after_secs)}s.`
+          );
+        } else if (
+          response.status === 401 &&
+          typeof data.attempts_remaining === "number"
+        ) {
+          const n = data.attempts_remaining;
+          const max = data.max_attempts_per_window;
+          const suffix = ` ${n} attempt${n === 1 ? "" : "s"} remaining before lockout${
+            typeof max === "number" ? ` (limit: ${max} wrong passwords / 15 min)` : ""
+          }.`;
+          setError(base + suffix);
+        } else {
+          setError(base);
+        }
       }
     } catch (err) {
       setError("Failed to connect to server. Please try again.");

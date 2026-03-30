@@ -17,6 +17,7 @@ interface Props {
   onOpenHelp: () => void;
   onLogout: () => void;
   onShowPreferences: () => void;
+  onOpenActivityLog: () => void;
   notifications: NotificationItem[];
   onDismissNotification: (id: string) => void;
   toolsOpen: boolean;
@@ -36,6 +37,7 @@ export function AuthenticatedAgentDetail({
   onOpenHelp,
   onLogout,
   onShowPreferences,
+  onOpenActivityLog,
   notifications,
   onDismissNotification,
   toolsOpen,
@@ -60,6 +62,7 @@ export function AuthenticatedAgentDetail({
       }
       onLogout={onLogout}
       onShowPreferences={onShowPreferences}
+      onOpenActivityLog={onOpenActivityLog}
       onBackToOverview={onBackToOverview}
       contentType="default"
       notifications={notifications}

@@ -13,6 +13,7 @@ interface Props {
   onBatchShutdown: (agentIds: string[]) => void;
   onLogout: () => void;
   onShowPreferences: () => void;
+  onOpenActivityLog: () => void;
   notifications: NotificationItem[];
   onDismissNotification: (id: string) => void;
   toolsOpen: boolean;
@@ -30,6 +31,7 @@ export function AuthenticatedOverview({
   onBatchShutdown,
   onLogout,
   onShowPreferences,
+  onOpenActivityLog,
   notifications,
   onDismissNotification,
   toolsOpen,
@@ -50,6 +52,7 @@ export function AuthenticatedOverview({
       }
       onLogout={onLogout}
       onShowPreferences={onShowPreferences}
+      onOpenActivityLog={onOpenActivityLog}
       contentType="cards"
       notifications={notifications}
       onDismissNotification={onDismissNotification}

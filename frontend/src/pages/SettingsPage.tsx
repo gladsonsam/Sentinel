@@ -83,7 +83,7 @@ export function SettingsPage({ themeMode, onThemeChange, onBack }: SettingsPageP
       <SpaceBetween size="l">
         <Header
           variant="h1"
-          description="Configure server connection, telemetry retention, and storage visibility."
+          description="Configure server connection, telemetry retention, and storage. Open Activity log from the top bar for the central audit trail."
           actions={
             <SpaceBetween direction="horizontal" size="xs">
               {onBack && (

@@ -3,12 +3,15 @@ import TopNavigation from "@cloudscape-design/components/top-navigation";
 interface TopNavProps {
   onLogout: () => void;
   onShowPreferences: () => void;
+  /** Opens the central activity / audit log page. */
+  onOpenActivityLog?: () => void;
   onBackToOverview?: () => void;
 }
 
 export function TopNav({
   onLogout,
   onShowPreferences,
+  onOpenActivityLog,
   onBackToOverview,
 }: TopNavProps) {
   return (
@@ -26,6 +29,17 @@ export function TopNav({
                  iconName: "angle-left" as const,
                  onClick: onBackToOverview,
                },
+            ]
+          : []),
+        ...(onOpenActivityLog
+          ? [
+              {
+                type: "button" as const,
+                iconName: "file-open" as const,
+                title: "Activity log",
+                ariaLabel: "Activity log",
+                onClick: onOpenActivityLog,
+              },
             ]
           : []),
         {

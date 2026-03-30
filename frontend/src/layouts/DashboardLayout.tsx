@@ -11,6 +11,7 @@ interface DashboardLayoutProps {
   content: ReactNode;
   onLogout: () => void;
   onShowPreferences: () => void;
+  onOpenActivityLog?: () => void;
   onBackToOverview?: () => void;
   contentType?: "default" | "table" | "form" | "cards";
   notifications: NotificationItem[];
@@ -25,6 +26,7 @@ export function DashboardLayout({
   content,
   onLogout,
   onShowPreferences,
+  onOpenActivityLog,
   onBackToOverview,
   contentType = "default",
   notifications,
@@ -40,6 +42,7 @@ export function DashboardLayout({
       <TopNav
         onLogout={onLogout}
         onShowPreferences={onShowPreferences}
+        onOpenActivityLog={onOpenActivityLog}
         onBackToOverview={onBackToOverview}
       />
       <AppLayout

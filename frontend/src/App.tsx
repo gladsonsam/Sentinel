@@ -18,6 +18,9 @@ const AuthenticatedAgentDetail = lazy(() =>
 const AuthenticatedSettings = lazy(() =>
   import("./routes/AuthenticatedSettings").then((m) => ({ default: m.AuthenticatedSettings })),
 );
+const AuthenticatedLogs = lazy(() =>
+  import("./routes/AuthenticatedLogs").then((m) => ({ default: m.AuthenticatedLogs })),
+);
 
 /** Minimal first paint (no Cloudscape) while auth or route chunks load. */
 function LoadShell({ label = "Loading…" }: { label?: string }) {
@@ -38,14 +41,14 @@ function LoadShell({ label = "Loading…" }: { label?: string }) {
   );
 }
 
-type ViewMode = "overview" | "detail" | "settings";
+type ViewMode = "overview" | "detail" | "settings" | "logs";
 
 export function App() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("overview");
   const [activeTab, setActiveTab] = useState<TabKey>("activity");
   const [toolsOpen, setToolsOpen] = useState(false);
-  const settingsReturnRef = useRef<"overview" | "detail">("overview");
+  const adminReturnRef = useRef<ViewMode>("overview");
 
   const {
     agents,
@@ -223,14 +226,19 @@ export function App() {
   };
 
   const handleOpenSettings = () => {
-    if (viewMode === "overview" || viewMode === "detail") {
-      settingsReturnRef.current = viewMode;
-    }
+    if (viewMode === "settings") return;
+    adminReturnRef.current = viewMode;
     setViewMode("settings");
   };
 
-  const handleCloseSettings = () => {
-    setViewMode(settingsReturnRef.current);
+  const handleOpenLogs = () => {
+    if (viewMode === "logs") return;
+    adminReturnRef.current = viewMode;
+    setViewMode("logs");
+  };
+
+  const handleBackFromAdmin = () => {
+    setViewMode(adminReturnRef.current);
   };
 
   const runBatchWake = useCallback(
@@ -331,6 +339,7 @@ export function App() {
           }}
           onLogout={handleLogout}
           onShowPreferences={handleOpenSettings}
+          onOpenActivityLog={handleOpenLogs}
           notifications={notifications}
           onDismissNotification={removeNotification}
           toolsOpen={toolsOpen}
@@ -356,6 +365,7 @@ export function App() {
           onOpenHelp={() => setToolsOpen(true)}
           onLogout={handleLogout}
           onShowPreferences={handleOpenSettings}
+          onOpenActivityLog={handleOpenLogs}
           notifications={notifications}
           onDismissNotification={removeNotification}
           toolsOpen={toolsOpen}
@@ -371,7 +381,24 @@ export function App() {
         <AuthenticatedSettings
           themeMode={themeMode}
           onThemeChange={changeTheme}
-          onBack={handleCloseSettings}
+          onBack={handleBackFromAdmin}
+          onLogout={handleLogout}
+          onShowPreferences={handleOpenSettings}
+          onOpenActivityLog={handleOpenLogs}
+          notifications={notifications}
+          onDismissNotification={removeNotification}
+          toolsOpen={toolsOpen}
+          onToolsChange={setToolsOpen}
+        />
+      </Suspense>
+    );
+  }
+
+  if (viewMode === "logs") {
+    return (
+      <Suspense fallback={<LoadShell label="Loading activity log…" />}>
+        <AuthenticatedLogs
+          onBack={handleBackFromAdmin}
           onLogout={handleLogout}
           onShowPreferences={handleOpenSettings}
           notifications={notifications}
@@ -384,13 +411,22 @@ export function App() {
   }
 
   return (
-    <Suspense fallback={<LoadShell label="Loading settings…" />}>
-      <AuthenticatedSettings
-        themeMode={themeMode}
-        onThemeChange={changeTheme}
-        onBack={handleCloseSettings}
+    <Suspense fallback={<LoadShell label="Loading dashboard…" />}>
+      <AuthenticatedOverview
+        agents={agents}
+        liveStatus={liveStatus}
+        onSelectAgent={handleSelectAgent}
+        onRefresh={checkAuth}
+        onBatchWake={(ids) => void runBatchWake(ids)}
+        onBatchRestart={(agentIds) => {
+          runBatchAction(agentIds, "RestartHost");
+        }}
+        onBatchShutdown={(agentIds) => {
+          runBatchAction(agentIds, "ShutdownHost");
+        }}
         onLogout={handleLogout}
         onShowPreferences={handleOpenSettings}
+        onOpenActivityLog={handleOpenLogs}
         notifications={notifications}
         onDismissNotification={removeNotification}
         toolsOpen={toolsOpen}

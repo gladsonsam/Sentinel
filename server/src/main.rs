@@ -13,6 +13,8 @@
 //! | `ALLOW_REMOTE_SCRIPT_EXECUTION` | `true` to enable `POST /api/agents/.../script` (**remote code**; default off) |
 //! | `DASHBOARD_OPERATOR_NAME` | Label stored in audit `actor` for UI actions (default `operator`) |
 //! | `EXPOSE_INTERNAL_ERRORS` | `true` to return DB/internal error text in JSON 500 responses (default: generic message; log always has detail) |
+//! | `LOG_FORCE_COLOR` | `true` / `1` — emit ANSI colors in logs when stderr is not a TTY (e.g. Docker) |
+//! | `NO_COLOR` | Set to disable ANSI in logs |
 //!
 //! Set `UI_PASSWORD` to enable password protection for the dashboard.
 //! The agent WebSocket (`/ws/agent`) uses a shared secret (`AGENT_SECRET`)
@@ -43,18 +45,27 @@ use axum::middleware::Next;
 use axum::response::Response;
 use axum::response::IntoResponse;
 use tower_http::{cors::CorsLayer, services::ServeDir};
+use std::io::{stderr, IsTerminal};
+
 use tracing::info;
 use tracing_subscriber::{fmt, EnvFilter};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // ── Logging ───────────────────────────────────────────────────────────
+    // ANSI colors: TTY stderr, or set LOG_FORCE_COLOR=1 (e.g. docker compose) when not a TTY.
+    let ansi = std::env::var("NO_COLOR").is_err()
+        && (stderr().is_terminal()
+            || std::env::var("LOG_FORCE_COLOR")
+                .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+                .unwrap_or(false));
     fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
         )
         .with_target(false)
         .compact()
+        .with_ansi(ansi)
         .init();
 
     // ── Database ──────────────────────────────────────────────────────────

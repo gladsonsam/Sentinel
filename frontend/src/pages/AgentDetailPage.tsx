@@ -268,7 +268,12 @@ export function AgentDetailPage({
       case "files":
         return <FilesTab agentId={agent.id} sendWsMessage={sendWsMessage} />;
       case "audit":
-        return <AuditTab agentId={agent.id} />;
+        return (
+          <AuditTab
+            agentId={agent.id}
+            subheader="Same central audit log as Activity log (top bar), filtered to this agent."
+          />
+        );
       case "settings":
         return <AgentSettingsTab agentId={agent.id} agentName={agent.name} />;
       default:

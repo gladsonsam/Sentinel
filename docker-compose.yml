@@ -26,6 +26,8 @@ services:
       - .env
     environment:
       DATABASE_URL: postgres://${POSTGRES_USER:-monitor}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-monitor}
+      # ANSI levels in `docker logs` (green/yellow/red) when stderr is not a TTY
+      LOG_FORCE_COLOR: "1"
     depends_on:
       db:
         condition: service_healthy

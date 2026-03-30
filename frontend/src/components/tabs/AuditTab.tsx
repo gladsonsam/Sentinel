@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
 import Header from "@cloudscape-design/components/header";
@@ -10,6 +10,7 @@ import TextFilter from "@cloudscape-design/components/text-filter";
 import { useCollection } from "@cloudscape-design/collection-hooks";
 import { apiUrl } from "../../lib/api";
 import { fmtDateTime } from "../../lib/utils";
+import { AuditStatusBadge } from "../common/AuditStatusBadge";
 
 interface AuditRow {
   id: number;
@@ -23,7 +24,16 @@ interface AuditRow {
 }
 
 interface AuditTabProps {
+  /** When set, only rows for this agent (same API as global log). */
   agentId?: string;
+  /** Narrow global log: authentication-only vs operator/API (ignored when `agentId` is set). */
+  scope?: "all" | "auth" | "operator";
+  /** Colour-code status column (green / yellow / red tiers). Default true. */
+  colorizeStatus?: boolean;
+  /** Table header title (default: Audit log). */
+  title?: string;
+  /** Shown above the table. */
+  subheader?: string;
 }
 
 const STATUS_OPTIONS = [
@@ -33,7 +43,13 @@ const STATUS_OPTIONS = [
   { label: "Rejected", value: "rejected" },
 ];
 
-export function AuditTab({ agentId }: AuditTabProps) {
+export function AuditTab({
+  agentId,
+  scope = "all",
+  colorizeStatus = true,
+  title = "Audit log",
+  subheader,
+}: AuditTabProps) {
   const [rows, setRows] = useState<AuditRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState(STATUS_OPTIONS[0]);
@@ -75,7 +91,14 @@ export function AuditTab({ agentId }: AuditTabProps) {
     fetchAudit();
   }, [agentId, statusFilter.value]);
 
-  const { items, collectionProps, filterProps, paginationProps } = useCollection(rows, {
+  const scopedRows = useMemo(() => {
+    if (agentId) return rows;
+    if (scope === "auth") return rows.filter((r) => r.actor === "auth");
+    if (scope === "operator") return rows.filter((r) => r.actor !== "auth");
+    return rows;
+  }, [rows, scope, agentId]);
+
+  const { items, collectionProps, filterProps, paginationProps } = useCollection(scopedRows, {
     filtering: {
       filteringFunction: (item, filteringText) => {
         const q = filteringText.toLowerCase();
@@ -100,7 +123,13 @@ export function AuditTab({ agentId }: AuditTabProps) {
   });
 
   return (
-    <Table
+    <SpaceBetween size="m">
+      {subheader ? (
+        <Box fontSize="body-s" color="text-body-secondary">
+          {subheader}
+        </Box>
+      ) : null}
+      <Table
       {...collectionProps}
       loading={loading}
       loadingText="Loading audit log..."
@@ -125,7 +154,12 @@ export function AuditTab({ agentId }: AuditTabProps) {
         {
           id: "status",
           header: "Status",
-          cell: (item) => item.status,
+          cell: (item) =>
+            colorizeStatus ? (
+              <AuditStatusBadge status={item.status} />
+            ) : (
+              item.status
+            ),
           sortingField: "status",
           width: 120,
         },
@@ -155,7 +189,7 @@ export function AuditTab({ agentId }: AuditTabProps) {
       ]}
       header={
         <Header
-          counter={`(${rows.length})`}
+          counter={`(${scopedRows.length})`}
           actions={
             <SpaceBetween direction="horizontal" size="xs">
               <Select
@@ -173,7 +207,7 @@ export function AuditTab({ agentId }: AuditTabProps) {
             </SpaceBetween>
           }
         >
-          Audit log
+          {title}
         </Header>
       }
       filter={
@@ -191,5 +225,6 @@ export function AuditTab({ agentId }: AuditTabProps) {
         </Box>
       }
     />
+    </SpaceBetween>
   );
 }

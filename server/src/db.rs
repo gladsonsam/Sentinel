@@ -11,6 +11,37 @@ use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
+/// Mirrors each persisted audit row to `tracing` so `docker logs` matches the dashboard log.
+fn emit_audit_tracing_line(actor: &str, action: &str, status: &str, client_ip: Option<&str>) {
+    let ip = client_ip.unwrap_or("-");
+    match status {
+        "error" => tracing::error!(
+            target: "sentinel_audit",
+            actor,
+            action,
+            status,
+            ip,
+            "audit"
+        ),
+        "rejected" => tracing::warn!(
+            target: "sentinel_audit",
+            actor,
+            action,
+            status,
+            ip,
+            "audit"
+        ),
+        _ => tracing::info!(
+            target: "sentinel_audit",
+            actor,
+            action,
+            status,
+            ip,
+            "audit"
+        ),
+    }
+}
+
 // ─── Retention policy ─────────────────────────────────────────────────────────
 
 /// Global retention: `None` / NULL = keep forever (no automatic deletion).
@@ -350,6 +381,8 @@ pub async fn insert_audit_log(
     .bind(client_ip)
     .execute(pool)
     .await?;
+
+    emit_audit_tracing_line(actor, action, status, client_ip);
 
     Ok(())
 }

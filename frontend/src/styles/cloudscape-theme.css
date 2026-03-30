@@ -22,6 +22,25 @@
   --sentinel-section-gap: 1.5rem;
 }
 
+/* Audit log status: warning tier (rejected / rate limited) — yellow band */
+.sentinel-audit-status-warn {
+  display: inline-block;
+  padding: 0 8px;
+  border-radius: 4px;
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 18px;
+  color: #8c6900;
+  background: #fff3cd;
+  border: 1px solid #e9d48a;
+}
+
+.awsui-dark-mode .sentinel-audit-status-warn {
+  color: #f0d060;
+  background: #3d3500;
+  border-color: #6b5a00;
+}
+
 /* Dark mode overrides */
 .awsui-dark-mode {
   /* Keep Cloudscape dark mode defaults */
