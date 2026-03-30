@@ -41,6 +41,23 @@
   border-color: #6b5a00;
 }
 
+/* TopNavigation: full product title (override Cloudscape title ellipsis; #id+.class beats :not(#\9)). */
+#sentinel-top-nav.sentinel-top-nav [class*="awsui_title"] {
+  overflow: visible;
+  text-overflow: clip;
+  max-inline-size: none;
+}
+#sentinel-top-nav.sentinel-top-nav [class*="awsui_identity-link"] {
+  overflow: visible;
+  min-inline-size: max-content;
+}
+#sentinel-top-nav.sentinel-top-nav [class*="awsui_identity"]:not([class*="overflow-menu"]) {
+  flex-shrink: 0;
+  min-inline-size: max-content;
+  overflow: visible;
+  max-inline-size: none;
+}
+
 /* Dark mode overrides */
 .awsui-dark-mode {
   /* Keep Cloudscape dark mode defaults */

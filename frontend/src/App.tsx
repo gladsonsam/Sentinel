@@ -340,6 +340,7 @@ export function App() {
           onLogout={handleLogout}
           onShowPreferences={handleOpenSettings}
           onOpenActivityLog={handleOpenLogs}
+          onGoHome={handleBackToOverview}
           notifications={notifications}
           onDismissNotification={removeNotification}
           toolsOpen={toolsOpen}
@@ -366,6 +367,7 @@ export function App() {
           onLogout={handleLogout}
           onShowPreferences={handleOpenSettings}
           onOpenActivityLog={handleOpenLogs}
+          onGoHome={handleBackToOverview}
           notifications={notifications}
           onDismissNotification={removeNotification}
           toolsOpen={toolsOpen}
@@ -385,6 +387,7 @@ export function App() {
           onLogout={handleLogout}
           onShowPreferences={handleOpenSettings}
           onOpenActivityLog={handleOpenLogs}
+          onGoHome={handleBackToOverview}
           notifications={notifications}
           onDismissNotification={removeNotification}
           toolsOpen={toolsOpen}
@@ -401,6 +404,7 @@ export function App() {
           onBack={handleBackFromAdmin}
           onLogout={handleLogout}
           onShowPreferences={handleOpenSettings}
+          onGoHome={handleBackToOverview}
           notifications={notifications}
           onDismissNotification={removeNotification}
           toolsOpen={toolsOpen}
@@ -427,6 +431,7 @@ export function App() {
         onLogout={handleLogout}
         onShowPreferences={handleOpenSettings}
         onOpenActivityLog={handleOpenLogs}
+        onGoHome={handleBackToOverview}
         notifications={notifications}
         onDismissNotification={removeNotification}
         toolsOpen={toolsOpen}

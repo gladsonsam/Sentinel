@@ -13,6 +13,7 @@ interface DashboardLayoutProps {
   onShowPreferences: () => void;
   onOpenActivityLog?: () => void;
   onBackToOverview?: () => void;
+  onGoHome: () => void;
   contentType?: "default" | "table" | "form" | "cards";
   notifications: NotificationItem[];
   onDismissNotification: (id: string) => void;
@@ -28,6 +29,7 @@ export function DashboardLayout({
   onShowPreferences,
   onOpenActivityLog,
   onBackToOverview,
+  onGoHome,
   contentType = "default",
   notifications,
   onDismissNotification,
@@ -44,6 +46,7 @@ export function DashboardLayout({
         onShowPreferences={onShowPreferences}
         onOpenActivityLog={onOpenActivityLog}
         onBackToOverview={onBackToOverview}
+        onGoHome={onGoHome}
       />
       <AppLayout
         navigation={navigation}

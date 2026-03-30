@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" aria-hidden="true">
+  <!-- Vector paths only: emoji/text often breaks when SVG is used as <img> or favicon. -->
+  <path
+    fill="none"
+    stroke="#5f6b7a"
+    stroke-width="1.5"
+    stroke-linejoin="round"
+    d="M16 2.5 5 8v7.5c0 5.8 4.2 11.2 11 13.2 6.8-2 11-7.4 11-13.2V8L16 2.5z"
+  />
+  <circle cx="16" cy="14" r="2.25" fill="#5f6b7a" />
+</svg>
