@@ -1,6 +1,6 @@
-# 🛡 Sentinel
+# Sentinel
 
-A lightweight, self-hosted monitoring system built with Rust and React. A Windows agent streams real-time telemetry to a high-performance Rust server, which feeds a live web dashboard with screen streaming, keylogging, window/URL tracking, and AFK detection.
+A lightweight, self-hosted monitoring system built with Rust and React. A Windows agent streams real-time telemetry to the server, which feeds a live web dashboard with screen streaming, keylogging, window/URL tracking, and AFK detection.
 
 ## Features
 
@@ -21,7 +21,7 @@ A lightweight, self-hosted monitoring system built with Rust and React. A Window
 
 ---
 
-## 🚀 Quick Deploy (Docker + Traefik)
+## Quick Deploy (Docker + Traefik)
 
 ### 1. Configure
 
