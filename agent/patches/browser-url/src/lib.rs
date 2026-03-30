@@ -35,7 +35,6 @@ pub struct BrowserInfo {
     pub title: String,
     pub browser_name: String,
     pub browser_type: BrowserType,
-    // pub is_incognito: bool,
     pub process_id: u64,
     pub window_position: WindowPosition,
 }

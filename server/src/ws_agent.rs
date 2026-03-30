@@ -38,8 +38,6 @@ const MAX_URL_STR_BYTES: usize = 4_096;
 const MAX_WINDOW_TITLE_CHARS: usize = 512;
 const MAX_WINDOW_APP_CHARS: usize = 256;
 
-// ─── Connection handshake ─────────────────────────────────────────────────────
-
 #[derive(Deserialize)]
 pub struct AgentQuery {
     name: Option<String>,
@@ -79,8 +77,6 @@ pub async fn handler(
     ws.on_upgrade(move |socket| run(socket, name, state))
 }
 
-// ─── Per-agent message loop ───────────────────────────────────────────────────
-
 async fn run(mut ws: WebSocket, name: String, state: Arc<AppState>) {
     // Register / touch the agent row in Postgres.
     let agent_id = match db::upsert_agent(&state.db, &name).await {
@@ -106,18 +102,9 @@ async fn run(mut ws: WebSocket, name: String, state: Arc<AppState>) {
     // Add to in-memory agent map.
     {
         let mut map = state.agents.lock().unwrap();
-        map.insert(
-            agent_id,
-            crate::state::AgentConn {
-                id: agent_id,
-                name: name.clone(),
-                connected_at,
-            },
-        );
+        map.insert(agent_id, crate::state::AgentConn { connected_at });
     }
 
-    // Create a per-agent command channel so viewers can send control
-    // commands (MouseMove / MouseClick) through the server to this agent.
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<String>();
     state
         .agent_cmds
@@ -125,10 +112,6 @@ async fn run(mut ws: WebSocket, name: String, state: Arc<AppState>) {
         .unwrap()
         .insert(agent_id, cmd_tx.clone());
 
-    // Domain blocklists/WFP policies are intentionally not delivered over
-    // this WebSocket channel anymore (feature removed).
-
-    // Notify dashboard viewers.
     state.broadcast(
         serde_json::json!({
             "event":    "agent_connected",
@@ -152,11 +135,6 @@ async fn run(mut ws: WebSocket, name: String, state: Arc<AppState>) {
         }
     }
 
-    // ── Message loop ──────────────────────────────────────────────────────────
-    //
-    // `select!` concurrently waits on:
-    //   • inbound WS messages from the agent
-    //   • outbound control commands forwarded by the viewer WS handler
     loop {
         tokio::select! {
             msg = ws.recv() => {
@@ -254,8 +232,6 @@ pub async fn push_local_ui_password_to_all_connected(state: &Arc<AppState>) {
         push_local_ui_password_hash_to_agent(state, id).await;
     }
 }
-
-// ─── Event dispatching ────────────────────────────────────────────────────────
 
 async fn dispatch_text(text: &str, agent_id: uuid::Uuid, name: &str, state: &Arc<AppState>) {
     let Ok(val) = serde_json::from_str::<serde_json::Value>(text) else {

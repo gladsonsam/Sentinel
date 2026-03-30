@@ -1,24 +1,6 @@
-//! Sentinel – monitoring server
+//! Sentinel server: Axum HTTP API, static dashboard, WebSockets for agents and viewers, PostgreSQL.
 //!
-//! ## Environment variables
-//!
-//! | Variable       | Default                                             |
-//! |----------------|-----------------------------------------------------|
-//! | `DATABASE_URL` | `postgres://monitor:monitor@localhost:5432/monitor` |
-//! | `LISTEN_ADDR`  | `0.0.0.0:9000`                                      |
-//! | `STATIC_DIR`   | `./static`                                          |
-//! | `UI_PASSWORD`  | *(unset – deny access; set ALLOW_INSECURE_DASHBOARD_OPEN=true to allow)* |
-//! | `RUST_LOG`     | `info`                                              |
-//! | `WOL_MIN_INTERVAL_SECS` | Minimum seconds between Wake-on-LAN for the same agent (`0` = off; default `15`) |
-//! | `ALLOW_REMOTE_SCRIPT_EXECUTION` | `true` to enable `POST /api/agents/.../script` (**remote code**; default off) |
-//! | `DASHBOARD_OPERATOR_NAME` | Label stored in audit `actor` for UI actions (default `operator`) |
-//! | `EXPOSE_INTERNAL_ERRORS` | `true` to return DB/internal error text in JSON 500 responses (default: generic message; log always has detail) |
-//! | `LOG_FORCE_COLOR` | `true` / `1` — emit ANSI colors in logs when stderr is not a TTY (e.g. Docker) |
-//! | `NO_COLOR` | Set to disable ANSI in logs |
-//!
-//! Set `UI_PASSWORD` to enable password protection for the dashboard.
-//! The agent WebSocket (`/ws/agent`) uses a shared secret (`AGENT_SECRET`)
-//! for auth (agents can still connect without browser cookies).
+//! Configuration is via environment variables; see `env.example` in the repository root.
 
 mod api;
 mod auth;
@@ -52,8 +34,6 @@ use tracing_subscriber::{fmt, EnvFilter};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // ── Logging ───────────────────────────────────────────────────────────
-    // ANSI colors: TTY stderr, or set LOG_FORCE_COLOR=1 (e.g. docker compose) when not a TTY.
     let ansi = std::env::var("NO_COLOR").is_err()
         && (stderr().is_terminal()
             || std::env::var("LOG_FORCE_COLOR")
@@ -68,7 +48,6 @@ async fn main() -> anyhow::Result<()> {
         .with_ansi(ansi)
         .init();
 
-    // ── Database ──────────────────────────────────────────────────────────
     let db_url = read_env_or_file("DATABASE_URL")
         .unwrap_or_else(|| "postgres://monitor:monitor@localhost:5432/monitor".into());
 
@@ -85,7 +64,6 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Database ready.");
 
-    // ── Periodic telemetry retention (keys / windows+activity / URLs) ───────
     let pool_retention = pool.clone();
     tokio::spawn(async move {
         if let Err(e) = db::prune_telemetry_by_retention(&pool_retention).await {
@@ -101,7 +79,6 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    // ── UI password ───────────────────────────────────────────────────────
     let ui_password = read_env_or_file("UI_PASSWORD").filter(|s| !s.is_empty());
     let allow_insecure_dashboard_open = read_env_or_file("ALLOW_INSECURE_DASHBOARD_OPEN")
         .map(|v| parse_bool(&v))
@@ -117,7 +94,6 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    // ── App state ─────────────────────────────────────────────────────────
     let agent_secret = read_env_or_file("AGENT_SECRET").filter(|s| !s.is_empty());
     let allow_insecure_agent_auth = read_env_or_file("ALLOW_INSECURE_AGENT_AUTH")
         .map(|v| parse_bool(&v))
@@ -163,46 +139,33 @@ async fn main() -> anyhow::Result<()> {
         audit_operator_name,
     ));
 
-    // ── Routes ────────────────────────────────────────────────────────────
     let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "./static".into());
 
-    // Healthcheck endpoint for containers / load balancers.
     let health_routes = Router::new().route("/healthz", get(|| async { (StatusCode::OK, "ok") }));
 
-    // Auth endpoints — always open (needed to obtain / clear the session cookie).
     let auth_routes = Router::new()
         .route("/api/login", post(auth::login))
         .route("/api/logout", post(auth::logout))
         .route("/api/auth/status", get(auth::status));
 
-    // Everything else requires a valid session when UI_PASSWORD is set.
     let protected = Router::new()
         .route("/ws/view", get(ws_viewer::handler))
         .nest("/api", api::router())
         .route_layer(from_fn_with_state(state.clone(), auth::require_auth));
 
     let app = Router::new()
-        // Agent WebSocket — never gated by UI auth (agents use their own secret).
         .route("/ws/agent", get(ws_agent::handler))
         .merge(health_routes)
         .merge(auth_routes)
         .merge(protected)
-        // Static dashboard (index.html + assets) — served last as fallback.
         .fallback_service(ServeDir::new(&static_dir).append_index_html_on_directories(true))
-        // CORS:
-        // - default permissive to preserve current dev behavior
-        // - set CORS_ORIGINS="https://dashboard.example.com,https://other.example.com"
-        //   to restrict in production.
         .layer(cors_layer_from_env())
         .layer(from_fn_with_state(
-            // Enforce HTTPS via X-Forwarded-Proto. This works when you
-            // terminate TLS at a reverse proxy (Traefik, Nginx, etc.).
             https_enforced(),
             require_https,
         ))
         .with_state(state);
 
-    // ── Listen ────────────────────────────────────────────────────────────
     let addr = std::env::var("LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:9000".into());
     info!("Listening on http://{addr}");
 
@@ -217,8 +180,6 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn https_enforced() -> bool {
-    // Defaults to true: require `X-Forwarded-Proto: https` (or `wss`) except `/healthz`.
-    // Set `ENFORCE_HTTPS=false` for plain `http://` on :9000 when no reverse proxy sets the header.
     std::env::var("ENFORCE_HTTPS")
         .ok()
         .map(|v| parse_bool(&v))

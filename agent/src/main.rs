@@ -400,10 +400,6 @@ async fn connect_ws(
         .context("WebSocket connect failed")?)
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Session driver  (unchanged from original)
-// ─────────────────────────────────────────────────────────────────────────────
-
 async fn run_session(
     ws_stream: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
     frame_tx: &mpsc::Sender<Vec<u8>>,

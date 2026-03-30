@@ -10,18 +10,11 @@ use sqlx::PgPool;
 use tokio::sync::{broadcast, mpsc::UnboundedSender, oneshot};
 use uuid::Uuid;
 
-// ─── Agent info ───────────────────────────────────────────────────────────────
-
-/// Metadata for a currently-connected agent.
-#[allow(dead_code)]
+/// Online agent entry (keyed by agent id in [`AppState::agents`]).
 #[derive(Debug, Clone)]
 pub struct AgentConn {
-    pub id: Uuid,
-    pub name: String,
     pub connected_at: DateTime<Utc>,
 }
-
-// ─── Broadcast message ────────────────────────────────────────────────────────
 
 /// A message fanned-out to every active dashboard viewer.
 #[derive(Clone, Debug)]
@@ -30,80 +23,33 @@ pub enum Broadcast {
     Text(String),
 }
 
-// ─── App state ────────────────────────────────────────────────────────────────
-
+/// Global application state (DB pool, live agents, sessions, telemetry broadcast).
 pub struct AppState {
-    /// Postgres connection pool.
     pub db: PgPool,
-
-    /// Fan-out channel: every telemetry event is cloned to all viewers.
     pub tx: broadcast::Sender<Broadcast>,
-
-    /// Currently-connected agents (keyed by DB UUID).
     pub agents: Mutex<HashMap<Uuid, AgentConn>>,
-
-    /// Most-recent JPEG frame per agent – served by both the HTTP snapshot
-    /// endpoint and the MJPEG stream.
     pub frames: Mutex<HashMap<Uuid, Frame>>,
 
-    /// Per-agent command channels.
-    ///
-    /// Viewers send control JSON (MouseMove / MouseClick) to the server which
-    /// looks up the target agent here and forwards the command string.  The
-    /// agent's WebSocket handler drains its `Receiver` inside a `select!`.
+    /// Per-agent command fan-in (viewer → server → agent WebSocket).
     pub agent_cmds: Mutex<HashMap<Uuid, UnboundedSender<String>>>,
 
-    /// Number of MJPEG viewers currently watching each agent.
-    ///
-    /// The MJPEG endpoint increments this on connect and decrements it when
-    /// the HTTP connection closes (via a RAII [`CaptureGuard`]).
-    /// - Count  0 → 1: send `{"type":"start_capture"}` to agent.
-    /// - Count  1 → 0: send `{"type":"stop_capture"}` to agent.
+    /// MJPEG viewer refcount per agent; drives `start_capture` / `stop_capture`.
     pub capture_viewers: Mutex<HashMap<Uuid, u32>>,
 
-    /// Plain-text UI password loaded from `UI_PASSWORD` env var.
-    /// `None` means the dashboard is open with no authentication.
     pub ui_password: Option<String>,
-
-    /// When `ui_password` is unset, allow dashboard access without auth.
-    /// This exists only for local/dev setups; default should be `false`.
     pub allow_insecure_dashboard_open: bool,
-
-    /// Shared secret for authenticating agents connecting to `/ws/agent`.
-    /// `None` means agents can connect without authentication (NOT recommended for prod).
     pub agent_secret: Option<String>,
-
-    /// When `agent_secret` is unset, allow agents to connect without auth.
-    /// This exists only for local/dev setups; default should be `false`.
     pub allow_insecure_agent_auth: bool,
-
-    /// Active dashboard session tokens (random UUIDs issued on login).
-    /// Stored in memory only — reset when the server restarts.
     pub sessions: Mutex<HashSet<String>>,
-
-    /// Last successful Wake-on-LAN per agent (in-memory throttle).
     wol_last_wake: Mutex<HashMap<Uuid, Instant>>,
-    /// Minimum time between WoL magic packets for the same agent (`0` = no limit).
     pub wol_min_interval: Duration,
-
-    /// When false, `POST .../script` and bulk script are rejected (remote code execution).
     pub allow_remote_script: bool,
-
-    /// Label stored in `audit_log.actor` for dashboard actions until per-user login exists.
-    /// Set via `DASHBOARD_OPERATOR_NAME` (default `operator`).
     pub audit_operator_name: String,
-
-    /// HTTP handlers wait on these until the agent posts `script_result` (or timeout).
     pub script_waiters: Mutex<HashMap<Uuid, oneshot::Sender<serde_json::Value>>>,
-
-    /// Failed login attempt timestamps per client key (best-effort IP), sliding window.
     pub(crate) login_failures: Mutex<HashMap<String, Vec<Instant>>>,
 }
 
-/// A cached screenshot frame with a monotonically increasing sequence number.
-///
-/// The MJPEG stream uses `seq` to reliably detect "new frame" without having to
-/// compare bytes (frame sizes can repeat even when the image changes).
+/// Cached JPEG with a monotonic `seq` for MJPEG change detection.
 #[derive(Clone, Debug)]
 pub struct Frame {
     pub seq: u64,

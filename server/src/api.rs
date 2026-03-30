@@ -1,28 +1,4 @@
-//! REST API endpoints consumed by the dashboard.
-//!
-//! | Endpoint                        | Description                            |
-//! |---------------------------------|----------------------------------------|
-//! | `GET /api/agents`               | List all known agents                  |
-//! | `GET /api/agents/:id/windows`   | Paginated window-focus history         |
-//! | `GET /api/agents/:id/keys`      | Paginated keystroke sessions           |
-//! | `GET /api/agents/:id/urls`      | Paginated URL visit history            |
-//! | `GET /api/agents/:id/activity`  | Paginated AFK / active events          |
-//! | `GET /api/agents/:id/screen`    | Latest JPEG screenshot (single frame)  |
-//! | `GET /api/agents/:id/mjpeg`     | MJPEG stream (multipart/x-mixed-replace)|
-//! | `GET/PUT /api/settings/retention` | Global telemetry retention (days)    |
-//! | `GET/PUT/DELETE /api/agents/:id/retention` | Per-agent retention overrides   |
-//! | `GET /api/agents/:id/top-urls`    | Top URLs (long-lived aggregate)        |
-//! | `GET /api/agents/:id/top-windows` | Top windows (long-lived aggregate)     |
-//! | `GET/PUT /api/settings/local-ui-password` | Agent local settings UI password |
-//! | `GET/PUT/DELETE /api/agents/:id/local-ui-password` | Per-agent override        |
-//! | `GET /api/audit`                | Operator audit log                      |
-//! | `GET /api/settings/storage`     | Database storage usage                  |
-//! | `POST /api/agents/:id/wake`     | Wake-on-LAN (UDP magic packet from stored MAC) |
-//! | `GET /api/agents/:id/software`  | Installed software rows (last inventory)        |
-//! | `POST /api/agents/:id/software/collect` | Ask online agent to send inventory now |
-//! | `POST /api/agents/:id/script`   | Run PowerShell/cmd (requires env allow flag)   |
-//! | `POST /api/agents/bulk-script`  | Same script on many agents (max 64)            |
-//! | `GET /api/settings/capabilities` | e.g. `remote_script` enabled                   |
+//! REST API for the authenticated dashboard (`/api/*`). Routes are registered in [`router`].
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -49,8 +25,6 @@ use crate::{auth, db, state::AppState, ws_agent};
 fn audit_ip(headers: &HeaderMap, connect: SocketAddr) -> Option<String> {
     auth::client_ip_for_audit(headers, Some(connect))
 }
-
-// ─── Router ───────────────────────────────────────────────────────────────────
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -92,10 +66,7 @@ pub fn router() -> Router<Arc<AppState>> {
                 .put(local_ui_password_agent_put)
                 .delete(local_ui_password_agent_delete),
         )
-        // Domain blocklists intentionally removed for now.
 }
-
-// ─── Handlers ─────────────────────────────────────────────────────────────────
 
 async fn list_agents(State(s): State<Arc<AppState>>) -> Response {
     match db::list_agents(&s.db).await {
@@ -893,26 +864,11 @@ async fn agent_screen(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> R
     }
 }
 
-/// MJPEG stream — `multipart/x-mixed-replace`.
-///
-/// The browser renders this directly in an `<img>` tag with no JavaScript
-/// needed.  Frames are polled from the in-memory cache every 200 ms (matching
-/// the agent capture rate) and only sent when the frame changes.
-///
-/// ## Demand-driven capture lifecycle
-///
-/// - On the **first** viewer connecting (while agent is online): `{"type":"start_capture"}`
-///   is sent to the agent, which spawns its OS capture thread.
-/// - If the agent **reconnects** while a viewer is already watching, the stream
-///   loop detects the online→offline→online transition and re-sends
-///   `{"type":"start_capture"}` (the agent always stops capture on session end).
-/// - On the **last** viewer disconnecting (HTTP connection closes): a RAII
-///   [`CaptureGuard`] sends `{"type":"stop_capture"}` so the agent idles at ~0 %
-///   CPU until someone watches again.
+/// `multipart/x-mixed-replace` MJPEG; polls cached frames every 200ms. Viewer refcount
+/// drives `start_capture` / `stop_capture` on the agent (guard dropped when HTTP ends).
 async fn agent_mjpeg(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Response {
     const BOUNDARY: &str = "mjpegframe";
 
-    // ── Viewer-count bookkeeping ──────────────────────────────────────────
     let first_viewer = {
         let mut counts = s.capture_viewers.lock().unwrap();
         let count = counts.entry(id).or_insert(0);
@@ -926,16 +882,11 @@ async fn agent_mjpeg(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Re
         }
     }
 
-    // RAII guard: decrements the viewer count and — when it hits zero —
-    // sends `stop_capture` to the agent.  Dropped when the HTTP connection
-    // closes (stream future is dropped by Axum).
     let guard = CaptureGuard {
         agent_id: id,
         state: s.clone(),
     };
 
-    // ── Streaming loop ────────────────────────────────────────────────────
-    // Clone state so the stream closure can access frames independently.
     let stream_state = s.clone();
     let stream = async_stream::stream! {
         // Moving the guard into the stream keeps it alive until the HTTP
