@@ -1,17 +1,42 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, lazy, Suspense } from "react";
 import "@cloudscape-design/global-styles/index.css";
 import "./styles/cloudscape-theme.css";
-import { DashboardLayout } from "./layouts/DashboardLayout";
-import { LoginPage } from "./pages/LoginPage";
-import { OverviewPage } from "./pages/OverviewPage";
-import { AgentDetailPage } from "./pages/AgentDetailPage";
-import { SettingsPage } from "./pages/SettingsPage";
-import { SideNav, type TabKey } from "./components/navigation/SideNav";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { useAgents } from "./hooks/useAgents";
 import { useTheme } from "./hooks/useTheme";
 import { useNotifications } from "./hooks/useNotifications";
 import { api, apiUrl } from "./lib/api";
+import type { TabKey } from "./lib/types";
+
+const LoginPage = lazy(() => import("./pages/LoginPage").then((m) => ({ default: m.LoginPage })));
+const AuthenticatedOverview = lazy(() =>
+  import("./routes/AuthenticatedOverview").then((m) => ({ default: m.AuthenticatedOverview })),
+);
+const AuthenticatedAgentDetail = lazy(() =>
+  import("./routes/AuthenticatedAgentDetail").then((m) => ({ default: m.AuthenticatedAgentDetail })),
+);
+const AuthenticatedSettings = lazy(() =>
+  import("./routes/AuthenticatedSettings").then((m) => ({ default: m.AuthenticatedSettings })),
+);
+
+/** Minimal first paint (no Cloudscape) while auth or route chunks load. */
+function LoadShell({ label = "Loading…" }: { label?: string }) {
+  return (
+    <div
+      style={{
+        minHeight: "45vh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        fontFamily: 'system-ui, "Segoe UI", sans-serif',
+        fontSize: 15,
+        color: "#5f6b7a",
+      }}
+    >
+      {label}
+    </div>
+  );
+}
 
 type ViewMode = "overview" | "detail" | "settings";
 
@@ -33,7 +58,7 @@ export function App() {
     setAllAgents,
     setSelectedAgentId,
   } = useAgents();
-  
+
   const { notifications, removeNotification, success, warning, info, error } = useNotifications();
   const { themeMode, changeTheme } = useTheme();
   const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -54,7 +79,10 @@ export function App() {
     checkAuth();
   }, [checkAuth]);
 
+  const wsEnabled = authenticated === true;
+
   const { send } = useWebSocket({
+    enabled: wsEnabled,
     onMessage: (event: any) => {
       switch (event.event) {
         case "init":
@@ -208,9 +236,7 @@ export function App() {
   const runBatchWake = useCallback(
     async (agentIds: string[]) => {
       if (agentIds.length === 0) return;
-      const results = await Promise.allSettled(
-        agentIds.map((id) => api.wakeAgent(id)),
-      );
+      const results = await Promise.allSettled(agentIds.map((id) => api.wakeAgent(id)));
       let ok = 0;
       const errors: string[] = [];
       results.forEach((r, i) => {
@@ -251,10 +277,7 @@ export function App() {
       const offlineCount = agentIds.length - onlineIds.length;
 
       if (onlineIds.length === 0) {
-        warning(
-          "No online agents selected",
-          "Select at least one online agent to send this action."
-        );
+        warning("No online agents selected", "Select at least one online agent to send this action.");
         return;
       }
 
@@ -270,126 +293,109 @@ export function App() {
       if (offlineCount > 0) {
         warning(
           `Sent ${actionLabel} to ${onlineIds.length} agent(s)`,
-          `${offlineCount} offline agent(s) were skipped.`
+          `${offlineCount} offline agent(s) were skipped.`,
         );
       } else {
-        info(
-          `Sent ${actionLabel} to ${onlineIds.length} agent(s)`,
-          "Commands queued over WebSocket."
-        );
+        info(`Sent ${actionLabel} to ${onlineIds.length} agent(s)`, "Commands queued over WebSocket.");
       }
     },
-    [agents, info, warning, send]
+    [agents, info, warning, send],
   );
 
   if (authenticated === null) {
-    return <div>Loading...</div>;
+    return <LoadShell />;
   }
 
   if (!authenticated) {
-    return <LoginPage onLoginSuccess={() => setAuthenticated(true)} />;
+    return (
+      <Suspense fallback={<LoadShell label="Loading sign-in…" />}>
+        <LoginPage onLoginSuccess={() => setAuthenticated(true)} />
+      </Suspense>
+    );
   }
 
   if (viewMode === "overview") {
     return (
-      <DashboardLayout
-        content={
-          <OverviewPage
-            agents={agents}
-            liveStatus={liveStatus}
-            onSelectAgent={handleSelectAgent}
-            onRefresh={checkAuth}
-            onBatchWake={(ids) => void runBatchWake(ids)}
-            onBatchRestart={(agentIds) => {
-              runBatchAction(agentIds, "RestartHost");
-            }}
-            onBatchShutdown={(agentIds) => {
-              runBatchAction(agentIds, "ShutdownHost");
-            }}
-          />
-        }
-        onLogout={handleLogout}
-        onShowPreferences={handleOpenSettings}
-        contentType="cards"
-        notifications={notifications}
-        onDismissNotification={removeNotification}
-        showTools={false}
-        toolsOpen={toolsOpen}
-        onToolsChange={setToolsOpen}
-      />
+      <Suspense fallback={<LoadShell label="Loading dashboard…" />}>
+        <AuthenticatedOverview
+          agents={agents}
+          liveStatus={liveStatus}
+          onSelectAgent={handleSelectAgent}
+          onRefresh={checkAuth}
+          onBatchWake={(ids) => void runBatchWake(ids)}
+          onBatchRestart={(agentIds) => {
+            runBatchAction(agentIds, "RestartHost");
+          }}
+          onBatchShutdown={(agentIds) => {
+            runBatchAction(agentIds, "ShutdownHost");
+          }}
+          onLogout={handleLogout}
+          onShowPreferences={handleOpenSettings}
+          notifications={notifications}
+          onDismissNotification={removeNotification}
+          toolsOpen={toolsOpen}
+          onToolsChange={setToolsOpen}
+        />
+      </Suspense>
     );
   }
 
   if (viewMode === "detail" && selectedAgent) {
     return (
-      <DashboardLayout
-        navigation={<SideNav activeTab={activeTab} onTabChange={setActiveTab} />}
-        content={
-          <AgentDetailPage
-            agent={selectedAgent}
-            agentInfo={agentInfo[selectedAgent.id] || null}
-            sendWsMessage={send}
-            onNotifyInfo={info}
-            onNotifyWarning={warning}
-            onNotifyError={error}
-            activeTab={activeTab}
-            onTabChange={setActiveTab}
-            onBackToOverview={handleBackToOverview}
-            onOpenHelp={() => setToolsOpen(true)}
-          />
-        }
-        onLogout={handleLogout}
-        onShowPreferences={handleOpenSettings}
-        onBackToOverview={handleBackToOverview}
-        contentType="default"
-        notifications={notifications}
-        onDismissNotification={removeNotification}
-        showTools={true}
-        toolsOpen={toolsOpen}
-        onToolsChange={setToolsOpen}
-      />
+      <Suspense fallback={<LoadShell label="Loading agent…" />}>
+        <AuthenticatedAgentDetail
+          agent={selectedAgent}
+          agentInfo={agentInfo[selectedAgent.id] || null}
+          sendWsMessage={send}
+          onNotifyInfo={info}
+          onNotifyWarning={warning}
+          onNotifyError={error}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          onBackToOverview={handleBackToOverview}
+          onOpenHelp={() => setToolsOpen(true)}
+          onLogout={handleLogout}
+          onShowPreferences={handleOpenSettings}
+          notifications={notifications}
+          onDismissNotification={removeNotification}
+          toolsOpen={toolsOpen}
+          onToolsChange={setToolsOpen}
+        />
+      </Suspense>
     );
   }
 
   if (viewMode === "settings") {
     return (
-      <DashboardLayout
-        content={
-          <SettingsPage
-            themeMode={themeMode}
-            onThemeChange={changeTheme}
-            onBack={handleCloseSettings}
-          />
-        }
-        onLogout={handleLogout}
-        onShowPreferences={handleOpenSettings}
-        contentType="default"
-        notifications={notifications}
-        onDismissNotification={removeNotification}
-        showTools={false}
-        toolsOpen={toolsOpen}
-        onToolsChange={setToolsOpen}
-      />
+      <Suspense fallback={<LoadShell label="Loading settings…" />}>
+        <AuthenticatedSettings
+          themeMode={themeMode}
+          onThemeChange={changeTheme}
+          onBack={handleCloseSettings}
+          onLogout={handleLogout}
+          onShowPreferences={handleOpenSettings}
+          notifications={notifications}
+          onDismissNotification={removeNotification}
+          toolsOpen={toolsOpen}
+          onToolsChange={setToolsOpen}
+        />
+      </Suspense>
     );
   }
 
   return (
-    <DashboardLayout
-      content={
-        <SettingsPage
-          themeMode={themeMode}
-          onThemeChange={changeTheme}
-          onBack={handleCloseSettings}
-        />
-      }
-      onLogout={handleLogout}
-      onShowPreferences={handleOpenSettings}
-      contentType="default"
-      notifications={notifications}
-      onDismissNotification={removeNotification}
-      showTools={false}
-      toolsOpen={toolsOpen}
-      onToolsChange={setToolsOpen}
-    />
+    <Suspense fallback={<LoadShell label="Loading settings…" />}>
+      <AuthenticatedSettings
+        themeMode={themeMode}
+        onThemeChange={changeTheme}
+        onBack={handleCloseSettings}
+        onLogout={handleLogout}
+        onShowPreferences={handleOpenSettings}
+        notifications={notifications}
+        onDismissNotification={removeNotification}
+        toolsOpen={toolsOpen}
+        onToolsChange={setToolsOpen}
+      />
+    </Suspense>
   );
 }

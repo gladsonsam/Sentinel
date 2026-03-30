@@ -7,12 +7,16 @@ export type WsStatus = "connecting" | "connected" | "disconnected";
 interface Options {
   onMessage: (ev: WsEvent) => void;
   onStatusChange: (s: WsStatus) => void;
+  /** When false, no socket is opened (saves work until the user is logged in). */
+  enabled?: boolean;
 }
 
-export function useWebSocket({ onMessage, onStatusChange }: Options) {
+export function useWebSocket({ onMessage, onStatusChange, enabled = true }: Options) {
   const wsRef = useRef<WebSocket | null>(null);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Stable refs so the connect closure doesn't stale-close over callbacks.
+  const enabledRef = useRef(enabled);
+  enabledRef.current = enabled;
+
   const msgCbRef = useRef(onMessage);
   const statusCbRef = useRef(onStatusChange);
   msgCbRef.current = onMessage;
@@ -35,8 +39,6 @@ export function useWebSocket({ onMessage, onStatusChange }: Options) {
     ws.onmessage = (e: MessageEvent<string>) => {
       try {
         const raw = JSON.parse(e.data) as Record<string, unknown>;
-        // The WS viewer sends `event` for its own messages (init).
-        // Agent broadcasts use `type`.  Normalise so all consumers use `ev.event`.
         if (!raw.event && raw.type) raw.event = raw.type;
         const normalized = raw as WsEvent;
         window.dispatchEvent(new CustomEvent("sentinel-ws-event", { detail: normalized }));
@@ -48,11 +50,13 @@ export function useWebSocket({ onMessage, onStatusChange }: Options) {
 
     ws.onclose = () => {
       statusCbRef.current("disconnected");
-      retryTimer.current = setTimeout(connect, 3000);
+      retryTimer.current = setTimeout(() => {
+        if (enabledRef.current) connect();
+      }, 3000);
     };
 
     ws.onerror = () => ws.close();
-  }, []); // intentionally empty — we use refs for callbacks
+  }, []);
 
   const send = useCallback((data: unknown) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -61,12 +65,25 @@ export function useWebSocket({ onMessage, onStatusChange }: Options) {
   }, []);
 
   useEffect(() => {
+    if (!enabled) {
+      if (retryTimer.current) {
+        clearTimeout(retryTimer.current);
+        retryTimer.current = null;
+      }
+      wsRef.current?.close();
+      wsRef.current = null;
+      return;
+    }
     connect();
     return () => {
-      if (retryTimer.current) clearTimeout(retryTimer.current);
+      if (retryTimer.current) {
+        clearTimeout(retryTimer.current);
+        retryTimer.current = null;
+      }
       wsRef.current?.close();
+      wsRef.current = null;
     };
-  }, [connect]);
+  }, [connect, enabled]);
 
   return { send };
 }
