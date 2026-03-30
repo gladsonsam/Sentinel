@@ -197,7 +197,7 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>) {
         }
         "ListDir" => val["cmd"]["path"].as_str().is_some(),
         "ReadFile" => val["cmd"]["path"].as_str().is_some(),
-        "RequestInfo" | "RestartHost" | "ShutdownHost" => true,
+        "RequestInfo" | "RestartHost" | "ShutdownHost" | "CollectSoftware" => true,
         _ => false,
     };
 
@@ -208,15 +208,17 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>) {
             "reason": "invalid cmd type/shape",
         });
         let pool = state.db.clone();
+        let actor = state.audit_operator_name.clone();
         tokio::spawn(async move {
             let _ = crate::db::insert_audit_log_dedup(
                 &pool,
-                "dashboard",
+                &actor,
                 Some(agent_id),
                 "control_command",
                 "rejected",
                 &detail,
                 2,
+                None,
             )
             .await;
         });
@@ -251,16 +253,18 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>) {
         "agent_online": sent.is_some(),
     });
     let pool = state.db.clone();
+    let actor = state.audit_operator_name.clone();
     let dedup_window_secs = if cmd_type == "MouseMove" { 5 } else { 2 };
     tokio::spawn(async move {
         let _ = crate::db::insert_audit_log_dedup(
             &pool,
-            "dashboard",
+            &actor,
             Some(agent_id),
             "control_command",
             status,
             &detail,
             dedup_window_secs,
+            None,
         )
         .await;
     });

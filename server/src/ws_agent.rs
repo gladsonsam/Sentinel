@@ -308,6 +308,22 @@ async fn dispatch_text(text: &str, agent_id: uuid::Uuid, name: &str, state: &Arc
         }
         "afk" | "active" => db::insert_activity(&state.db, agent_id, &val).await,
         "agent_info" => db::upsert_agent_info(&state.db, agent_id, &val).await,
+        "software_inventory" => {
+            let items = val["items"].as_array().cloned().unwrap_or_default();
+            let v: Vec<serde_json::Value> = items.into_iter().take(12_000).collect();
+            db::replace_agent_software(&state.db, agent_id, &v)
+                .await
+                .map(|_| ())
+        }
+        "script_result" => {
+            if let Some(rid) = val["request_id"]
+                .as_str()
+                .and_then(|s| uuid::Uuid::parse_str(s).ok())
+            {
+                let _ = state.try_complete_script_waiter(rid, val.clone());
+            }
+            Ok(())
+        }
         "dir_list" | "file_chunk" => Ok(()),
         other => {
             warn!("Unknown event type '{other}' from {agent_id}");

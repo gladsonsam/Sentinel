@@ -34,6 +34,8 @@ pub struct AuditRecord {
     pub id: i64,
     pub ts: DateTime<Utc>,
     pub actor: String,
+    /// Set on HTTP audit rows; null for older rows or WebSocket-only events.
+    pub client_ip: Option<String>,
     pub agent_id: Option<Uuid>,
     pub action: String,
     pub status: String,
@@ -335,15 +337,17 @@ pub async fn insert_audit_log(
     action: &str,
     status: &str,
     detail: &serde_json::Value,
+    client_ip: Option<&str>,
 ) -> Result<()> {
     sqlx::query(
-        "INSERT INTO audit_log (actor, agent_id, action, status, detail) VALUES ($1, $2, $3, $4, $5)",
+        "INSERT INTO audit_log (actor, agent_id, action, status, detail, client_ip) VALUES ($1, $2, $3, $4, $5, $6)",
     )
     .bind(actor)
     .bind(agent_id)
     .bind(action)
     .bind(status)
     .bind(detail)
+    .bind(client_ip)
     .execute(pool)
     .await?;
 
@@ -362,6 +366,7 @@ pub async fn insert_audit_log_dedup(
     status: &str,
     detail: &serde_json::Value,
     dedup_window_secs: i64,
+    client_ip: Option<&str>,
 ) -> Result<()> {
     let exists: Option<i64> = sqlx::query_scalar(
         r#"
@@ -372,6 +377,7 @@ pub async fn insert_audit_log_dedup(
           AND action = $3
           AND status = $4
           AND detail = $5::jsonb
+          AND (client_ip IS NOT DISTINCT FROM $7::text)
           AND ts > NOW() - ($6::bigint * INTERVAL '1 second')
         ORDER BY ts DESC
         LIMIT 1
@@ -383,11 +389,12 @@ pub async fn insert_audit_log_dedup(
     .bind(status)
     .bind(detail)
     .bind(dedup_window_secs)
+    .bind(client_ip)
     .fetch_optional(pool)
     .await?;
 
     if exists.is_none() {
-        insert_audit_log(pool, actor, agent_id, action, status, detail).await?;
+        insert_audit_log(pool, actor, agent_id, action, status, detail, client_ip).await?;
     }
 
     Ok(())
@@ -403,7 +410,7 @@ pub async fn query_audit_log(
 ) -> Result<Vec<AuditRecord>> {
     let rows = sqlx::query(
         r#"
-        SELECT id, ts, actor, agent_id, action, status, detail
+        SELECT id, ts, actor, client_ip, agent_id, action, status, detail
         FROM audit_log
         WHERE ($1::uuid IS NULL OR agent_id = $1)
           AND ($2::text IS NULL OR action = $2)
@@ -426,6 +433,7 @@ pub async fn query_audit_log(
             id: r.try_get("id").unwrap_or_default(),
             ts: r.try_get("ts").unwrap_or_else(|_| Utc::now()),
             actor: r.try_get("actor").unwrap_or_else(|_| "dashboard".to_string()),
+            client_ip: r.try_get("client_ip").ok(),
             agent_id: r.try_get("agent_id").ok(),
             action: r.try_get("action").unwrap_or_default(),
             status: r.try_get("status").unwrap_or_else(|_| "ok".to_string()),
@@ -946,6 +954,100 @@ pub async fn effective_agent_ui_password_hash(pool: &PgPool, agent_id: Uuid) -> 
         }
     }
     Ok(global_hex)
+}
+
+// ─── Installed software inventory ─────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct AgentSoftwareRow {
+    pub name: String,
+    pub version: Option<String>,
+    pub publisher: Option<String>,
+    pub install_location: Option<String>,
+    pub install_date: Option<String>,
+    pub captured_at: DateTime<Utc>,
+}
+
+/// Replace all software rows for an agent with a fresh snapshot (`items` from agent JSON).
+pub async fn replace_agent_software(
+    pool: &PgPool,
+    agent_id: Uuid,
+    items: &[serde_json::Value],
+) -> Result<usize> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM agent_software WHERE agent_id = $1")
+        .bind(agent_id)
+        .execute(&mut *tx)
+        .await?;
+
+    let mut n = 0usize;
+    for item in items.iter().take(12_000) {
+        let name = item["name"].as_str().unwrap_or("").trim();
+        if name.is_empty() {
+            continue;
+        }
+        let version = item["version"].as_str().map(|s| s.to_string());
+        let publisher = item["publisher"].as_str().map(|s| s.to_string());
+        let install_location = item["install_location"].as_str().map(|s| s.to_string());
+        let install_date = item["install_date"].as_str().map(|s| s.to_string());
+        sqlx::query(
+            r#"
+            INSERT INTO agent_software (agent_id, name, version, publisher, install_location, install_date)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            "#,
+        )
+        .bind(agent_id)
+        .bind(name)
+        .bind(version.as_deref())
+        .bind(publisher.as_deref())
+        .bind(install_location.as_deref())
+        .bind(install_date.as_deref())
+        .execute(&mut *tx)
+        .await?;
+        n += 1;
+    }
+    tx.commit().await?;
+    Ok(n)
+}
+
+pub async fn list_agent_software(pool: &PgPool, agent_id: Uuid) -> Result<Vec<AgentSoftwareRow>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT name, version, publisher, install_location, install_date, captured_at
+        FROM agent_software
+        WHERE agent_id = $1
+        ORDER BY lower(name) ASC
+        "#,
+    )
+    .bind(agent_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        out.push(AgentSoftwareRow {
+            name: r.try_get("name")?,
+            version: r.try_get("version")?,
+            publisher: r.try_get("publisher")?,
+            install_location: r.try_get("install_location")?,
+            install_date: r.try_get("install_date")?,
+            captured_at: r.try_get("captured_at")?,
+        });
+    }
+    Ok(out)
+}
+
+pub async fn latest_software_capture_time(
+    pool: &PgPool,
+    agent_id: Uuid,
+) -> Result<Option<DateTime<Utc>>> {
+    let v: Option<DateTime<Utc>> = sqlx::query_scalar(
+        "SELECT MAX(captured_at) FROM agent_software WHERE agent_id = $1",
+    )
+    .bind(agent_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(v)
 }
 
 // ─── Utility ──────────────────────────────────────────────────────────────────

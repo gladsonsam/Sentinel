@@ -262,7 +262,7 @@ export function ActivityTimeline({ sessions, loading, onRefresh }: ActivityTimel
           variant="h2"
           description={`${sorted.length} sessions tracked`}
           actions={
-            <SpaceBetween direction="horizontal" size="xs">
+            <SpaceBetween direction="horizontal" size="xs" alignItems="center">
               {onRefresh && (
                 <Button iconName="refresh" onClick={onRefresh} loading={loading}>
                   Refresh

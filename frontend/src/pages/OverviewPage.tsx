@@ -1,6 +1,8 @@
+import { useState } from "react";
 import ContentLayout from "@cloudscape-design/components/content-layout";
 import type { Agent, AgentLiveStatus } from "../lib/types";
 import { AgentCard } from "../components/overview/AgentCard";
+import { BulkScriptModal } from "../components/overview/BulkScriptModal";
 import { NoAgentsState } from "../components/common/EmptyState";
 
 interface OverviewPageProps {
@@ -23,6 +25,7 @@ export function OverviewPage({
   onBatchShutdown,
 }: OverviewPageProps) {
   const hasAgents = Object.keys(agents).length > 0;
+  const [bulkScriptIds, setBulkScriptIds] = useState<string[] | null>(null);
 
   return (
     <ContentLayout>
@@ -33,11 +36,15 @@ export function OverviewPage({
           onSelectAgent={onSelectAgent}
           onRefresh={onRefresh}
           onBatchWake={onBatchWake}
+          onBulkScript={(ids) => setBulkScriptIds(ids)}
           onBatchRestart={onBatchRestart}
           onBatchShutdown={onBatchShutdown}
         />
       ) : (
         <NoAgentsState />
+      )}
+      {bulkScriptIds && bulkScriptIds.length > 0 && (
+        <BulkScriptModal agentIds={bulkScriptIds} onDismiss={() => setBulkScriptIds(null)} />
       )}
     </ContentLayout>
   );

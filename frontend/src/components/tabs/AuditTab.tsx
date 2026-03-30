@@ -15,6 +15,7 @@ interface AuditRow {
   id: number;
   ts: string;
   actor: string;
+  client_ip?: string | null;
   agent_id: string | null;
   action: string;
   status: "ok" | "error" | "rejected" | string;
@@ -55,7 +56,8 @@ export function AuditTab({ agentId }: AuditTabProps) {
         list.map((r: any) => ({
           id: r.id ?? 0,
           ts: r.ts ?? r.timestamp ?? "",
-          actor: r.actor ?? "dashboard",
+          actor: r.actor ?? "operator",
+          client_ip: r.client_ip ?? null,
           agent_id: r.agent_id ?? null,
           action: r.action ?? "unknown",
           status: r.status ?? "ok",
@@ -81,6 +83,7 @@ export function AuditTab({ agentId }: AuditTabProps) {
           (item.action || "").toLowerCase().includes(q) ||
           (item.status || "").toLowerCase().includes(q) ||
           (item.actor || "").toLowerCase().includes(q) ||
+          (item.client_ip || "").toLowerCase().includes(q) ||
           JSON.stringify(item.detail || {}).toLowerCase().includes(q)
         );
       },
@@ -127,11 +130,18 @@ export function AuditTab({ agentId }: AuditTabProps) {
           width: 120,
         },
         {
-          id: "actor",
-          header: "Actor",
+          id: "user",
+          header: "User",
           cell: (item) => item.actor,
           sortingField: "actor",
           width: 120,
+        },
+        {
+          id: "client_ip",
+          header: "IP",
+          cell: (item) => item.client_ip || "—",
+          sortingField: "client_ip",
+          width: 140,
         },
         {
           id: "detail",
@@ -169,7 +179,7 @@ export function AuditTab({ agentId }: AuditTabProps) {
       filter={
         <TextFilter
           {...filterProps}
-          filteringPlaceholder="Search action, status, actor, or detail JSON"
+          filteringPlaceholder="Search action, status, user, IP, or detail JSON"
         />
       }
       pagination={<Pagination {...paginationProps} />}

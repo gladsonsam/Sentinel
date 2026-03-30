@@ -5,6 +5,7 @@ import type {
   UrlVisit,
   ActivityEvent,
   AgentInfo,
+  AgentSoftwareRow,
   RetentionPolicy,
   StorageUsage,
   UrlTopRow,
@@ -54,6 +55,20 @@ async function postEmpty<T>(path: string): Promise<T> {
     throw new Error(body.error ?? `HTTP ${res.status}`);
   }
   return res.json() as Promise<T>;
+}
+
+async function postJsonRes<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(apiUrl(path), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    credentials: "include",
+  });
+  const data = (await res.json().catch(() => ({}))) as T & { error?: string };
+  if (!res.ok) {
+    throw new Error(data.error ?? `HTTP ${res.status}`);
+  }
+  return data as T;
 }
 
 async function delJson<T>(path: string): Promise<T> {
@@ -230,4 +245,28 @@ export const api = {
     delJson(`/agents/${id}/local-ui-password`),
 
   storageUsage: (): Promise<StorageUsage> => get("/settings/storage"),
+
+  capabilities: (): Promise<{ remote_script: boolean }> =>
+    get("/settings/capabilities"),
+
+  agentSoftware: (
+    id: string,
+  ): Promise<{ rows: AgentSoftwareRow[]; last_captured_at: string | null }> =>
+    get(`/agents/${id}/software`),
+
+  collectAgentSoftware: (id: string): Promise<{ ok: boolean }> =>
+    postEmpty(`/agents/${id}/software/collect`),
+
+  runAgentScript: (
+    id: string,
+    body: { shell: string; script: string; timeout_secs?: number },
+  ): Promise<Record<string, unknown>> => postJsonRes(`/agents/${id}/script`, body),
+
+  bulkAgentScript: (body: {
+    agent_ids: string[];
+    shell: string;
+    script: string;
+    timeout_secs?: number;
+  }): Promise<{ results: Record<string, unknown>[] }> =>
+    postJsonRes("/agents/bulk-script", body),
 };

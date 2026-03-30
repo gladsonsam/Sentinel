@@ -18,15 +18,23 @@
 //! | `GET /api/audit`                | Operator audit log                      |
 //! | `GET /api/settings/storage`     | Database storage usage                  |
 //! | `POST /api/agents/:id/wake`     | Wake-on-LAN (UDP magic packet from stored MAC) |
+//! | `GET /api/agents/:id/software`  | Installed software rows (last inventory)        |
+//! | `POST /api/agents/:id/software/collect` | Ask online agent to send inventory now |
+//! | `POST /api/agents/:id/script`   | Run PowerShell/cmd (requires env allow flag)   |
+//! | `POST /api/agents/bulk-script`  | Same script on many agents (max 64)            |
+//! | `GET /api/settings/capabilities` | e.g. `remote_script` enabled                   |
 
 use std::convert::Infallible;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use tokio::sync::oneshot;
+
 use axum::{
     body::Body,
-    extract::{Path, Query, State},
-    http::{header, StatusCode},
+    extract::{ConnectInfo, Path, Query, State},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -36,7 +44,11 @@ use futures_util::StreamExt;
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::{db, state::AppState, ws_agent};
+use crate::{auth, db, state::AppState, ws_agent};
+
+fn audit_ip(headers: &HeaderMap, connect: SocketAddr) -> Option<String> {
+    auth::client_ip_for_audit(headers, Some(connect))
+}
 
 // ─── Router ───────────────────────────────────────────────────────────────────
 
@@ -44,6 +56,7 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/agents", get(list_agents))
         .route("/agents/overview", get(list_agents_overview))
+        .route("/agents/bulk-script", post(agents_bulk_script))
         .route("/agents/:id/info", get(agent_info))
         .route("/agents/:id/windows", get(agent_windows))
         .route("/agents/:id/keys", get(agent_keys))
@@ -53,6 +66,9 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/agents/:id/top-windows", get(agent_top_windows))
         .route("/agents/:id/history/clear", post(clear_agent_history))
         .route("/agents/:id/wake", post(agent_wake))
+        .route("/agents/:id/software", get(agent_software_list))
+        .route("/agents/:id/software/collect", post(agent_software_collect))
+        .route("/agents/:id/script", post(agent_run_script))
         .route("/audit", get(audit_log))
         .route(
             "/agents/:id/retention",
@@ -69,6 +85,7 @@ pub fn router() -> Router<Arc<AppState>> {
             get(local_ui_password_global_get).put(local_ui_password_global_put),
         )
         .route("/settings/storage", get(storage_usage))
+        .route("/settings/capabilities", get(settings_capabilities))
         .route(
             "/agents/:id/local-ui-password",
             get(local_ui_password_agent_get)
@@ -181,20 +198,24 @@ async fn agent_windows(
     Path(id): Path<Uuid>,
     Query(p): Query<PageParams>,
     State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     if let Err(msg) = validate_page_params(&p) {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
     }
+    let ip = audit_ip(&headers, addr);
     match db::query_windows(&s.db, id, p.limit, p.offset).await {
         Ok(rows) => {
             let _ = db::insert_audit_log_dedup(
                 &s.db,
-                "dashboard",
+                s.audit_operator_name.as_str(),
                 Some(id),
                 "view_windows",
                 "ok",
                 &serde_json::json!({ "limit": p.limit, "offset": p.offset }),
                 10,
+                ip.as_deref(),
             )
             .await;
             Json(serde_json::json!({ "rows": rows })).into_response()
@@ -207,20 +228,24 @@ async fn agent_keys(
     Path(id): Path<Uuid>,
     Query(p): Query<PageParams>,
     State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     if let Err(msg) = validate_page_params(&p) {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
     }
+    let ip = audit_ip(&headers, addr);
     match db::query_keys(&s.db, id, p.limit, p.offset).await {
         Ok(rows) => {
             let _ = db::insert_audit_log_dedup(
                 &s.db,
-                "dashboard",
+                s.audit_operator_name.as_str(),
                 Some(id),
                 "view_keys",
                 "ok",
                 &serde_json::json!({ "limit": p.limit, "offset": p.offset }),
                 10,
+                ip.as_deref(),
             )
             .await;
             Json(serde_json::json!({ "rows": rows })).into_response()
@@ -233,20 +258,24 @@ async fn agent_urls(
     Path(id): Path<Uuid>,
     Query(p): Query<PageParams>,
     State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     if let Err(msg) = validate_page_params(&p) {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
     }
+    let ip = audit_ip(&headers, addr);
     match db::query_urls(&s.db, id, p.limit, p.offset).await {
         Ok(rows) => {
             let _ = db::insert_audit_log_dedup(
                 &s.db,
-                "dashboard",
+                s.audit_operator_name.as_str(),
                 Some(id),
                 "view_urls",
                 "ok",
                 &serde_json::json!({ "limit": p.limit, "offset": p.offset }),
                 10,
+                ip.as_deref(),
             )
             .await;
             Json(serde_json::json!({ "rows": rows })).into_response()
@@ -259,20 +288,24 @@ async fn agent_activity(
     Path(id): Path<Uuid>,
     Query(p): Query<PageParams>,
     State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     if let Err(msg) = validate_page_params(&p) {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
     }
+    let ip = audit_ip(&headers, addr);
     match db::query_activity(&s.db, id, p.limit, p.offset).await {
         Ok(rows) => {
             let _ = db::insert_audit_log_dedup(
                 &s.db,
-                "dashboard",
+                s.audit_operator_name.as_str(),
                 Some(id),
                 "view_activity",
                 "ok",
                 &serde_json::json!({ "limit": p.limit, "offset": p.offset }),
                 10,
+                ip.as_deref(),
             )
             .await;
             Json(serde_json::json!({ "rows": rows })).into_response()
@@ -281,17 +314,24 @@ async fn agent_activity(
     }
 }
 
-async fn agent_info(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Response {
+async fn agent_info(
+    Path(id): Path<Uuid>,
+    State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> Response {
+    let ip = audit_ip(&headers, addr);
     match db::get_agent_info(&s.db, id).await {
         Ok(info) => {
             let _ = db::insert_audit_log_dedup(
                 &s.db,
-                "dashboard",
+                s.audit_operator_name.as_str(),
                 Some(id),
                 "view_specs",
                 "ok",
                 &serde_json::json!({}),
                 15,
+                ip.as_deref(),
             )
             .await;
             Json(serde_json::json!({ "info": info })).into_response()
@@ -332,16 +372,20 @@ async fn agent_top_windows(
 async fn clear_agent_history(
     Path(id): Path<Uuid>,
     State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
+    let ip = audit_ip(&headers, addr);
     match db::clear_agent_history(&s.db, id).await {
         Ok(cleared_rows) => {
             let _ = db::insert_audit_log(
                 &s.db,
-                "dashboard",
+                s.audit_operator_name.as_str(),
                 Some(id),
                 "clear_agent_history",
                 "ok",
                 &serde_json::json!({ "cleared_rows": cleared_rows }),
+                ip.as_deref(),
             )
             .await;
             Json(serde_json::json!({ "cleared_rows": cleared_rows })).into_response()
@@ -363,15 +407,19 @@ async fn agent_wake(
     Path(id): Path<Uuid>,
     Query(q): Query<WakeQuery>,
     State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
+    let ip = audit_ip(&headers, addr);
     if let Err(retry_secs) = s.wol_throttle_check(id) {
         let _ = db::insert_audit_log(
             &s.db,
-            "dashboard",
+            s.audit_operator_name.as_str(),
             Some(id),
             "wake_on_lan",
             "rate_limited",
             &serde_json::json!({ "retry_after_secs": retry_secs }),
+            ip.as_deref(),
         )
         .await;
         return (
@@ -419,11 +467,12 @@ async fn agent_wake(
         tracing::warn!("WoL UDP send failed for {id}: {e}");
         let _ = db::insert_audit_log(
             &s.db,
-            "dashboard",
+            s.audit_operator_name.as_str(),
             Some(id),
             "wake_on_lan",
             "error",
             &serde_json::json!({ "error": e.to_string(), "broadcast": broadcast, "port": port }),
+            ip.as_deref(),
         )
         .await;
         return (
@@ -437,11 +486,12 @@ async fn agent_wake(
     s.wol_mark_sent(id);
     let _ = db::insert_audit_log(
         &s.db,
-        "dashboard",
+        s.audit_operator_name.as_str(),
         Some(id),
         "wake_on_lan",
         "ok",
         &serde_json::json!({ "mac": mac_str, "broadcast": broadcast, "port": port }),
+        ip.as_deref(),
     )
     .await;
 
@@ -457,11 +507,14 @@ async fn agent_wake(
 async fn audit_log(
     Query(p): Query<AuditParams>,
     State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     if let Err(msg) = validate_audit_params(&p) {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
     }
 
+    let ip = audit_ip(&headers, addr);
     match db::query_audit_log(
         &s.db,
         p.agent_id,
@@ -475,7 +528,7 @@ async fn audit_log(
         Ok(rows) => {
             let _ = db::insert_audit_log_dedup(
                 &s.db,
-                "dashboard",
+                s.audit_operator_name.as_str(),
                 p.agent_id,
                 "view_audit_log",
                 "ok",
@@ -486,6 +539,7 @@ async fn audit_log(
                     "offset": p.offset
                 }),
                 10,
+                ip.as_deref(),
             )
             .await;
             Json(serde_json::json!({ "rows": rows })).into_response()
@@ -532,11 +586,14 @@ async fn retention_global_get(State(s): State<Arc<AppState>>) -> Response {
 
 async fn retention_global_put(
     State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(body): Json<RetentionBody>,
 ) -> Response {
     if let Err(msg) = validate_retention_days(body.keylog_days, body.window_days, body.url_days) {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
     }
+    let ip = audit_ip(&headers, addr);
     let p = db::RetentionPolicy {
         keylog_days: body.keylog_days,
         window_days: body.window_days,
@@ -546,7 +603,7 @@ async fn retention_global_put(
         Ok(()) => {
             let _ = db::insert_audit_log(
                 &s.db,
-                "dashboard",
+                s.audit_operator_name.as_str(),
                 None,
                 "set_retention_global",
                 "ok",
@@ -555,6 +612,7 @@ async fn retention_global_put(
                     "window_days": p.window_days,
                     "url_days": p.url_days
                 }),
+                ip.as_deref(),
             )
             .await;
             retention_global_get(State(s.clone())).await
@@ -595,11 +653,14 @@ async fn agent_retention_get(Path(id): Path<Uuid>, State(s): State<Arc<AppState>
 async fn agent_retention_put(
     Path(id): Path<Uuid>,
     State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(body): Json<RetentionBody>,
 ) -> Response {
     if let Err(msg) = validate_retention_days(body.keylog_days, body.window_days, body.url_days) {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
     }
+    let ip = audit_ip(&headers, addr);
     let ov = db::RetentionAgentOverride {
         keylog_days: body.keylog_days,
         window_days: body.window_days,
@@ -609,7 +670,7 @@ async fn agent_retention_put(
         Ok(()) => {
             let _ = db::insert_audit_log(
                 &s.db,
-                "dashboard",
+                s.audit_operator_name.as_str(),
                 Some(id),
                 "set_retention_agent",
                 "ok",
@@ -618,6 +679,7 @@ async fn agent_retention_put(
                     "window_days": ov.window_days,
                     "url_days": ov.url_days
                 }),
+                ip.as_deref(),
             )
             .await;
             agent_retention_get(Path(id), State(s.clone())).await
@@ -626,16 +688,23 @@ async fn agent_retention_put(
     }
 }
 
-async fn agent_retention_delete(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Response {
+async fn agent_retention_delete(
+    Path(id): Path<Uuid>,
+    State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> Response {
+    let ip = audit_ip(&headers, addr);
     match db::clear_retention_agent(&s.db, id).await {
         Ok(()) => {
             let _ = db::insert_audit_log(
                 &s.db,
-                "dashboard",
+                s.audit_operator_name.as_str(),
                 Some(id),
                 "clear_retention_agent",
                 "ok",
                 &serde_json::json!({}),
+                ip.as_deref(),
             )
             .await;
             agent_retention_get(Path(id), State(s.clone())).await
@@ -674,6 +743,8 @@ async fn local_ui_password_global_get(State(s): State<Arc<AppState>>) -> Respons
 
 async fn local_ui_password_global_put(
     State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(body): Json<LocalUiPasswordBody>,
 ) -> Response {
     if let Some(ref p) = body.password {
@@ -681,6 +752,7 @@ async fn local_ui_password_global_put(
             return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
         }
     }
+    let ip = audit_ip(&headers, addr);
     let hash = match body.password {
         None => None,
         Some(ref p) if p.is_empty() => None,
@@ -690,11 +762,12 @@ async fn local_ui_password_global_put(
         Ok(()) => {
             let _ = db::insert_audit_log(
                 &s.db,
-                "dashboard",
+                s.audit_operator_name.as_str(),
                 None,
                 "set_local_ui_password_global",
                 "ok",
                 &serde_json::json!({ "password_set": hash.is_some() }),
+                ip.as_deref(),
             )
             .await;
             ws_agent::push_local_ui_password_to_all_connected(&s).await;
@@ -730,6 +803,8 @@ async fn local_ui_password_agent_get(Path(id): Path<Uuid>, State(s): State<Arc<A
 async fn local_ui_password_agent_put(
     Path(id): Path<Uuid>,
     State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(body): Json<LocalUiPasswordBody>,
 ) -> Response {
     if let Some(ref p) = body.password {
@@ -737,6 +812,7 @@ async fn local_ui_password_agent_put(
             return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
         }
     }
+    let ip = audit_ip(&headers, addr);
     let hash = match body.password {
         None => None,
         Some(ref p) if p.is_empty() => None,
@@ -746,11 +822,12 @@ async fn local_ui_password_agent_put(
         Ok(()) => {
             let _ = db::insert_audit_log(
                 &s.db,
-                "dashboard",
+                s.audit_operator_name.as_str(),
                 Some(id),
                 "set_local_ui_password_override",
                 "ok",
                 &serde_json::json!({ "password_set": hash.is_some() }),
+                ip.as_deref(),
             )
             .await;
             ws_agent::push_local_ui_password_hash_to_agent(&s, id).await;
@@ -760,16 +837,23 @@ async fn local_ui_password_agent_put(
     }
 }
 
-async fn local_ui_password_agent_delete(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Response {
+async fn local_ui_password_agent_delete(
+    Path(id): Path<Uuid>,
+    State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> Response {
+    let ip = audit_ip(&headers, addr);
     match db::clear_local_ui_override(&s.db, id).await {
         Ok(()) => {
             let _ = db::insert_audit_log(
                 &s.db,
-                "dashboard",
+                s.audit_operator_name.as_str(),
                 Some(id),
                 "clear_local_ui_password_override",
                 "ok",
                 &serde_json::json!({}),
+                ip.as_deref(),
             )
             .await;
             ws_agent::push_local_ui_password_hash_to_agent(&s, id).await;
@@ -777,6 +861,13 @@ async fn local_ui_password_agent_delete(Path(id): Path<Uuid>, State(s): State<Ar
         }
         Err(e) => err500(e),
     }
+}
+
+async fn settings_capabilities(State(s): State<Arc<AppState>>) -> Response {
+    Json(serde_json::json!({
+        "remote_script": s.allow_remote_script,
+    }))
+    .into_response()
 }
 
 async fn storage_usage(State(s): State<Arc<AppState>>) -> Response {
@@ -916,6 +1007,263 @@ async fn agent_mjpeg(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Re
         .header("Connection", "keep-alive")
         .body(Body::from_stream(result_stream))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
+// ─── Software inventory & remote scripts ─────────────────────────────────────
+
+const MAX_SCRIPT_BODY_BYTES: usize = 256 * 1024;
+
+#[derive(Deserialize)]
+struct RunScriptBody {
+    shell: String,
+    script: String,
+    #[serde(default)]
+    timeout_secs: Option<u64>,
+}
+
+#[derive(Deserialize)]
+struct BulkScriptBody {
+    agent_ids: Vec<Uuid>,
+    shell: String,
+    script: String,
+    #[serde(default)]
+    timeout_secs: Option<u64>,
+}
+
+async fn agent_software_list(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Response {
+    match db::list_agent_software(&s.db, id).await {
+        Ok(rows) => {
+            let last = db::latest_software_capture_time(&s.db, id)
+                .await
+                .unwrap_or(None);
+            Json(serde_json::json!({
+                "rows": rows,
+                "last_captured_at": last,
+            }))
+            .into_response()
+        }
+        Err(e) => err500(e),
+    }
+}
+
+async fn agent_software_collect(
+    Path(id): Path<Uuid>,
+    State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> Response {
+    let ip = audit_ip(&headers, addr);
+    let cmd = serde_json::json!({ "type": "CollectSoftware" });
+    if !s.try_send_agent_command_json(id, &cmd) {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "Agent is not connected." })),
+        )
+            .into_response();
+    }
+    let _ = db::insert_audit_log(
+        &s.db,
+        s.audit_operator_name.as_str(),
+        Some(id),
+        "software_collect",
+        "ok",
+        &serde_json::json!({}),
+        ip.as_deref(),
+    )
+    .await;
+    Json(serde_json::json!({ "ok": true })).into_response()
+}
+
+async fn run_script_and_wait(
+    s: Arc<AppState>,
+    agent_id: Uuid,
+    shell: String,
+    script: String,
+    timeout: u64,
+) -> serde_json::Value {
+    let rid = Uuid::new_v4();
+    let (tx, rx) = oneshot::channel();
+    s.register_script_waiter(rid, tx);
+    let cmd = serde_json::json!({
+        "type": "RunScript",
+        "request_id": rid.to_string(),
+        "shell": shell,
+        "script": script,
+        "timeout_secs": timeout,
+    });
+    if !s.try_send_agent_command_json(agent_id, &cmd) {
+        s.remove_script_waiter(rid);
+        return serde_json::json!({
+            "agent_id": agent_id,
+            "ok": false,
+            "error": "Agent is not connected.",
+        });
+    }
+    let wait = Duration::from_secs((timeout + 15).min(330));
+    match tokio::time::timeout(wait, rx).await {
+        Ok(Ok(mut val)) => {
+            if let Some(o) = val.as_object_mut() {
+                o.insert(
+                    "agent_id".to_string(),
+                    serde_json::Value::String(agent_id.to_string()),
+                );
+            }
+            val
+        }
+        Ok(Err(_)) => serde_json::json!({
+            "agent_id": agent_id,
+            "ok": false,
+            "error": "Internal wait channel closed.",
+        }),
+        Err(_) => {
+            s.remove_script_waiter(rid);
+            serde_json::json!({
+                "agent_id": agent_id,
+                "ok": false,
+                "error": "Timed out waiting for script result.",
+                "request_id": rid,
+            })
+        }
+    }
+}
+
+async fn agent_run_script(
+    Path(id): Path<Uuid>,
+    State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(body): Json<RunScriptBody>,
+) -> Response {
+    let ip = audit_ip(&headers, addr);
+    if !s.allow_remote_script {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "Remote script execution is disabled. Set ALLOW_REMOTE_SCRIPT_EXECUTION=true on the server (high risk)."
+            })),
+        )
+            .into_response();
+    }
+    let shell = body.shell.to_lowercase();
+    if shell != "powershell" && shell != "cmd" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "shell must be \"powershell\" or \"cmd\"" })),
+        )
+            .into_response();
+    }
+    if body.script.len() > MAX_SCRIPT_BODY_BYTES {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "script exceeds maximum size" })),
+        )
+            .into_response();
+    }
+    let timeout = body.timeout_secs.unwrap_or(120).clamp(5, 300);
+    let _ = db::insert_audit_log(
+        &s.db,
+        s.audit_operator_name.as_str(),
+        Some(id),
+        "remote_script",
+        "dispatched",
+        &serde_json::json!({ "shell": shell }),
+        ip.as_deref(),
+    )
+    .await;
+    let val = run_script_and_wait(s.clone(), id, shell.clone(), body.script, timeout).await;
+    let audit_status = if val.get("ok") == Some(&serde_json::json!(false))
+        || val.get("error").is_some() && val.get("exit_code").is_none()
+    {
+        "error"
+    } else {
+        "ok"
+    };
+    let _ = db::insert_audit_log(
+        &s.db,
+        s.audit_operator_name.as_str(),
+        Some(id),
+        "remote_script",
+        audit_status,
+        &serde_json::json!({
+            "shell": shell,
+            "exit_code": val.get("exit_code"),
+        }),
+        ip.as_deref(),
+    )
+    .await;
+    Json(val).into_response()
+}
+
+async fn agents_bulk_script(
+    State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(body): Json<BulkScriptBody>,
+) -> Response {
+    if !s.allow_remote_script {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "Remote script execution is disabled. Set ALLOW_REMOTE_SCRIPT_EXECUTION=true on the server (high risk)."
+            })),
+        )
+            .into_response();
+    }
+    if body.agent_ids.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "agent_ids must be non-empty" })),
+        )
+            .into_response();
+    }
+    if body.agent_ids.len() > 64 {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "at most 64 agents per bulk request" })),
+        )
+            .into_response();
+    }
+    let shell = body.shell.to_lowercase();
+    if shell != "powershell" && shell != "cmd" {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "shell must be \"powershell\" or \"cmd\"" })),
+        )
+            .into_response();
+    }
+    if body.script.len() > MAX_SCRIPT_BODY_BYTES {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "script exceeds maximum size" })),
+        )
+            .into_response();
+    }
+    let ip = audit_ip(&headers, addr);
+    let timeout = body.timeout_secs.unwrap_or(120).clamp(5, 300);
+    let s2 = s.clone();
+    let script = body.script;
+    let futs: Vec<_> = body
+        .agent_ids
+        .into_iter()
+        .map(|aid| {
+            let s3 = s2.clone();
+            let sh = shell.clone();
+            let sc = script.clone();
+            async move { run_script_and_wait(s3, aid, sh, sc, timeout).await }
+        })
+        .collect();
+    let results = futures_util::future::join_all(futs).await;
+    let _ = db::insert_audit_log(
+        &s.db,
+        s.audit_operator_name.as_str(),
+        None,
+        "remote_script_bulk",
+        "ok",
+        &serde_json::json!({ "count": results.len(), "shell": shell }),
+        ip.as_deref(),
+    )
+    .await;
+    Json(serde_json::json!({ "results": results })).into_response()
 }
 
 // ─── RAII capture guard ───────────────────────────────────────────────────────

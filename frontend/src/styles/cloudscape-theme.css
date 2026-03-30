@@ -602,3 +602,9 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Agents overview: rounded “Actions” bulk dropdown trigger */
+button.sentinel-overview-actions-pill {
+  border-radius: 9999px !important;
+  padding-inline: 14px !important;
+}

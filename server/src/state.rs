@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
-use tokio::sync::{broadcast, mpsc::UnboundedSender};
+use tokio::sync::{broadcast, mpsc::UnboundedSender, oneshot};
 use uuid::Uuid;
 
 // ─── Agent info ───────────────────────────────────────────────────────────────
@@ -85,6 +85,16 @@ pub struct AppState {
     wol_last_wake: Mutex<HashMap<Uuid, Instant>>,
     /// Minimum time between WoL magic packets for the same agent (`0` = no limit).
     pub wol_min_interval: Duration,
+
+    /// When false, `POST .../script` and bulk script are rejected (remote code execution).
+    pub allow_remote_script: bool,
+
+    /// Label stored in `audit_log.actor` for dashboard actions until per-user login exists.
+    /// Set via `DASHBOARD_OPERATOR_NAME` (default `operator`).
+    pub audit_operator_name: String,
+
+    /// HTTP handlers wait on these until the agent posts `script_result` (or timeout).
+    pub script_waiters: Mutex<HashMap<Uuid, oneshot::Sender<serde_json::Value>>>,
 }
 
 /// A cached screenshot frame with a monotonically increasing sequence number.
@@ -105,6 +115,8 @@ impl AppState {
         agent_secret: Option<String>,
         allow_insecure_agent_auth: bool,
         wol_min_interval: Duration,
+        allow_remote_script: bool,
+        audit_operator_name: String,
     ) -> Self {
         let (tx, _) = broadcast::channel(4096);
         Self {
@@ -121,6 +133,9 @@ impl AppState {
             sessions: Mutex::new(HashSet::new()),
             wol_last_wake: Mutex::new(HashMap::new()),
             wol_min_interval,
+            allow_remote_script,
+            audit_operator_name,
+            script_waiters: Mutex::new(HashMap::new()),
         }
     }
 
@@ -149,6 +164,36 @@ impl AppState {
             .lock()
             .unwrap()
             .insert(agent_id, Instant::now());
+    }
+
+    pub fn register_script_waiter(&self, id: Uuid, sender: oneshot::Sender<serde_json::Value>) {
+        self.script_waiters.lock().unwrap().insert(id, sender);
+    }
+
+    pub fn remove_script_waiter(&self, id: Uuid) {
+        self.script_waiters.lock().unwrap().remove(&id);
+    }
+
+    /// Deliver an agent `script_result` to a waiting HTTP request, if any.
+    pub fn try_complete_script_waiter(&self, id: Uuid, payload: serde_json::Value) -> bool {
+        if let Some(tx) = self.script_waiters.lock().unwrap().remove(&id) {
+            let _ = tx.send(payload);
+            return true;
+        }
+        false
+    }
+
+    /// Forward a control payload to a connected agent (same wire format as viewer controls).
+    pub fn try_send_agent_command_json(&self, agent_id: Uuid, cmd: &serde_json::Value) -> bool {
+        let Ok(s) = serde_json::to_string(cmd) else {
+            return false;
+        };
+        self.agent_cmds
+            .lock()
+            .unwrap()
+            .get(&agent_id)
+            .map(|tx| tx.send(s).is_ok())
+            .unwrap_or(false)
     }
 
     /// Send a JSON string to every connected viewer (fire-and-forget).

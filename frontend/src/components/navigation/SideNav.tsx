@@ -1,83 +1,48 @@
 import SideNavigation, { SideNavigationProps } from "@cloudscape-design/components/side-navigation";
+import { AGENT_TAB_META, AGENT_TAB_ORDER } from "../../lib/agentTabNav";
+import type { TabKey } from "../../lib/types";
 
-export type TabKey =
-  | "activity"
-  | "specs"
-  | "screen"
-  | "keys"
-  | "windows"
-  | "urls"
-  | "files"
-  | "audit"
-  | "settings";
+export type { TabKey };
+
+function navLink(id: TabKey): SideNavigationProps.Link {
+  return {
+    type: "link",
+    text: AGENT_TAB_META[id].sideNavLabel,
+    href: `#${id}`,
+  };
+}
+
+/** Collapsible groups keep the sidebar scannable; tab row still lists every view. */
+const NAV_ITEMS: SideNavigationProps.Item[] = [
+  navLink("activity"),
+  {
+    type: "expandable-link-group",
+    text: "System & tools",
+    href: "#specs",
+    defaultExpanded: true,
+    items: [
+      navLink("specs"),
+      navLink("screen"),
+      navLink("software"),
+      navLink("scripts"),
+      navLink("files"),
+    ],
+  },
+  {
+    type: "expandable-link-group",
+    text: "Captured data",
+    href: "#keys",
+    defaultExpanded: false,
+    items: [navLink("keys"), navLink("windows"), navLink("urls"), navLink("audit")],
+  },
+  { type: "divider" },
+  navLink("settings"),
+];
 
 interface SideNavProps {
   activeTab: TabKey;
   onTabChange: (tabKey: TabKey) => void;
 }
-
-const NAV_ITEMS: SideNavigationProps.Item[] = [
-  {
-    type: "section",
-    text: "Monitoring",
-    items: [
-      {
-        type: "link",
-        text: "Activity Timeline",
-        href: "#activity",
-      },
-      {
-        type: "link",
-        text: "System Specs",
-        href: "#specs",
-      },
-      {
-        type: "link",
-        text: "Screen Viewer",
-        href: "#screen",
-      },
-    ],
-  },
-  {
-    type: "section",
-    text: "History",
-    items: [
-      {
-        type: "link",
-        text: "Keystrokes",
-        href: "#keys",
-      },
-      {
-        type: "link",
-        text: "Windows",
-        href: "#windows",
-      },
-      {
-        type: "link",
-        text: "URLs",
-        href: "#urls",
-      },
-      {
-        type: "link",
-        text: "Files",
-        href: "#files",
-      },
-      {
-        type: "link",
-        text: "Audit Log",
-        href: "#audit",
-      },
-    ],
-  },
-  {
-    type: "divider",
-  },
-  {
-    type: "link",
-    text: "Agent Settings",
-    href: "#settings",
-  },
-];
 
 export function SideNav({ activeTab, onTabChange }: SideNavProps) {
   const activeHref = `#${activeTab}`;
@@ -85,15 +50,15 @@ export function SideNav({ activeTab, onTabChange }: SideNavProps) {
   const handleFollow: SideNavigationProps["onFollow"] = (event) => {
     event.preventDefault();
     const href = event.detail.href;
-    if (href.startsWith("#")) {
-      const tabKey = href.substring(1) as TabKey;
-      onTabChange(tabKey);
-    }
+    if (!href.startsWith("#")) return;
+    const raw = href.slice(1);
+    if (!raw || !(AGENT_TAB_ORDER as readonly string[]).includes(raw)) return;
+    onTabChange(raw as TabKey);
   };
 
   return (
     <SideNavigation
-      header={{ text: "Navigation", href: "#" }}
+      header={{ text: "Agent", href: "#" }}
       activeHref={activeHref}
       items={NAV_ITEMS}
       onFollow={handleFollow}

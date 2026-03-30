@@ -39,6 +39,54 @@ export function fmtDateTime(ts: string | number | undefined): string {
   return d ? d.toLocaleString() : "—";
 }
 
+/**
+ * Windows Uninstall `InstallDate` is often REG_SZ `YYYYMMDD` or `YYYYMMDDHHmmss`.
+ * Show as `YYYY-MM-DD` for the Software tab (also normalizes rows already stored raw).
+ */
+export function formatWindowsInstallDate(s: string | null | undefined): string {
+  if (s == null) return "—";
+  const t = String(s).trim();
+  if (!t) return "—";
+  if (/^\d{4}-\d{2}-\d{2}/.test(t)) {
+    return t.slice(0, 10);
+  }
+  const digits = t.replace(/\D/g, "");
+  const head =
+    digits.length >= 14 ? digits.slice(0, 8) : digits.length === 8 ? digits : "";
+  if (head.length === 8) {
+    const y = Number(head.slice(0, 4));
+    const m = Number(head.slice(4, 6));
+    const d = Number(head.slice(6, 8));
+    if (y >= 1980 && y <= 2100 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    }
+  }
+  return t;
+}
+
+/** Lexicographic sort key for `install_date` (unknown / invalid → last when ascending). */
+export function installDateSortKey(s: string | null | undefined): string {
+  const missing = "99999999";
+  if (s == null) return missing;
+  const t = String(s).trim();
+  if (!t) return missing;
+  if (/^\d{4}-\d{2}-\d{2}/.test(t)) {
+    return t.slice(0, 10).replace(/-/g, "");
+  }
+  const digits = t.replace(/\D/g, "");
+  const head =
+    digits.length >= 14 ? digits.slice(0, 8) : digits.length === 8 ? digits : "";
+  if (head.length === 8) {
+    const y = Number(head.slice(0, 4));
+    const m = Number(head.slice(4, 6));
+    const d = Number(head.slice(6, 8));
+    if (y >= 1980 && y <= 2100 && m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return head;
+    }
+  }
+  return missing;
+}
+
 /** Truncate a string to `maxLen` characters, appending '…' if truncated. */
 export function truncate(s: string, maxLen: number): string {
   return s.length > maxLen ? s.slice(0, maxLen) + "…" : s;

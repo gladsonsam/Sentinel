@@ -10,6 +10,8 @@
 //! | `UI_PASSWORD`  | *(unset – deny access; set ALLOW_INSECURE_DASHBOARD_OPEN=true to allow)* |
 //! | `RUST_LOG`     | `info`                                              |
 //! | `WOL_MIN_INTERVAL_SECS` | Minimum seconds between Wake-on-LAN for the same agent (`0` = off; default `15`) |
+//! | `ALLOW_REMOTE_SCRIPT_EXECUTION` | `true` to enable `POST /api/agents/.../script` (**remote code**; default off) |
+//! | `DASHBOARD_OPERATOR_NAME` | Label stored in audit `actor` for UI actions (default `operator`) |
 //!
 //! Set `UI_PASSWORD` to enable password protection for the dashboard.
 //! The agent WebSocket (`/ws/agent`) uses a shared secret (`AGENT_SECRET`)
@@ -23,6 +25,7 @@ mod wol;
 mod ws_agent;
 mod ws_viewer;
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::{
@@ -125,6 +128,17 @@ async fn main() -> anyhow::Result<()> {
         info!("Wake-on-LAN per-agent throttle: {}s.", wol_min_interval_secs);
     }
 
+    let allow_remote_script = read_env_or_file("ALLOW_REMOTE_SCRIPT_EXECUTION")
+        .map(|v| parse_bool(&v))
+        .unwrap_or(false);
+    if allow_remote_script {
+        info!("Remote script execution from the dashboard is ENABLED (ALLOW_REMOTE_SCRIPT_EXECUTION).");
+    }
+
+    let audit_operator_name = read_env_or_file("DASHBOARD_OPERATOR_NAME")
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "operator".to_string());
+
     let state = Arc::new(state::AppState::new(
         pool,
         ui_password,
@@ -132,6 +146,8 @@ async fn main() -> anyhow::Result<()> {
         agent_secret,
         allow_insecure_agent_auth,
         wol_min_interval,
+        allow_remote_script,
+        audit_operator_name,
     ));
 
     // ── Routes ────────────────────────────────────────────────────────────
@@ -178,7 +194,11 @@ async fn main() -> anyhow::Result<()> {
     info!("Listening on http://{addr}");
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }

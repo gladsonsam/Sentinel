@@ -88,6 +88,12 @@ dirs = "6"
 sysinfo = "0.37"
 ipconfig = "0.3"
 
+# ── Installed software (registry) / temp script files ────────────────────────
+tempfile = "3"
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.52"
+
 
 # ── Build dependencies ───────────────────────────────────────────────────────
 [build-dependencies]

@@ -48,6 +48,16 @@ export interface ActivityEvent {
   ts: string;
 }
 
+/** One row from installed-software inventory (Windows Uninstall registry). */
+export interface AgentSoftwareRow {
+  name: string;
+  version?: string | null;
+  publisher?: string | null;
+  install_location?: string | null;
+  install_date?: string | null;
+  captured_at: string;
+}
+
 export interface NetworkAdapterInfo {
   name?: string;
   description?: string;
@@ -166,12 +176,14 @@ export interface LocalUiPasswordAgentState {
 // ── UI ────────────────────────────────────────────────────────────────────────
 
 export type TabKey =
+  | "activity"
   | "specs"
   | "screen"
+  | "software"
+  | "scripts"
   | "keys"
   | "windows"
   | "urls"
   | "files"
   | "audit"
-  | "activity"
   | "settings";

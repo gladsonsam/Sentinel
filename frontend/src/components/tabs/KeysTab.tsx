@@ -148,7 +148,7 @@ export function KeysTab({ agentId }: KeysTabProps) {
         <Header
           counter={`(${items.length})`}
           actions={
-            <SpaceBetween direction="horizontal" size="xs">
+            <SpaceBetween direction="horizontal" size="xs" alignItems="center">
               <Toggle
                 checked={showCorrected}
                 onChange={({ detail }) => setShowCorrected(detail.checked)}

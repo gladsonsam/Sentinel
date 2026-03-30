@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import Cards from "@cloudscape-design/components/cards";
+import Box from "@cloudscape-design/components/box";
 import CollectionPreferences from "@cloudscape-design/components/collection-preferences";
 import TextFilter from "@cloudscape-design/components/text-filter";
 import Pagination from "@cloudscape-design/components/pagination";
@@ -22,6 +23,7 @@ interface AgentCardProps {
   onSelectAgent: (agentId: string) => void;
   onRefresh: () => void;
   onBatchWake: (agentIds: string[]) => void;
+  onBulkScript: (agentIds: string[]) => void;
   onBatchRestart: (agentIds: string[]) => void;
   onBatchShutdown: (agentIds: string[]) => void;
 }
@@ -32,6 +34,7 @@ export function AgentCard({
   onSelectAgent,
   onRefresh,
   onBatchWake,
+  onBulkScript,
   onBatchRestart,
   onBatchShutdown,
 }: AgentCardProps) {
@@ -88,14 +91,17 @@ export function AgentCard({
       selectionType="multi"
       cardsPerRow={[{ cards: 1 }, { minWidth: 600, cards: 2 }, { minWidth: 900, cards: 3 }]}
       header={
-        <FullPageHeader
-          totalAgents={agentsWithStatus.length}
-          selectedCount={selectedItems.length}
-          onRefresh={onRefresh}
-          onWakeSelected={() => onBatchWake(selectedItems.map((item) => item.id))}
-          onRestartSelected={() => onBatchRestart(selectedItems.map((item) => item.id))}
-          onShutdownSelected={() => onBatchShutdown(selectedItems.map((item) => item.id))}
-        />
+        <Box padding={{ bottom: "m" }}>
+          <FullPageHeader
+            totalAgents={agentsWithStatus.length}
+            selectedCount={selectedItems.length}
+            onRefresh={onRefresh}
+            onWakeSelected={() => onBatchWake(selectedItems.map((item) => item.id))}
+            onBulkScript={() => onBulkScript(selectedItems.map((item) => item.id))}
+            onRestartSelected={() => onBatchRestart(selectedItems.map((item) => item.id))}
+            onShutdownSelected={() => onBatchShutdown(selectedItems.map((item) => item.id))}
+          />
+        </Box>
       }
       filter={
         <TextFilter

@@ -1,9 +1,21 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import ContentLayout from "@cloudscape-design/components/content-layout";
+import SegmentedControl from "@cloudscape-design/components/segmented-control";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Tabs from "@cloudscape-design/components/tabs";
 import BreadcrumbGroup from "@cloudscape-design/components/breadcrumb-group";
-import { type TabKey } from "../components/navigation/SideNav";
+import {
+  AGENT_DATA_SUBTABS,
+  AGENT_SECTION_ORDER,
+  AGENT_SYSTEM_SUBTABS,
+  AgentSectionTabLabel,
+  agentSectionFromTabKey,
+  agentTabBreadcrumbLabel,
+  defaultTabForAgentSection,
+  AGENT_TAB_META,
+  type AgentSectionId,
+} from "../lib/agentTabNav";
+import type { TabKey } from "../lib/types";
 import { SpecsTab } from "../components/tabs/SpecsTab";
 import { ScreenTab } from "../components/tabs/ScreenTab";
 import { KeysTab } from "../components/tabs/KeysTab";
@@ -11,6 +23,8 @@ import { WindowsTab } from "../components/tabs/WindowsTab";
 import { UrlsTab } from "../components/tabs/UrlsTab";
 import { FilesTab } from "../components/tabs/FilesTab";
 import { AuditTab } from "../components/tabs/AuditTab";
+import { SoftwareTab } from "../components/tabs/SoftwareTab";
+import { ScriptsTab } from "../components/tabs/ScriptsTab";
 import { ActivityTimeline } from "../components/timeline/ActivityTimeline";
 import { aggregateSessions } from "../lib/session-aggregator";
 import { api, apiUrl } from "../lib/api";
@@ -241,6 +255,10 @@ export function AgentDetailPage({
         return <SpecsTab agentId={agent.id} cachedInfo={resolvedInfo} />;
       case "screen":
         return <ScreenTab agentId={agent.id} sendWsMessage={sendWsMessage} />;
+      case "software":
+        return <SoftwareTab agentId={agent.id} />;
+      case "scripts":
+        return <ScriptsTab agentId={agent.id} />;
       case "keys":
         return <KeysTab agentId={agent.id} />;
       case "windows":
@@ -258,18 +276,56 @@ export function AgentDetailPage({
     }
   };
 
-  const tabs = [
-    { id: "activity", label: "Activity", content: activeTab === "activity" ? renderTabContent("activity") : null },
-    { id: "specs", label: "Specs", content: activeTab === "specs" ? renderTabContent("specs") : null },
-    { id: "screen", label: "Screen", content: activeTab === "screen" ? renderTabContent("screen") : null },
-    { id: "keys", label: "Keys", content: activeTab === "keys" ? renderTabContent("keys") : null },
-    { id: "windows", label: "Windows", content: activeTab === "windows" ? renderTabContent("windows") : null },
-    { id: "urls", label: "URLs", content: activeTab === "urls" ? renderTabContent("urls") : null },
-    { id: "files", label: "Files", content: activeTab === "files" ? renderTabContent("files") : null },
-    { id: "audit", label: "Audit", content: activeTab === "audit" ? renderTabContent("audit") : null },
-    { id: "settings", label: "Settings", content: activeTab === "settings" ? renderTabContent("settings") : null },
-  ];
-  const breadcrumbTabLabel = activeTab.charAt(0).toUpperCase() + activeTab.slice(1);
+  const activeSection = agentSectionFromTabKey(activeTab);
+
+  const mainTabs = AGENT_SECTION_ORDER.map((section) => {
+    const content =
+      activeSection === section
+        ? (() => {
+            if (section === "system") {
+              return (
+                <SpaceBetween size="l">
+                  <SegmentedControl
+                    label="System view"
+                    selectedId={activeTab}
+                    options={AGENT_SYSTEM_SUBTABS.map((id) => ({
+                      id,
+                      text: AGENT_TAB_META[id].tabLabel,
+                    }))}
+                    onChange={({ detail }) => onTabChange(detail.selectedId as TabKey)}
+                  />
+                  {renderTabContent(activeTab)}
+                </SpaceBetween>
+              );
+            }
+            if (section === "data") {
+              return (
+                <SpaceBetween size="l">
+                  <SegmentedControl
+                    label="Recorded data"
+                    selectedId={activeTab}
+                    options={AGENT_DATA_SUBTABS.map((id) => ({
+                      id,
+                      text: AGENT_TAB_META[id].tabLabel,
+                    }))}
+                    onChange={({ detail }) => onTabChange(detail.selectedId as TabKey)}
+                  />
+                  {renderTabContent(activeTab)}
+                </SpaceBetween>
+              );
+            }
+            return renderTabContent(activeTab);
+          })()
+        : null;
+
+    return {
+      id: section,
+      label: <AgentSectionTabLabel section={section} />,
+      content,
+    };
+  });
+
+  const breadcrumbTabLabel = agentTabBreadcrumbLabel(activeTab);
 
   return (
     <ContentLayout>
@@ -299,9 +355,14 @@ export function AgentDetailPage({
         <GeneralConfig agent={agent} info={resolvedInfo} onOpenHelp={onOpenHelp} />
 
         <Tabs
-          activeTabId={activeTab}
-          tabs={tabs}
-          onChange={({ detail }) => onTabChange(detail.activeTabId as TabKey)}
+          ariaLabel="Agent views"
+          activeTabId={activeSection}
+          tabs={mainTabs}
+          onChange={({ detail }) => {
+            const nextSection = detail.activeTabId as AgentSectionId;
+            if (agentSectionFromTabKey(activeTab) === nextSection) return;
+            onTabChange(defaultTabForAgentSection(nextSection));
+          }}
         />
       </SpaceBetween>
     </ContentLayout>
