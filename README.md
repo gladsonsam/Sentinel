@@ -2,6 +2,9 @@
 
 A lightweight, self-hosted monitoring system built with Rust and React. A Windows agent streams real-time telemetry to the server, which feeds a live web dashboard with screen streaming, keylogging, window/URL tracking, and AFK detection.
 
+> [!WARNING]
+> This project was **largely written with AI assistance** and is intended for **experimentation and testing**, not as a hardened or supported product. **Do not rely on it in production** or for sensitive environments. Monitoring, remote control, and keystroke-related features carry inherent privacy and security implications; the codebase has **not** undergone professional security review and may contain bugs, weak defaults, or other issues that could expose data or systems. Use at your own risk.
+
 ## Features
 
 - **Real-time Dashboard** — Live WebSocket feed of window focus, keystrokes, URLs, and activity state.
