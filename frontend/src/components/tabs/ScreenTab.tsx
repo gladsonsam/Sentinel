@@ -30,11 +30,11 @@ export function ScreenTab({ agentId, sendWsMessage }: ScreenTabProps) {
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!remoteControl || !imgRef.current) return;
-    
+
     const rect = imgRef.current.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * imgRef.current.naturalWidth;
     const y = ((e.clientY - rect.top) / rect.height) * imgRef.current.naturalHeight;
-    
+
     sendWsMessage({
       type: "control",
       agent_id: agentId,
@@ -59,14 +59,14 @@ export function ScreenTab({ agentId, sendWsMessage }: ScreenTabProps) {
   const handleKeyPress = (e: React.KeyboardEvent<HTMLDivElement>) => {
     if (!remoteControl) return;
     e.preventDefault();
-    
+
     const keyMap: Record<string, string> = {
       Enter: "enter",
       Backspace: "backspace",
       Tab: "tab",
       Escape: "escape",
     };
-    
+
     const mapped = keyMap[e.key];
     if (mapped) {
       sendWsMessage({
@@ -87,7 +87,7 @@ export function ScreenTab({ agentId, sendWsMessage }: ScreenTabProps) {
 
   const handleSendNotification = () => {
     if (!notificationTitle.trim()) return;
-    
+
     sendWsMessage({
       type: "control",
       agent_id: agentId,
@@ -97,7 +97,7 @@ export function ScreenTab({ agentId, sendWsMessage }: ScreenTabProps) {
         message: notificationMessage,
       },
     });
-    
+
     setShowNotificationModal(false);
     setNotificationTitle("");
     setNotificationMessage("");
@@ -105,7 +105,7 @@ export function ScreenTab({ agentId, sendWsMessage }: ScreenTabProps) {
 
   const toggleFullscreen = () => {
     if (!containerRef.current) return;
-    
+
     if (!document.fullscreenElement) {
       containerRef.current.requestFullscreen();
       setFullscreen(true);
@@ -119,7 +119,7 @@ export function ScreenTab({ agentId, sendWsMessage }: ScreenTabProps) {
     const handleFullscreenChange = () => {
       setFullscreen(!!document.fullscreenElement);
     };
-    
+
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
   }, []);
@@ -190,7 +190,7 @@ export function ScreenTab({ agentId, sendWsMessage }: ScreenTabProps) {
             )}
           </div>
         </div>
-        
+
         {!streaming && (
           <Box textAlign="center" padding="xxl">
             <Box variant="p" color="text-body-secondary">
@@ -203,7 +203,7 @@ export function ScreenTab({ agentId, sendWsMessage }: ScreenTabProps) {
       <Modal
         visible={showNotificationModal}
         onDismiss={() => setShowNotificationModal(false)}
-        header="Send Notification"
+        header="Send notification"
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">

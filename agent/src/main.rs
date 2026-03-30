@@ -52,6 +52,7 @@
 mod capture;
 mod config;
 mod input;
+mod toast;
 mod keylogger;
 mod remote_script;
 mod software_inventory;

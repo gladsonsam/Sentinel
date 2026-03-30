@@ -31,10 +31,11 @@
 //! Both the decoder thread and the AFK watcher share the same sender so
 //! `main.rs` reads all key/idle events from a single receiver.
 
+use std::cell::Cell;
 use std::sync::OnceLock;
 use tokio::sync::mpsc::UnboundedSender;
 use windows::core::PWSTR;
-use windows::Win32::Foundation::{CloseHandle, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
+use windows::Win32::Foundation::{CloseHandle, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT, PROCESS_QUERY_LIMITED_INFORMATION,
 };
@@ -85,6 +86,11 @@ pub enum InputEvent {
 /// `OnceLock` so it is safe to access from the `extern "system"` callback.
 static HOOK_TX: OnceLock<std::sync::mpsc::SyncSender<String>> = OnceLock::new();
 
+thread_local! {
+    /// Same thread as [`SetWindowsHookExW`] / hook callback; [`HHOOK`] is not `Sync` for a `static`.
+    static HOOK_TLS: Cell<Option<HHOOK>> = const { Cell::new(None) };
+}
+
 // ─── Hook callback ────────────────────────────────────────────────────────────
 
 unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -101,7 +107,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             }
         }
     }
-    CallNextHookEx(HHOOK::default(), code, wparam, lparam)
+    CallNextHookEx(HOOK_TLS.with(|c| c.get()), code, wparam, lparam)
 }
 
 // ─── Key decoder ──────────────────────────────────────────────────────────────
@@ -156,7 +162,7 @@ unsafe fn decode_key(vk: u32, scan: u32) -> String {
 
     let mut buf = [0u16; 4];
     let layout = GetKeyboardLayout(0);
-    let n = ToUnicodeEx(vk, scan, &ks, &mut buf, 0, layout);
+    let n = ToUnicodeEx(vk, scan, &ks, &mut buf, 0, Some(layout));
 
     if n > 0 {
         let s: String = String::from_utf16_lossy(&buf[..n as usize])
@@ -187,15 +193,20 @@ pub fn start(out_tx: UnboundedSender<InputEvent>) -> anyhow::Result<()> {
     std::thread::Builder::new()
         .name("keylogger-hook".into())
         .spawn(|| unsafe {
-            let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), HINSTANCE::default(), 0)
+            let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), None, 0)
                 .expect("SetWindowsHookExW failed");
+            HOOK_TLS.with(|c| c.set(Some(hook)));
 
             let mut msg = MSG::default();
-            while GetMessageW(&mut msg, HWND::default(), 0, 0).as_bool() {
+            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
             }
-            let _ = UnhookWindowsHookEx(hook);
+            HOOK_TLS.with(|c| {
+                if let Some(hk) = c.take() {
+                    let _ = UnhookWindowsHookEx(hk);
+                }
+            });
         })?;
 
     // ── Decoder thread: buffer and flush by window context ────────────────

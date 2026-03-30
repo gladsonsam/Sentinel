@@ -25,7 +25,8 @@ use anyhow::{Context, Result};
 use enigo::{Button, Coordinate, Direction, Enigo, Keyboard, Key, Mouse, Settings};
 use serde::Deserialize;
 use tracing::{info, warn};
-use winrt_notification::Toast;
+
+use crate::toast::Toast;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Wire types (deserialised from inbound JSON)
@@ -78,7 +79,7 @@ pub enum ControlCommand {
     /// Press a special key (Enter, Backspace, etc).
     KeyPress { key: SpecialKey },
 
-    /// Display a user-visible notification on the agent machine.
+    /// Toast on the agent PC (uses PowerShell AUMID — same look as before).
     Notify { title: String, message: String },
 }
 
@@ -185,7 +186,6 @@ impl InputController {
                 self.enigo.key(k, Direction::Click).context("key press failed")?;
             }
 
-            // ── Notification ────────────────────────────────────────────────
             ControlCommand::Notify { title, message } => {
                 let title = title.trim();
                 let message = message.trim();
@@ -199,8 +199,6 @@ impl InputController {
                     return Ok(());
                 }
 
-                // Compatibility fallback: uses the PowerShell AUMID so toasts work
-                // without any install/shortcut registration steps.
                 let mut t = Toast::new(Toast::POWERSHELL_APP_ID);
                 t = t.title(if title.is_empty() { "Sentinel" } else { title });
                 if !message.is_empty() {
