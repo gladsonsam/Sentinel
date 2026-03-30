@@ -95,6 +95,9 @@ pub struct AppState {
 
     /// HTTP handlers wait on these until the agent posts `script_result` (or timeout).
     pub script_waiters: Mutex<HashMap<Uuid, oneshot::Sender<serde_json::Value>>>,
+
+    /// Failed login attempt timestamps per client key (best-effort IP), sliding window.
+    pub(crate) login_failures: Mutex<HashMap<String, Vec<Instant>>>,
 }
 
 /// A cached screenshot frame with a monotonically increasing sequence number.
@@ -136,6 +139,7 @@ impl AppState {
             allow_remote_script,
             audit_operator_name,
             script_waiters: Mutex::new(HashMap::new()),
+            login_failures: Mutex::new(HashMap::new()),
         }
     }
 

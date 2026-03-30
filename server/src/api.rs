@@ -1298,9 +1298,5 @@ impl Drop for CaptureGuard {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 fn err500(e: anyhow::Error) -> Response {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(serde_json::json!({ "error": e.to_string() })),
-    )
-        .into_response()
+    crate::error::internal_error(e)
 }

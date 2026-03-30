@@ -13,20 +13,26 @@
 //! 4. Sessions are in-memory only — they reset when the server restarts.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use std::net::SocketAddr;
 
+use anyhow::anyhow;
 use axum::{
-    extract::{Request, State},
+    extract::{ConnectInfo, Request, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
     Json,
 };
 use serde::Deserialize;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::state::AppState;
+
+/// Drop failures older than this; max failures within the window triggers 429 on `/api/login`.
+const LOGIN_FAIL_WINDOW: Duration = Duration::from_secs(15 * 60);
+const MAX_LOGIN_FAILURES_PER_WINDOW: usize = 10;
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 
@@ -77,10 +83,73 @@ pub struct LoginRequest {
     password: String,
 }
 
+fn login_client_key(headers: &HeaderMap, addr: SocketAddr) -> String {
+    client_ip_for_audit(headers, Some(addr)).unwrap_or_else(|| addr.to_string())
+}
+
+fn login_rate_retry_after(state: &AppState, key: &str) -> Option<u64> {
+    let mut map = state.login_failures.lock().unwrap();
+    let v = map.get_mut(key)?;
+    let now = Instant::now();
+    v.retain(|t| now.saturating_duration_since(*t) < LOGIN_FAIL_WINDOW);
+    if v.is_empty() {
+        map.remove(key);
+        return None;
+    }
+    if v.len() >= MAX_LOGIN_FAILURES_PER_WINDOW {
+        let oldest = *v.iter().min()?;
+        Some(
+            (LOGIN_FAIL_WINDOW - now.saturating_duration_since(oldest))
+                .as_secs()
+                .max(1),
+        )
+    } else {
+        None
+    }
+}
+
+fn record_login_failure(state: &AppState, key: &str) -> Result<(), u64> {
+    let mut map = state.login_failures.lock().unwrap();
+    let v = map.entry(key.to_string()).or_insert_with(Vec::new);
+    let now = Instant::now();
+    v.retain(|t| now.saturating_duration_since(*t) < LOGIN_FAIL_WINDOW);
+    v.push(now);
+    if v.len() >= MAX_LOGIN_FAILURES_PER_WINDOW {
+        let oldest = *v.iter().min().unwrap();
+        Err((LOGIN_FAIL_WINDOW - now.saturating_duration_since(oldest))
+            .as_secs()
+            .max(1))
+    } else {
+        Ok(())
+    }
+}
+
+fn clear_login_failures(state: &AppState, key: &str) {
+    if let Ok(mut map) = state.login_failures.lock() {
+        map.remove(key);
+    }
+}
+
+fn too_many_login_attempts_response(retry_secs: u64) -> Response {
+    warn!(retry_secs, "login rate limited");
+    let mut res = (
+        StatusCode::TOO_MANY_REQUESTS,
+        Json(serde_json::json!({
+            "error": "Too many login attempts. Try again later."
+        })),
+    )
+        .into_response();
+    if let Ok(hv) = HeaderValue::from_str(&retry_secs.to_string()) {
+        res.headers_mut().insert(header::RETRY_AFTER, hv);
+    }
+    res
+}
+
 /// `POST /api/login` — validate password and issue a session cookie.
 pub async fn login(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(body): Json<LoginRequest>,
 ) -> Response {
     let Some(ref expected) = state.ui_password else {
@@ -96,9 +165,17 @@ pub async fn login(
             .into_response();
     };
 
+    let key = login_client_key(&headers, addr);
+    if let Some(retry) = login_rate_retry_after(&state, &key) {
+        return too_many_login_attempts_response(retry);
+    }
+
     // Secure timing attack mitigation with constant-time equality.
     let is_equal = subtle::ConstantTimeEq::ct_eq(body.password.as_bytes(), expected.as_bytes());
     if !bool::from(is_equal) {
+        if let Err(retry) = record_login_failure(&state, &key) {
+            return too_many_login_attempts_response(retry);
+        }
         return (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({ "error": "Wrong password" })),
@@ -106,15 +183,13 @@ pub async fn login(
             .into_response();
     }
 
+    clear_login_failures(&state, &key);
+
     let token = uuid::Uuid::new_v4().to_string();
     if let Ok(mut sessions) = state.sessions.lock() {
         sessions.insert(token.clone());
     } else {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": "Session store unavailable" })),
-        )
-            .into_response();
+        return crate::error::internal_error(anyhow!("Session store unavailable"));
     }
     info!("New dashboard session created.");
 

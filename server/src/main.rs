@@ -12,6 +12,7 @@
 //! | `WOL_MIN_INTERVAL_SECS` | Minimum seconds between Wake-on-LAN for the same agent (`0` = off; default `15`) |
 //! | `ALLOW_REMOTE_SCRIPT_EXECUTION` | `true` to enable `POST /api/agents/.../script` (**remote code**; default off) |
 //! | `DASHBOARD_OPERATOR_NAME` | Label stored in audit `actor` for UI actions (default `operator`) |
+//! | `EXPOSE_INTERNAL_ERRORS` | `true` to return DB/internal error text in JSON 500 responses (default: generic message; log always has detail) |
 //!
 //! Set `UI_PASSWORD` to enable password protection for the dashboard.
 //! The agent WebSocket (`/ws/agent`) uses a shared secret (`AGENT_SECRET`)
@@ -20,6 +21,7 @@
 mod api;
 mod auth;
 mod db;
+mod error;
 mod state;
 mod wol;
 mod ws_agent;
@@ -204,8 +206,8 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn https_enforced() -> bool {
-    // Default off to avoid breaking existing local setups that don't have
-    // X-Forwarded-Proto (plain `http://:9000`).
+    // Defaults to true: require `X-Forwarded-Proto: https` (or `wss`) except `/healthz`.
+    // Set `ENFORCE_HTTPS=false` for plain `http://` on :9000 when no reverse proxy sets the header.
     std::env::var("ENFORCE_HTTPS")
         .ok()
         .map(|v| parse_bool(&v))
