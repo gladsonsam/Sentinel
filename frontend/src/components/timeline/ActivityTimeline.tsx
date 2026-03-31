@@ -233,7 +233,9 @@ export function ActivityTimeline({ sessions, loading, onRefresh }: ActivityTimel
   const keystrokeCount = sorted.filter((s) => s.hasKeystrokes).length;
   const urlCount = sorted.filter((s) => s.hasUrls).length;
 
-  if (loading) {
+  // Avoid flicker during background refresh: only show the big loading state
+  // when we have no data yet.
+  if (loading && sessions.length === 0) {
     return (
       <Container>
         <Box textAlign="center" padding="xxl">
