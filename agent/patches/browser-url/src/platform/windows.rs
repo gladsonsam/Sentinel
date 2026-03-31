@@ -81,6 +81,65 @@ pub fn extract_url(
             }
             return Err(BrowserInfoError::UrlExtractionFailed(window.app_name.to_string()))
         }
+        BrowserType::Edge => {
+            let matcher = automation
+                .create_matcher()
+                .from(root)
+                .timeout(10000)
+                .name(&window.title);
+
+            if let Ok(browser) = matcher.find_first() {
+                // Edge (Chromium) typically exposes a different toolbar classname than Chrome.
+                // Prefer Edge's toolbar classname, but fall back to Chrome's to be resilient
+                // across Edge versions / UI changes.
+                let toolbar = automation
+                    .create_matcher()
+                    .from(browser.clone())
+                    .timeout(10000)
+                    .classname("EdgeToolbarView")
+                    .find_first()
+                    .or_else(|_| {
+                        automation
+                            .create_matcher()
+                            .from(browser)
+                            .timeout(10000)
+                            .classname("ToolbarView")
+                            .find_first()
+                    });
+
+                if let Ok(toolbar) = toolbar {
+                    let matcher = automation
+                        .create_matcher()
+                        .from(toolbar)
+                        .timeout(10000)
+                        .classname("LocationBarView");
+
+                    if let Ok(address_bar) = matcher.find_first() {
+                        let matcher = automation
+                            .create_matcher()
+                            .from(address_bar)
+                            .timeout(10000)
+                            .control_type(ControlType::Edit);
+
+                        if let Ok(ele) = matcher.find_first() {
+                            let url_variant = ele
+                                .get_property_value(UIProperty::ValueValue)
+                                .unwrap_or_default();
+                            let url = url_variant.get_string().unwrap_or_default();
+                            if url == "" {
+                                return Err(BrowserInfoError::UrlExtractionFailed(
+                                    window.app_name.to_string(),
+                                ));
+                            }
+                            return Ok(url);
+                        }
+                    }
+                }
+            }
+            Err(BrowserInfoError::UrlExtractionFailed(
+                window.app_name.to_string(),
+            ))
+        }
         _ => {
             return Err(BrowserInfoError::BrowserDetectionFailed(window.app_name.to_string()))
         }
