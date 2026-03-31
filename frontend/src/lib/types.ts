@@ -94,6 +94,13 @@ export interface AgentInfo {
   memory_used_mb?: number;
   adapters?: NetworkAdapterInfo[];
   drives?: DriveInfo[];
+  // Extra environment / install metadata (optional, for Specs tab only).
+  config_path?: string;
+  install_path?: string | null;
+  config_server_url?: string;
+  config_agent_name?: string;
+  config_ui_password_set?: boolean;
+  current_user?: string;
   ts?: number;
 }
 

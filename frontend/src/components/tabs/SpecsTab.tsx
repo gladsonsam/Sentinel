@@ -173,11 +173,9 @@ export function SpecsTab({ agentId, cachedInfo }: SpecsTabProps) {
             items={[
               { label: "Hostname", value: info.hostname || "—" },
               { label: "Agent Version", value: info.agent_version || "—" },
+              { label: "Logged-in user", value: info.current_user || "—" },
               { label: "System model", value: info.system_model || "—" },
               { label: "System manufacturer", value: info.system_manufacturer || "—" },
-              { label: "System serial", value: info.system_serial || "—" },
-              { label: "Motherboard", value: info.motherboard_model || "—" },
-              { label: "Board maker", value: info.motherboard_manufacturer || "—" },
               { label: "Operating System", value: info.os_name || "—" },
               { label: "OS Version", value: info.os_version || "—" },
             ]}
@@ -197,6 +195,50 @@ export function SpecsTab({ agentId, cachedInfo }: SpecsTabProps) {
             ]}
           />
         </ColumnLayout>
+        {(info.system_serial ||
+          info.motherboard_model ||
+          info.motherboard_manufacturer) && (
+          <Box margin={{ top: "m" }}>
+            <ExpandableSection headerText="Hardware identifiers">
+              <ColumnLayout columns={2} variant="text-grid">
+                <KeyValuePairs
+                  columns={1}
+                  items={[
+                    { label: "System serial", value: info.system_serial || "—" },
+                    { label: "Motherboard", value: info.motherboard_model || "—" },
+                    { label: "Board maker", value: info.motherboard_manufacturer || "—" },
+                  ]}
+                />
+              </ColumnLayout>
+            </ExpandableSection>
+          </Box>
+        )}
+        {(info.config_path || info.install_path || info.config_server_url || info.config_agent_name) && (
+          <Box margin={{ top: "m" }}>
+            <ExpandableSection headerText="Agent install & config">
+              <ColumnLayout columns={2} variant="text-grid">
+                <KeyValuePairs
+                  columns={1}
+                  items={[
+                    { label: "Install path", value: info.install_path || "—" },
+                    { label: "Config path", value: info.config_path || "—" },
+                  ]}
+                />
+                <KeyValuePairs
+                  columns={1}
+                  items={[
+                    { label: "Server URL", value: info.config_server_url || "—" },
+                    { label: "Agent name (config)", value: info.config_agent_name || "—" },
+                    {
+                      label: "UI password set",
+                      value: info.config_ui_password_set === true ? "Yes" : "No",
+                    },
+                  ]}
+                />
+              </ColumnLayout>
+            </ExpandableSection>
+          </Box>
+        )}
         {memoryPct !== undefined && (
           <Box margin={{ top: "m" }}>
             <ProgressBar

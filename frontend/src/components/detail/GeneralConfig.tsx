@@ -13,6 +13,7 @@ interface GeneralConfigProps {
 }
 
 export function GeneralConfig({ agent, info, onOpenHelp }: GeneralConfigProps) {
+  const agentVersion = info?.agent_version || "—";
   return (
     <Container
       header={
@@ -38,8 +39,8 @@ export function GeneralConfig({ agent, info, onOpenHelp }: GeneralConfigProps) {
           />
         </div>
         <div>
-          <Box variant="awsui-key-label">Hostname</Box>
-          <div>{info?.hostname || agent.name || "—"}</div>
+          <Box variant="awsui-key-label">Agent version</Box>
+          <div>{agentVersion}</div>
         </div>
       </ColumnLayout>
     </Container>

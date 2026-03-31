@@ -152,6 +152,8 @@ export function SettingsPage({ themeMode, onThemeChange, onBack }: SettingsPageP
                 placeholder="/ws/view"
               />
             </FormField>
+
+            {/* (reserved) */}
           </SpaceBetween>
         </Container>
 

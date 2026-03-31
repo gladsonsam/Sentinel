@@ -118,6 +118,19 @@ pub fn collect_agent_info() -> serde_json::Value {
         })
         .unwrap_or_default();
 
+    // Install / config info (avoid including any secrets).
+    let cfg = crate::config::load_config();
+    let config_path = crate::config::config_path();
+    let config_path_str = config_path.to_string_lossy().to_string();
+    let install_path = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.to_string_lossy().to_string()));
+    let ui_password_set = !cfg.ui_password_hash.is_empty() && cfg.ui_password_hash != crate::config::hash_password("");
+
+    let current_user = std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_default();
+
     json!({
         "type": "agent_info",
         "agent_version": app_version,
@@ -137,6 +150,12 @@ pub fn collect_agent_info() -> serde_json::Value {
         "memory_used_mb": used_mem_mb,
         "drives": drives,
         "adapters": adapters,
+        "config_path": config_path_str,
+        "install_path": install_path,
+        "config_server_url": cfg.server_url,
+        "config_agent_name": cfg.agent_name,
+        "config_ui_password_set": ui_password_set,
+        "current_user": current_user,
         "ts": crate::unix_timestamp_secs(),
     })
 }
