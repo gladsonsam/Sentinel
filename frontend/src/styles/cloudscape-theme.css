@@ -239,7 +239,7 @@
   display: flex;
   align-items: stretch;
   justify-content: center;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .sentinel-auth-card-content {
@@ -250,8 +250,9 @@
   justify-content: space-between;
   gap: 1.5rem;
   padding: 32px;
-  align-items: center;
-  overflow: visible;
+  align-items: stretch;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .sentinel-auth-card-brand {
@@ -259,6 +260,7 @@
   flex-direction: column;
   align-items: center;
   gap: 0.35rem;
+  text-align: center;
 }
 
 .sentinel-auth-form-wrap {
@@ -267,7 +269,8 @@
   display: flex;
   flex-direction: column;
   justify-content: center;
-  overflow: visible;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .sentinel-auth-logo {
@@ -284,8 +287,17 @@
   text-align: left;
 }
 
-.sentinel-auth-form-wrap [class*="awsui_button-trigger"] {
+.sentinel-auth-form-wrap [class*="awsui_root"] {
+  max-width: 100%;
+}
+
+.sentinel-auth-actions {
   width: 100%;
+  justify-content: flex-end;
+}
+
+.sentinel-auth-submit {
+  min-width: 96px;
 }
 
 /* ── Custom Vertical Timeline (vtl) ──────────────────────────────────────── */

@@ -76,8 +76,9 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
       <Box className="sentinel-auth-form-wrap">
         <Form
           actions={
-            <SpaceBetween direction="horizontal" size="xs">
+            <SpaceBetween direction="horizontal" size="xs" className="sentinel-auth-actions">
               <Button
+                className="sentinel-auth-submit"
                 variant="primary"
                 onClick={handleSubmit}
                 loading={loading}
