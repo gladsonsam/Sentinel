@@ -1,6 +1,5 @@
 import Container from "@cloudscape-design/components/container";
 import Box from "@cloudscape-design/components/box";
-import SpaceBetween from "@cloudscape-design/components/space-between";
 import { ReactNode } from "react";
 
 interface AuthLayoutProps {
@@ -14,17 +13,14 @@ export function AuthLayout({ children }: AuthLayoutProps) {
       className="sentinel-auth-shell"
       textAlign="center"
     >
-      <Container>
-        <SpaceBetween size="l">
-          <Box>
+      <Container className="sentinel-auth-card">
+        <Box className="sentinel-auth-card-content">
+          <Box className="sentinel-auth-card-brand">
             <img
               src={`${import.meta.env.BASE_URL}favicon.svg`}
               alt="Sentinel"
               className="sentinel-auth-logo"
             />
-          </Box>
-
-          <Box>
             <Box variant="h1" fontSize="heading-xl" fontWeight="bold">
               Sentinel
             </Box>
@@ -32,7 +28,7 @@ export function AuthLayout({ children }: AuthLayoutProps) {
           </Box>
 
           {children}
-        </SpaceBetween>
+        </Box>
       </Container>
     </Box>
   );
