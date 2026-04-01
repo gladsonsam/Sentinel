@@ -1,4 +1,3 @@
-import Container from "@cloudscape-design/components/container";
 import Box from "@cloudscape-design/components/box";
 import { ReactNode } from "react";
 
@@ -13,7 +12,7 @@ export function AuthLayout({ children }: AuthLayoutProps) {
       className="sentinel-auth-shell"
       textAlign="center"
     >
-      <Container className="sentinel-auth-card">
+      <Box className="sentinel-auth-card">
         <Box className="sentinel-auth-card-content">
           <Box className="sentinel-auth-card-brand">
             <img
@@ -29,7 +28,7 @@ export function AuthLayout({ children }: AuthLayoutProps) {
 
           {children}
         </Box>
-      </Container>
+      </Box>
     </Box>
   );
 }

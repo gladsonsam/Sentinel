@@ -220,18 +220,27 @@
 }
 
 .sentinel-auth-shell {
+  /* Ensure the login card is centered even if any parent layout adds offsets. */
+  position: fixed;
+  inset: 0;
+  width: 100vw;
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: var(--awsui-color-background-layout-main);
+  /* Force Sentinel dark-blue scheme (Cloudscape token was near-black here). */
+  background:
+    radial-gradient(1100px 700px at 35% 30%, rgba(9, 114, 211, 0.18), rgba(9, 114, 211, 0) 55%),
+    radial-gradient(900px 600px at 70% 65%, rgba(91, 141, 239, 0.14), rgba(91, 141, 239, 0) 60%),
+    linear-gradient(180deg, #0b1930 0%, #0a1324 55%, #090f1c 100%);
   overflow: visible;
 }
 
 .sentinel-auth-card {
-  --sentinel-auth-size: min(520px, 92vw, calc(100vh - 48px));
+  --sentinel-auth-size: min(460px, 92vw);
   width: var(--sentinel-auth-size);
-  height: var(--sentinel-auth-size);
+  height: auto;
+  max-height: calc(100vh - 48px);
   border-radius: 16px;
   border: 1px solid var(--awsui-color-border-container-top);
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.25);
@@ -240,19 +249,26 @@
   align-items: stretch;
   justify-content: center;
   overflow: hidden;
+  /* Solid card surface: avoid translucent Cloudscape tokens bleeding the page gradient. */
+  background: #0f1b2e !important;
+  background-image: none !important;
+  backdrop-filter: none !important;
+  color: var(--awsui-color-text-body-default);
 }
 
 .sentinel-auth-card-content {
   width: 100%;
-  height: 100%;
+  height: auto;
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
-  gap: 1.5rem;
-  padding: 32px;
+  justify-content: flex-start;
+  gap: 1rem;
+  padding: 24px;
   align-items: stretch;
   min-width: 0;
   overflow: hidden;
+  /* Prevent any inherited background effects from wrappers. */
+  background-color: transparent;
 }
 
 .sentinel-auth-card-brand {
@@ -265,12 +281,13 @@
 
 .sentinel-auth-form-wrap {
   width: 100%;
-  flex: 1;
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start;
   min-width: 0;
   overflow: hidden;
+  margin-top: 4px;
 }
 
 .sentinel-auth-logo {

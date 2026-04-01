@@ -1,10 +1,10 @@
 import type { CardsProps, CollectionPreferencesProps } from "@cloudscape-design/components";
 import type { Agent, AgentInfo, AgentLiveStatus } from "./types";
 import { ConnectionStatus, ActivityStatus } from "../components/common/StatusIndicator";
-import { LiveBadge } from "../components/common/LiveBadge";
 import Box from "@cloudscape-design/components/box";
 import Link from "@cloudscape-design/components/link";
 import SpaceBetween from "@cloudscape-design/components/space-between";
+import Button from "@cloudscape-design/components/button";
 
 export interface AgentCardItem extends Agent {
   liveStatus?: AgentLiveStatus;
@@ -23,6 +23,7 @@ const formatTimestamp = (timestamp: string | null | undefined) => {
 
 export function createCardDefinitions(
   onSelectAgent: (agentId: string) => void,
+  onPowerAction: (agentId: string) => void,
   nowMs: number
 ): CardsProps.CardDefinition<AgentCardItem> {
   const formatUptime = (secs?: number) => {
@@ -54,9 +55,8 @@ export function createCardDefinitions(
             onSelectAgent(item.id);
           }}
         >
-          {item.name}
+          {item.agentInfo?.hostname || item.name}
         </Link>
-        {item.online && <LiveBadge variant="online" />}
       </SpaceBetween>
     ),
     sections: [
@@ -64,21 +64,15 @@ export function createCardDefinitions(
       id: "status",
       header: "Status",
       content: (item) => (
-        <SpaceBetween size="xs">
-          <Box>
-            <Box variant="awsui-key-label">Connection</Box>
-            <ConnectionStatus
-              connected={item.online}
-              lastSeen={item.last_seen ? new Date(item.last_seen) : null}
-            />
-          </Box>
-          <Box>
-            <Box variant="awsui-key-label">Activity</Box>
-            <ActivityStatus
-              isAfk={item.liveStatus?.activity === "afk"}
-              idleSeconds={item.liveStatus?.idleSecs}
-            />
-          </Box>
+        <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+          <Box variant="awsui-key-label">Connection status:</Box>
+          <ConnectionStatus
+            connected={item.online}
+            lastSeen={item.last_seen ? new Date(item.last_seen) : null}
+          />
+          {item.online && item.liveStatus?.activity === "afk" && (
+            <ActivityStatus isAfk idleSeconds={item.liveStatus?.idleSecs} />
+          )}
         </SpaceBetween>
       ),
     },
@@ -86,29 +80,42 @@ export function createCardDefinitions(
       id: "details",
       header: "Details",
       content: (item) => {
-        if (item.online) {
-          const lastWindow = item.liveStatus?.window || item.fallbackLastWindow || "—";
-          const uptime = formatUptime(liveUptimeSecs(item));
-          return (
-            <SpaceBetween size="xs">
-              <Box>
-                <Box variant="awsui-key-label">Last window</Box>
-                <Box>{lastWindow}</Box>
-              </Box>
-              <Box>
-                <Box variant="awsui-key-label">Uptime</Box>
-                <Box>{uptime}</Box>
-              </Box>
-            </SpaceBetween>
-          );
-        }
+        const lastWindow = item.liveStatus?.window || item.fallbackLastWindow || "—";
+        const uptime = formatUptime(liveUptimeSecs(item));
+        const lastSeen = formatTimestamp(item.last_seen);
         return (
-          <Box>
-            <Box variant="awsui-key-label">Last seen</Box>
-            <Box>{formatTimestamp(item.last_seen)}</Box>
-          </Box>
+          <SpaceBetween size="xs">
+            <Box>
+              <Box variant="awsui-key-label">Uptime</Box>
+              <Box>{uptime}</Box>
+            </Box>
+            <Box>
+              <Box variant="awsui-key-label">Last window</Box>
+              <Box>{lastWindow}</Box>
+            </Box>
+            {!item.online && (
+              <Box>
+                <Box variant="awsui-key-label">Last seen</Box>
+                <Box>{lastSeen}</Box>
+              </Box>
+            )}
+          </SpaceBetween>
         );
       },
+    },
+    {
+      id: "quick-actions",
+      header: "Quick actions",
+      content: (item) => (
+        <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+          <Button
+            iconName={item.online ? "status-negative" : "refresh"}
+            ariaLabel={item.online ? "Shutdown" : "Wake"}
+            variant="icon"
+            onClick={() => onPowerAction(item.id)}
+          />
+        </SpaceBetween>
+      ),
     },
     {
       id: "agent-id",
@@ -122,6 +129,7 @@ export function createCardDefinitions(
 export const VISIBLE_CONTENT_OPTIONS: CollectionPreferencesProps.VisibleContentOption[] = [
   { label: "Status", id: "status" },
   { label: "Details", id: "details" },
+  { label: "Quick actions", id: "quick-actions" },
   { label: "Agent ID", id: "agent-id" },
 ];
 
@@ -133,5 +141,5 @@ export const PAGE_SIZE_OPTIONS: CollectionPreferencesProps.PageSizeOption[] = [
 
 export const DEFAULT_PREFERENCES = {
   pageSize: 12,
-  visibleContent: ["status", "details", "agent-id"],
+  visibleContent: ["status", "details", "quick-actions"],
 };

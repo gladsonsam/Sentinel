@@ -4,6 +4,9 @@ import Box from "@cloudscape-design/components/box";
 import CollectionPreferences from "@cloudscape-design/components/collection-preferences";
 import TextFilter from "@cloudscape-design/components/text-filter";
 import Pagination from "@cloudscape-design/components/pagination";
+import Modal from "@cloudscape-design/components/modal";
+import Button from "@cloudscape-design/components/button";
+import SpaceBetween from "@cloudscape-design/components/space-between";
 import { useCollection } from "@cloudscape-design/collection-hooks";
 import type { Agent, AgentInfo, AgentLiveStatus } from "../../lib/types";
 import {
@@ -46,6 +49,7 @@ export function AgentCard({
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [fallbackLastWindow, setFallbackLastWindow] = useState<Record<string, string>>({});
   const [fallbackUptime, setFallbackUptime] = useState<Record<string, { secs: number; receivedAtMs: number }>>({});
+  const [powerModal, setPowerModal] = useState<null | { agentId: string }>(null);
   const [preferences, setPreferences] = useLocalStorage(
     "sentinel-cards-preferences",
     DEFAULT_PREFERENCES
@@ -132,7 +136,12 @@ export function AgentCard({
   }, [agents, liveStatus, agentInfo, agentInfoReceivedAtMs, fallbackLastWindow, fallbackUptime]);
 
   const cardDefinition = useMemo(
-    () => createCardDefinitions(onSelectAgent, nowMs),
+    () =>
+      createCardDefinitions(
+        onSelectAgent,
+        (agentId) => setPowerModal({ agentId }),
+        nowMs
+      ),
     [onSelectAgent, nowMs]
   );
 
@@ -163,80 +172,120 @@ export function AgentCard({
   });
 
   const selectedItems = collectionProps.selectedItems || [];
+  const modalAgent = powerModal?.agentId ? agents[powerModal.agentId] : null;
+  const modalOnline = powerModal?.agentId ? Boolean(agents[powerModal.agentId]?.online) : false;
+  const modalTitle = modalAgent?.name ?? powerModal?.agentId ?? "";
 
   return (
-    <Cards
-      {...collectionProps}
-      variant="full-page"
-      stickyHeader
-      cardDefinition={cardDefinition}
-      visibleSections={visibleSections}
-      items={items}
-      selectionType="multi"
-      cardsPerRow={[{ cards: 1 }, { minWidth: 600, cards: 2 }, { minWidth: 900, cards: 3 }]}
-      header={
-        <Box padding={{ bottom: "m" }}>
-          <FullPageHeader
-            totalAgents={agentsWithStatus.length}
-            selectedCount={selectedItems.length}
-            onRefresh={onRefresh}
-            onWakeSelected={() => onBatchWake(selectedItems.map((item) => item.id))}
-            onBulkScript={() => onBulkScript(selectedItems.map((item) => item.id))}
-            onRestartSelected={() => onBatchRestart(selectedItems.map((item) => item.id))}
-            onShutdownSelected={() => onBatchShutdown(selectedItems.map((item) => item.id))}
+    <>
+      <Cards
+        {...collectionProps}
+        variant="full-page"
+        stickyHeader
+        cardDefinition={cardDefinition}
+        visibleSections={visibleSections}
+        items={items}
+        selectionType="multi"
+        cardsPerRow={[{ cards: 1 }, { minWidth: 600, cards: 2 }, { minWidth: 900, cards: 3 }]}
+        header={
+          <Box padding={{ bottom: "m" }}>
+            <FullPageHeader
+              totalAgents={agentsWithStatus.length}
+              selectedCount={selectedItems.length}
+              onRefresh={onRefresh}
+              onWakeSelected={() => onBatchWake(selectedItems.map((item) => item.id))}
+              onBulkScript={() => onBulkScript(selectedItems.map((item) => item.id))}
+              onRestartSelected={() => onBatchRestart(selectedItems.map((item) => item.id))}
+              onShutdownSelected={() => onBatchShutdown(selectedItems.map((item) => item.id))}
+            />
+          </Box>
+        }
+        filter={
+          <TextFilter
+            {...filterProps}
+            countText={`${filteredItemsCount} matches`}
+            filteringPlaceholder="Find agents by name, window, or uptime"
           />
-        </Box>
-      }
-      filter={
-        <TextFilter
-          {...filterProps}
-          countText={`${filteredItemsCount} matches`}
-          filteringPlaceholder="Find agents by name, window, or uptime"
-        />
-      }
-      pagination={<Pagination {...paginationProps} />}
-      preferences={
-        <CollectionPreferences
-          title="Preferences"
-          confirmLabel="Confirm"
-          cancelLabel="Cancel"
-          preferences={preferences}
-          pageSizePreference={{
-            title: "Page size",
-            options: PAGE_SIZE_OPTIONS,
-          }}
-          visibleContentPreference={{
-            title: "Visible sections",
-            options: [{ label: "Agent information", options: VISIBLE_CONTENT_OPTIONS }],
-          }}
-          onConfirm={({ detail }) =>
-            setPreferences({
-              pageSize: detail.pageSize ?? DEFAULT_PREFERENCES.pageSize,
-              visibleContent: [
-                ...(detail.visibleContent ?? DEFAULT_PREFERENCES.visibleContent),
-              ],
-            })
-          }
-        />
-      }
-      empty={
-        filterProps.filteringText ? (
-          <TableNoMatchState
-            onClearFilter={() =>
-              filterProps.onChange({
-                detail: { filteringText: "" },
-              } as any)
+        }
+        pagination={<Pagination {...paginationProps} />}
+        preferences={
+          <CollectionPreferences
+            title="Preferences"
+            confirmLabel="Confirm"
+            cancelLabel="Cancel"
+            preferences={preferences}
+            pageSizePreference={{
+              title: "Page size",
+              options: PAGE_SIZE_OPTIONS,
+            }}
+            visibleContentPreference={{
+              title: "Visible sections",
+              options: [{ label: "Agent information", options: VISIBLE_CONTENT_OPTIONS }],
+            }}
+            onConfirm={({ detail }) =>
+              setPreferences({
+                pageSize: detail.pageSize ?? DEFAULT_PREFERENCES.pageSize,
+                visibleContent: [
+                  ...(detail.visibleContent ?? DEFAULT_PREFERENCES.visibleContent),
+                ],
+              })
             }
           />
-        ) : (
-          <TableEmptyState
-            title="No agents"
-            subtitle="No agents are connected right now."
-            actionText="Refresh"
-            onActionClick={onRefresh}
-          />
-        )
-      }
-    />
+        }
+        empty={
+          filterProps.filteringText ? (
+            <TableNoMatchState
+              onClearFilter={() =>
+                filterProps.onChange({
+                  detail: { filteringText: "" },
+                } as any)
+              }
+            />
+          ) : (
+            <TableEmptyState
+              title="No agents"
+              subtitle="No agents are connected right now."
+              actionText="Refresh"
+              onActionClick={onRefresh}
+            />
+          )
+        }
+      />
+
+      <Modal
+        visible={Boolean(powerModal)}
+        onDismiss={() => setPowerModal(null)}
+        header={modalOnline ? "Confirm shutdown" : "Confirm wake"}
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button variant="link" onClick={() => setPowerModal(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  if (!powerModal?.agentId) return;
+                  const id = powerModal.agentId;
+                  setPowerModal(null);
+                  if (agents[id]?.online) onBatchShutdown([id]);
+                  else onBatchWake([id]);
+                }}
+              >
+                {modalOnline ? "Shutdown" : "Wake"}
+              </Button>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        <SpaceBetween size="s">
+          <Box>
+            {modalOnline
+              ? `Send a shutdown command to "${modalTitle}"?`
+              : `Send a Wake-on-LAN packet to "${modalTitle}"?`}
+          </Box>
+        </SpaceBetween>
+      </Modal>
+    </>
   );
 }
