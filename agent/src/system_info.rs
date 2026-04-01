@@ -2,6 +2,12 @@ use serde_json::json;
 use sysinfo::{Disks, System};
 use std::process::Command;
 
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 fn format_mac(bytes: &[u8]) -> String {
     bytes
         .iter()
@@ -26,6 +32,7 @@ fn powershell_cim_value(class_name: &str, property: &str) -> Option<String> {
         "Get-CimInstance {class_name} | Select-Object -First 1 {property} | ConvertTo-Json -Compress"
     );
     let out = Command::new("powershell")
+        .creation_flags(CREATE_NO_WINDOW)
         .args(["-NoProfile", "-Command", &script])
         .output()
         .ok()?;

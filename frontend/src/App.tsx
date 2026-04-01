@@ -74,6 +74,8 @@ function useReturnTo() {
 function OverviewRoute({
   agents,
   liveStatus,
+  agentInfo,
+  agentInfoReceivedAtMs,
   onSelectAgent,
   checkAuth,
   runBatchWake,
@@ -88,6 +90,8 @@ function OverviewRoute({
 }: {
   agents: Record<string, Agent>;
   liveStatus: Record<string, AgentLiveStatus>;
+  agentInfo: Record<string, AgentInfo | null>;
+  agentInfoReceivedAtMs: Record<string, number>;
   onSelectAgent: (agentId: string) => void;
   checkAuth: () => void;
   runBatchWake: (ids: string[]) => Promise<void>;
@@ -105,6 +109,8 @@ function OverviewRoute({
       <AuthenticatedOverview
         agents={agents}
         liveStatus={liveStatus}
+        agentInfo={agentInfo}
+        agentInfoReceivedAtMs={agentInfoReceivedAtMs}
         onSelectAgent={onSelectAgent}
         onRefresh={checkAuth}
         onBatchWake={(ids) => void runBatchWake(ids)}
@@ -293,6 +299,7 @@ export function App() {
     agents,
     liveStatus,
     agentInfo,
+    agentInfoReceivedAtMs,
     updateAgent,
     updateAgentLiveStatus,
     updateAgentInfo,
@@ -553,6 +560,8 @@ export function App() {
           <OverviewRoute
             agents={agents}
             liveStatus={liveStatus}
+            agentInfo={agentInfo}
+            agentInfoReceivedAtMs={agentInfoReceivedAtMs}
             onSelectAgent={handleSelectAgent}
             checkAuth={checkAuth}
             runBatchWake={runBatchWake}

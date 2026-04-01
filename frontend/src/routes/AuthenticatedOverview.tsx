@@ -1,11 +1,13 @@
 import { DashboardLayout } from "../layouts/DashboardLayout";
 import { OverviewPage } from "../pages/OverviewPage";
-import type { Agent, AgentLiveStatus } from "../lib/types";
+import type { Agent, AgentInfo, AgentLiveStatus } from "../lib/types";
 import type { NotificationItem } from "../hooks/useNotifications";
 
 interface Props {
   agents: Record<string, Agent>;
   liveStatus: Record<string, AgentLiveStatus>;
+  agentInfo: Record<string, AgentInfo | null>;
+  agentInfoReceivedAtMs: Record<string, number>;
   onSelectAgent: (agentId: string) => void;
   onRefresh: () => void;
   onBatchWake: (agentIds: string[]) => void;
@@ -25,6 +27,8 @@ interface Props {
 export function AuthenticatedOverview({
   agents,
   liveStatus,
+  agentInfo,
+  agentInfoReceivedAtMs,
   onSelectAgent,
   onRefresh,
   onBatchWake,
@@ -45,6 +49,8 @@ export function AuthenticatedOverview({
         <OverviewPage
           agents={agents}
           liveStatus={liveStatus}
+          agentInfo={agentInfo}
+          agentInfoReceivedAtMs={agentInfoReceivedAtMs}
           onSelectAgent={onSelectAgent}
           onRefresh={onRefresh}
           onBatchWake={onBatchWake}

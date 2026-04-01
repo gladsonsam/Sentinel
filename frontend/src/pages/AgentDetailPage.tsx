@@ -252,7 +252,7 @@ export function AgentDetailPage({
           />
         );
       case "specs":
-        return <SpecsTab agentId={agent.id} cachedInfo={resolvedInfo} />;
+        return <SpecsTab agentId={agent.id} cachedInfo={resolvedInfo} agentOnline={agent.online} />;
       case "screen":
         return <ScreenTab agentId={agent.id} sendWsMessage={sendWsMessage} />;
       case "software":

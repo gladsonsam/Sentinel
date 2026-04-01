@@ -5,6 +5,7 @@ export function useAgents() {
   const [agents, setAgents] = useState<Record<string, Agent>>({});
   const [liveStatus, setLiveStatus] = useState<Record<string, AgentLiveStatus>>({});
   const [agentInfo, setAgentInfo] = useState<Record<string, AgentInfo | null>>({});
+  const [agentInfoReceivedAtMs, setAgentInfoReceivedAtMs] = useState<Record<string, number>>({});
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null);
 
   const updateAgent = useCallback((id: string, agent: Agent) => {
@@ -17,6 +18,7 @@ export function useAgents() {
 
   const updateAgentInfo = useCallback((id: string, info: AgentInfo | null) => {
     setAgentInfo((prev) => ({ ...prev, [id]: info }));
+    setAgentInfoReceivedAtMs((prev) => ({ ...prev, [id]: Date.now() }));
   }, []);
 
   const removeAgent = useCallback((id: string) => {
@@ -31,6 +33,11 @@ export function useAgents() {
       return updated;
     });
     setAgentInfo((prev) => {
+      const updated = { ...prev };
+      delete updated[id];
+      return updated;
+    });
+    setAgentInfoReceivedAtMs((prev) => {
       const updated = { ...prev };
       delete updated[id];
       return updated;
@@ -67,6 +74,7 @@ export function useAgents() {
     agents,
     liveStatus,
     agentInfo,
+    agentInfoReceivedAtMs,
     selectedAgentId,
     selectedAgent,
     agentList,

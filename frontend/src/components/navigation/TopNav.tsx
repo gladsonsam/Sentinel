@@ -63,7 +63,8 @@ export function TopNav({
           },
           {
             type: "button" as const,
-            iconName: "close" as const,
+            iconName: "user-profile" as const,
+            text: "Logout",
             title: "Logout",
             ariaLabel: "Logout",
             onClick: onLogout,

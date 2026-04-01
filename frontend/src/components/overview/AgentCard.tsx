@@ -1,11 +1,11 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Cards from "@cloudscape-design/components/cards";
 import Box from "@cloudscape-design/components/box";
 import CollectionPreferences from "@cloudscape-design/components/collection-preferences";
 import TextFilter from "@cloudscape-design/components/text-filter";
 import Pagination from "@cloudscape-design/components/pagination";
 import { useCollection } from "@cloudscape-design/collection-hooks";
-import type { Agent, AgentLiveStatus } from "../../lib/types";
+import type { Agent, AgentInfo, AgentLiveStatus } from "../../lib/types";
 import {
   createCardDefinitions,
   DEFAULT_PREFERENCES,
@@ -20,6 +20,8 @@ import { TableEmptyState, TableNoMatchState } from "../common/CollectionStates";
 interface AgentCardProps {
   agents: Record<string, Agent>;
   liveStatus: Record<string, AgentLiveStatus>;
+  agentInfo: Record<string, AgentInfo | null>;
+  agentInfoReceivedAtMs: Record<string, number>;
   onSelectAgent: (agentId: string) => void;
   onRefresh: () => void;
   onBatchWake: (agentIds: string[]) => void;
@@ -31,6 +33,8 @@ interface AgentCardProps {
 export function AgentCard({
   agents,
   liveStatus,
+  agentInfo,
+  agentInfoReceivedAtMs,
   onSelectAgent,
   onRefresh,
   onBatchWake,
@@ -38,19 +42,40 @@ export function AgentCard({
   onBatchRestart,
   onBatchShutdown,
 }: AgentCardProps) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
   const [preferences, setPreferences] = useLocalStorage(
     "sentinel-cards-preferences",
     DEFAULT_PREFERENCES
   );
 
+  const allowedSectionIds = useMemo(() => {
+    return new Set(VISIBLE_CONTENT_OPTIONS.map((o) => o.id));
+  }, []);
+
+  const visibleSections = useMemo(() => {
+    const raw = preferences.visibleContent ?? DEFAULT_PREFERENCES.visibleContent;
+    const cleaned = raw.filter((id) => allowedSectionIds.has(id));
+    return cleaned.length > 0 ? cleaned : DEFAULT_PREFERENCES.visibleContent;
+  }, [allowedSectionIds, preferences.visibleContent]);
+
+  useEffect(() => {
+    const t = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+
   const agentsWithStatus: AgentCardItem[] = useMemo(() => {
     return Object.entries(agents).map(([id, agent]) => ({
       ...agent,
       liveStatus: liveStatus[id],
+      agentInfo: agentInfo[id],
+      agentInfoReceivedAtMs: agentInfoReceivedAtMs[id],
     }));
-  }, [agents, liveStatus]);
+  }, [agents, liveStatus, agentInfo, agentInfoReceivedAtMs]);
 
-  const cardDefinition = useMemo(() => createCardDefinitions(onSelectAgent), [onSelectAgent]);
+  const cardDefinition = useMemo(
+    () => createCardDefinitions(onSelectAgent, nowMs),
+    [onSelectAgent, nowMs]
+  );
 
   const { items, filteredItemsCount, filterProps, collectionProps, paginationProps } = useCollection(
     agentsWithStatus,
@@ -61,8 +86,7 @@ export function AgentCard({
         return (
           item.name.toLowerCase().includes(searchText) ||
           item.id.toLowerCase().includes(searchText) ||
-          (item.liveStatus?.window?.toLowerCase().includes(searchText) ?? false) ||
-          (item.liveStatus?.url?.toLowerCase().includes(searchText) ?? false)
+          (item.liveStatus?.window?.toLowerCase().includes(searchText) ?? false)
         );
       },
     },
@@ -86,7 +110,7 @@ export function AgentCard({
       variant="full-page"
       stickyHeader
       cardDefinition={cardDefinition}
-      visibleSections={preferences.visibleContent}
+      visibleSections={visibleSections}
       items={items}
       selectionType="multi"
       cardsPerRow={[{ cards: 1 }, { minWidth: 600, cards: 2 }, { minWidth: 900, cards: 3 }]}
@@ -107,7 +131,7 @@ export function AgentCard({
         <TextFilter
           {...filterProps}
           countText={`${filteredItemsCount} matches`}
-          filteringPlaceholder="Find agents by name, window, or URL"
+          filteringPlaceholder="Find agents by name, window, or uptime"
         />
       }
       pagination={<Pagination {...paginationProps} />}

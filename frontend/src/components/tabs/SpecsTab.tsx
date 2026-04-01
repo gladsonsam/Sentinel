@@ -14,17 +14,21 @@ import type { AgentInfo } from "../../lib/types";
 interface SpecsTabProps {
   agentId: string;
   cachedInfo?: AgentInfo | null;
+  agentOnline?: boolean;
 }
 
-export function SpecsTab({ agentId, cachedInfo }: SpecsTabProps) {
+export function SpecsTab({ agentId, cachedInfo, agentOnline = true }: SpecsTabProps) {
   const [info, setInfo] = useState<AgentInfo | null>(cachedInfo || null);
   const [loading, setLoading] = useState(!cachedInfo);
   const [error, setError] = useState<string | null>(null);
+  const [receivedAtMs, setReceivedAtMs] = useState<number>(() => (cachedInfo ? Date.now() : 0));
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
 
   useEffect(() => {
     setError(null);
     if (cachedInfo) {
       setInfo(cachedInfo);
+      setReceivedAtMs(Date.now());
       setLoading(false);
       return;
     }
@@ -38,7 +42,9 @@ export function SpecsTab({ agentId, cachedInfo }: SpecsTabProps) {
         
         if (response.ok) {
           const data = await response.json();
-          setInfo(data?.info ?? data ?? null);
+          const next = (data?.info ?? data ?? null) as AgentInfo | null;
+          setInfo(next);
+          setReceivedAtMs(Date.now());
         } else {
           setError("Failed to load system information");
         }
@@ -52,6 +58,12 @@ export function SpecsTab({ agentId, cachedInfo }: SpecsTabProps) {
 
     fetchInfo();
   }, [agentId, cachedInfo]);
+
+  useEffect(() => {
+    if (!agentOnline) return;
+    const t = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [agentOnline]);
 
   if (loading) {
     return (
@@ -88,6 +100,13 @@ export function SpecsTab({ agentId, cachedInfo }: SpecsTabProps) {
     if (hours > 0) return `${hours}h ${mins}m`;
     return `${mins}m`;
   };
+  const liveUptimeSecs = (() => {
+    if (!agentOnline) return info.uptime_secs;
+    if (info.uptime_secs == null) return undefined;
+    if (!receivedAtMs) return info.uptime_secs;
+    const extra = Math.max(0, Math.floor((nowMs - receivedAtMs) / 1000));
+    return info.uptime_secs + extra;
+  })();
 
   const adapters = info.adapters ?? [];
   const loopbackPattern = /\b(loopback|pseudo-interface|localhost)\b/i;
@@ -185,7 +204,7 @@ export function SpecsTab({ agentId, cachedInfo }: SpecsTabProps) {
             items={[
               { label: "CPU", value: info.cpu_brand || "—" },
               { label: "CPU Cores", value: info.cpu_cores?.toString() || "—" },
-              { label: "Uptime", value: formatUptime(info.uptime_secs) },
+              { label: "Uptime", value: formatUptime(liveUptimeSecs) },
               {
                 label: "Memory",
                 value: info.memory_total_mb

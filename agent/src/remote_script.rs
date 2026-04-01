@@ -5,6 +5,9 @@ use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
 
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
+
 const MAX_IO_BYTES: usize = 64 * 1024;
 
 fn truncate_output(bytes: &[u8]) -> String {
@@ -49,6 +52,7 @@ async fn run_powershell(script: &str, timeout_dur: Duration) -> RunOutcome {
     }
 
     let fut = Command::new("powershell.exe")
+        .creation_flags(CREATE_NO_WINDOW)
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -120,7 +124,10 @@ async fn run_cmd(script: &str, timeout_dur: Duration) -> RunOutcome {
             };
         };
 
-        let fut = Command::new("cmd.exe").args(["/C", p]).output();
+        let fut = Command::new("cmd.exe")
+            .creation_flags(CREATE_NO_WINDOW)
+            .args(["/C", p])
+            .output();
         return match timeout(timeout_dur, fut).await {
             Ok(Ok(output)) => RunOutcome {
                 ok: output.status.success(),
@@ -146,7 +153,10 @@ async fn run_cmd(script: &str, timeout_dur: Duration) -> RunOutcome {
         };
     }
 
-    let fut = Command::new("cmd.exe").args(["/C", script]).output();
+    let fut = Command::new("cmd.exe")
+        .creation_flags(CREATE_NO_WINDOW)
+        .args(["/C", script])
+        .output();
     match timeout(timeout_dur, fut).await {
         Ok(Ok(output)) => RunOutcome {
             ok: output.status.success(),

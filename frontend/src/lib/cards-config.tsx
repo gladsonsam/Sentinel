@@ -1,5 +1,5 @@
 import type { CardsProps, CollectionPreferencesProps } from "@cloudscape-design/components";
-import type { Agent, AgentLiveStatus } from "./types";
+import type { Agent, AgentInfo, AgentLiveStatus } from "./types";
 import { ConnectionStatus, ActivityStatus } from "../components/common/StatusIndicator";
 import { LiveBadge } from "../components/common/LiveBadge";
 import Box from "@cloudscape-design/components/box";
@@ -8,6 +8,8 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 
 export interface AgentCardItem extends Agent {
   liveStatus?: AgentLiveStatus;
+  agentInfo?: AgentInfo | null;
+  agentInfoReceivedAtMs?: number;
 }
 
 const formatTimestamp = (timestamp: string | null | undefined) => {
@@ -17,8 +19,27 @@ const formatTimestamp = (timestamp: string | null | undefined) => {
 };
 
 export function createCardDefinitions(
-  onSelectAgent: (agentId: string) => void
+  onSelectAgent: (agentId: string) => void,
+  nowMs: number
 ): CardsProps.CardDefinition<AgentCardItem> {
+  const formatUptime = (secs?: number) => {
+    if (secs == null || secs < 0) return "—";
+    const days = Math.floor(secs / 86400);
+    const hours = Math.floor((secs % 86400) / 3600);
+    const mins = Math.floor((secs % 3600) / 60);
+    if (days > 0) return `${days}d ${hours}h ${mins}m`;
+    if (hours > 0) return `${hours}h ${mins}m`;
+    return `${mins}m`;
+  };
+  const liveUptimeSecs = (item: AgentCardItem) => {
+    const base = item.agentInfo?.uptime_secs;
+    if (base == null) return undefined;
+    if (!item.online) return base;
+    const receivedAt = item.agentInfoReceivedAtMs ?? 0;
+    if (!receivedAt) return base;
+    const extra = Math.max(0, Math.floor((nowMs - receivedAt) / 1000));
+    return base + extra;
+  };
   return {
     header: (item) => (
       <SpaceBetween direction="horizontal" size="xs">
@@ -60,18 +81,18 @@ export function createCardDefinitions(
     },
     {
       id: "window",
-      header: "Current window",
-      content: (item) => item.liveStatus?.window || "—",
+      header: "Last window",
+      content: (item) => (item.online ? item.liveStatus?.window || "—" : "—"),
     },
     {
-      id: "url",
-      header: "Current URL",
-      content: (item) => item.liveStatus?.url || "—",
+      id: "uptime",
+      header: "Uptime",
+      content: (item) => (item.online ? formatUptime(liveUptimeSecs(item)) : "—"),
     },
     {
       id: "last-seen",
       header: "Last seen",
-      content: (item) => formatTimestamp(item.last_seen),
+      content: (item) => (!item.online ? formatTimestamp(item.last_seen) : "—"),
     },
     {
       id: "agent-id",
@@ -84,8 +105,8 @@ export function createCardDefinitions(
 
 export const VISIBLE_CONTENT_OPTIONS: CollectionPreferencesProps.VisibleContentOption[] = [
   { label: "Status", id: "status" },
-  { label: "Current window", id: "window" },
-  { label: "Current URL", id: "url" },
+  { label: "Last window", id: "window" },
+  { label: "Uptime", id: "uptime" },
   { label: "Last seen", id: "last-seen" },
   { label: "Agent ID", id: "agent-id" },
 ];
@@ -98,5 +119,5 @@ export const PAGE_SIZE_OPTIONS: CollectionPreferencesProps.PageSizeOption[] = [
 
 export const DEFAULT_PREFERENCES = {
   pageSize: 12,
-  visibleContent: ["status", "window", "url", "last-seen"],
+  visibleContent: ["status", "window", "uptime", "last-seen"],
 };

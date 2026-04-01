@@ -635,7 +635,10 @@ fn handle_server_command(
         "RestartHost" => {
             #[cfg(target_os = "windows")]
             {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
                 match std::process::Command::new("shutdown")
+                    .creation_flags(CREATE_NO_WINDOW)
                     .args(["/r", "/t", "0", "/f"])
                     .status()
                 {
@@ -658,7 +661,10 @@ fn handle_server_command(
         "ShutdownHost" => {
             #[cfg(target_os = "windows")]
             {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
                 match std::process::Command::new("shutdown")
+                    .creation_flags(CREATE_NO_WINDOW)
                     .args(["/s", "/t", "0", "/f"])
                     .status()
                 {

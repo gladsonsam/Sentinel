@@ -1,6 +1,6 @@
 import { useState } from "react";
 import ContentLayout from "@cloudscape-design/components/content-layout";
-import type { Agent, AgentLiveStatus } from "../lib/types";
+import type { Agent, AgentInfo, AgentLiveStatus } from "../lib/types";
 import { AgentCard } from "../components/overview/AgentCard";
 import { BulkScriptModal } from "../components/overview/BulkScriptModal";
 import { NoAgentsState } from "../components/common/EmptyState";
@@ -8,6 +8,8 @@ import { NoAgentsState } from "../components/common/EmptyState";
 interface OverviewPageProps {
   agents: Record<string, Agent>;
   liveStatus: Record<string, AgentLiveStatus>;
+  agentInfo: Record<string, AgentInfo | null>;
+  agentInfoReceivedAtMs: Record<string, number>;
   onSelectAgent: (agentId: string) => void;
   onRefresh: () => void;
   onBatchWake: (agentIds: string[]) => void;
@@ -18,6 +20,8 @@ interface OverviewPageProps {
 export function OverviewPage({
   agents,
   liveStatus,
+  agentInfo,
+  agentInfoReceivedAtMs,
   onSelectAgent,
   onRefresh,
   onBatchWake,
@@ -33,6 +37,8 @@ export function OverviewPage({
         <AgentCard
           agents={agents}
           liveStatus={liveStatus}
+          agentInfo={agentInfo}
+          agentInfoReceivedAtMs={agentInfoReceivedAtMs}
           onSelectAgent={onSelectAgent}
           onRefresh={onRefresh}
           onBatchWake={onBatchWake}
