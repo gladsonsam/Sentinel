@@ -30,6 +30,7 @@ pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/agents", get(list_agents))
         .route("/agents/overview", get(list_agents_overview))
+        .route("/agents/:id/icon", get(agent_icon_get).put(agent_icon_put))
         .route("/agents/bulk-script", post(agents_bulk_script))
         .route("/agents/:id/info", get(agent_info))
         .route("/agents/:id/windows", get(agent_windows))
@@ -104,6 +105,7 @@ async fn list_agents_overview(State(s): State<Arc<AppState>>) -> Response {
             "name": a["name"],
             "first_seen": a["first_seen"],
             "last_seen": a["last_seen"],
+            "icon": a["icon"],
             "online": connected_at.is_some(),
             "connected_at": connected_at,
             "last_connected_at": last_connected_at,
@@ -112,6 +114,69 @@ async fn list_agents_overview(State(s): State<Arc<AppState>>) -> Response {
     }
 
     Json(serde_json::json!({ "agents": out })).into_response()
+}
+
+#[derive(Deserialize)]
+struct AgentIconBody {
+    /// Icon key (from the dashboard's icon library); empty or null clears.
+    icon: Option<String>,
+}
+
+fn normalize_icon(raw: Option<String>) -> Result<Option<String>, &'static str> {
+    let Some(s) = raw else { return Ok(Some("monitor".to_string())); };
+    let t = s.trim();
+    if t.is_empty() {
+        return Ok(Some("monitor".to_string()));
+    }
+    // Keep it lightweight (intended for a short icon key like "laptop").
+    if t.len() > 32 {
+        return Err("icon is too long (max 32 characters)");
+    }
+    // Allow a conservative key charset; frontend enforces the actual allowed list.
+    if !t
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err("icon must be alphanumeric (plus '-' or '_')");
+    }
+    Ok(Some(t.to_string()))
+}
+
+async fn agent_icon_get(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Response {
+    match db::get_agent_icon(&s.db, id).await {
+        Ok(icon) => Json(serde_json::json!({ "icon": icon })).into_response(),
+        Err(e) => err500(e),
+    }
+}
+
+async fn agent_icon_put(
+    Path(id): Path<Uuid>,
+    State(s): State<Arc<AppState>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(body): Json<AgentIconBody>,
+) -> Response {
+    let icon = match normalize_icon(body.icon) {
+        Ok(v) => v,
+        Err(msg) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response(),
+    };
+    let ip = audit_ip(&headers, addr);
+    match db::set_agent_icon(&s.db, id, icon.as_deref()).await {
+        Ok(()) => {
+            let _ = db::insert_audit_log(
+                &s.db,
+                s.audit_operator_name.as_str(),
+                Some(id),
+                "set_agent_icon",
+                "ok",
+                &serde_json::json!({ "icon": icon }),
+                ip.as_deref(),
+            )
+            .await;
+            Json(serde_json::json!({ "icon": icon })).into_response()
+        }
+        Err(e) => err500(e),
+    }
 }
 
 #[derive(Deserialize)]

@@ -73,6 +73,7 @@ async fn run(mut ws: WebSocket, state: Arc<AppState>) {
             "name": a["name"],
             "first_seen": a["first_seen"],
             "last_seen": a["last_seen"],
+            "icon": a["icon"],
             "online": connected_at.is_some(),
             "connected_at": connected_at,
             "last_connected_at": last_connected_at,

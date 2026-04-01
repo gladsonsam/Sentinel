@@ -8,10 +8,12 @@ import FormField from "@cloudscape-design/components/form-field";
 import Header from "@cloudscape-design/components/header";
 import Input from "@cloudscape-design/components/input";
 import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
+import Modal from "@cloudscape-design/components/modal";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Spinner from "@cloudscape-design/components/spinner";
 import type { RetentionPolicy } from "../lib/types";
 import { api } from "../lib/api";
+import { AGENT_ICON_DEFS, AGENT_ICON_MAP, type AgentIconKey, isAgentIconKey } from "../lib/agentIcons";
 import {
   daysToField,
   fieldToDays,
@@ -113,6 +115,12 @@ function RetentionOverrideField({
  * Per-computer retention and local UI lock overrides (Settings tab on an agent).
  */
 export function AgentSettingsTab({ agentId, agentName }: Props) {
+  const [agentIcon, setAgentIcon] = useState<AgentIconKey>("monitor");
+  const [iconPickerOpen, setIconPickerOpen] = useState(false);
+  const [iconLoad, setIconLoad] = useState(true);
+  const [iconSave, setIconSave] = useState(false);
+  const [iconErr, setIconErr] = useState<string | null>(null);
+  const [iconOk, setIconOk] = useState<string | null>(null);
   const [agKey, setAgKey] = useState("");
   const [agWin, setAgWin] = useState("");
   const [agUrl, setAgUrl] = useState("");
@@ -161,11 +169,15 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
     setOk(null);
     setLocalUiErr(null);
     setLocalUiOk(null);
+    setIconErr(null);
+    setIconOk(null);
+    setIconLoad(true);
     Promise.all([
       api.retentionAgentGet(agentId),
       api.localUiPasswordAgentGet(agentId),
+      api.agentIconGet(agentId),
     ])
-      .then(([{ global, override }, localUi]) => {
+      .then(([{ global, override }, localUi, icon]) => {
         if (cancelled) return;
         setAgGlobal(global);
         const o = override ?? {
@@ -180,17 +192,47 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
         setLocalUiOverride(localUi.override);
         setLocalUiPwd("");
         setLocalUiPwd2("");
+        setAgentIcon(isAgentIconKey(icon.icon) ? icon.icon : "monitor");
       })
       .catch((e) => {
         if (!cancelled) setErr(String(e));
       })
       .finally(() => {
-        if (!cancelled) setLoad(false);
+        if (!cancelled) {
+          setLoad(false);
+          setIconLoad(false);
+        }
       });
     return () => {
       cancelled = true;
     };
   }, [agentId]);
+
+  const saveAgentIcon = () => {
+    setIconErr(null);
+    setIconOk(null);
+    setIconSave(true);
+    api
+      .agentIconPut(agentId, agentIcon)
+      .then((r) => {
+        setAgentIcon(isAgentIconKey(r.icon) ? r.icon : "monitor");
+        setIconOk("Saved.");
+      })
+      .catch((e) => setIconErr(String(e)))
+      .finally(() => setIconSave(false));
+  };
+
+  const resetAgentIcon = () => {
+    setAgentIcon("monitor");
+    setIconErr(null);
+    setIconOk(null);
+    setIconSave(true);
+    api
+      .agentIconPut(agentId, "monitor")
+      .then(() => setIconOk("Reset to default."))
+      .catch((e) => setIconErr(String(e)))
+      .finally(() => setIconSave(false));
+  };
 
   const saveOverrides = () => {
     setErr(null);
@@ -328,6 +370,94 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
 
   return (
     <SpaceBetween size="l">
+      <Container
+        header={
+          <Header
+            variant="h2"
+            description={`${agentName} — icon shown on the Agents overview cards.`}
+          >
+            Agent icon
+          </Header>
+        }
+      >
+        <SpaceBetween size="l">
+          {iconErr && (
+            <Alert type="error" dismissible onDismiss={() => setIconErr(null)}>
+              {iconErr}
+            </Alert>
+          )}
+          {iconOk && (
+            <Alert type="success" dismissible onDismiss={() => setIconOk(null)}>
+              {iconOk}
+            </Alert>
+          )}
+
+          <FormField
+            label="Icon"
+            constraintText="Pick an icon for this computer. Clear removes it."
+          >
+            <SpaceBetween direction="horizontal" size="s" alignItems="center">
+              <Box className="sentinel-agent-icon-lg" aria-hidden="true">
+                {agentIcon ? (() => {
+                  const Icon = AGENT_ICON_MAP[agentIcon].Icon;
+                  return <Icon size={28} />;
+                })() : null}
+              </Box>
+              <Button
+                disabled={iconLoad || iconSave}
+                onClick={() => setIconPickerOpen(true)}
+              >
+                Choose icon
+              </Button>
+            </SpaceBetween>
+          </FormField>
+
+          <SpaceBetween direction="horizontal" size="xs">
+            <Button
+              variant="primary"
+              loading={iconSave}
+              disabled={iconLoad || iconSave}
+              onClick={saveAgentIcon}
+            >
+              Save icon
+            </Button>
+            <Button disabled={iconLoad || iconSave} onClick={resetAgentIcon}>
+              Reset to default
+            </Button>
+          </SpaceBetween>
+        </SpaceBetween>
+      </Container>
+
+      <Modal
+        visible={iconPickerOpen}
+        onDismiss={() => setIconPickerOpen(false)}
+        header="Pick an icon"
+      >
+        <div className="sentinel-icon-picker-grid">
+          {AGENT_ICON_DEFS.map(({ key }) => {
+            const Icon = AGENT_ICON_MAP[key].Icon;
+            const selected = agentIcon === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                className={
+                  "sentinel-icon-picker-item" + (selected ? " is-selected" : "")
+                }
+                onClick={() => {
+                  setAgentIcon(key);
+                  setIconPickerOpen(false);
+                }}
+                aria-label={key}
+                aria-pressed={selected}
+              >
+                <Icon size={22} />
+              </button>
+            );
+          })}
+        </div>
+      </Modal>
+
       <Container
         header={
           <Header variant="h2" description={`${agentName} — optional rules for this computer only.`}>

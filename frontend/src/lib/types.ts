@@ -5,6 +5,8 @@ export interface Agent {
   name: string;
   first_seen: string;
   last_seen: string;
+  /** Optional emoji / short label assigned by operator. */
+  icon?: string | null;
   online: boolean;
   connected_at: string | null;       // null when offline
   last_connected_at: string | null;

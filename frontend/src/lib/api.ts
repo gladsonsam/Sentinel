@@ -119,6 +119,14 @@ export const api = {
 
   agents: (): Promise<{ agents: Agent[] }> => get("/agents"),
 
+  // ── Agent UI metadata ─────────────────────────────────────────────────────
+
+  agentIconGet: (id: string): Promise<{ icon: string | null }> =>
+    get(`/agents/${id}/icon`),
+
+  agentIconPut: (id: string, icon: string | null): Promise<{ icon: string | null }> =>
+    putJson(`/agents/${id}/icon`, { icon }),
+
   windows: (
     id: string,
     { limit = 100, offset = 0 }: PageParams = {},

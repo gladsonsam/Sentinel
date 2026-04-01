@@ -345,9 +345,11 @@ export function App() {
 
         case "agent_connected":
           if (event.agent_id && event.name) {
+            const existing = agents[event.agent_id];
             updateAgent(event.agent_id, {
               id: event.agent_id,
               name: event.name,
+              icon: existing?.icon ?? null,
               online: true,
               first_seen: event.connected_at || "",
               last_seen: event.connected_at || "",

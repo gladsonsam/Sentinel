@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import Cards from "@cloudscape-design/components/cards";
 import Box from "@cloudscape-design/components/box";
-import CollectionPreferences from "@cloudscape-design/components/collection-preferences";
 import TextFilter from "@cloudscape-design/components/text-filter";
 import Pagination from "@cloudscape-design/components/pagination";
 import Modal from "@cloudscape-design/components/modal";
@@ -11,12 +10,8 @@ import { useCollection } from "@cloudscape-design/collection-hooks";
 import type { Agent, AgentInfo, AgentLiveStatus } from "../../lib/types";
 import {
   createCardDefinitions,
-  DEFAULT_PREFERENCES,
-  PAGE_SIZE_OPTIONS,
-  VISIBLE_CONTENT_OPTIONS,
   type AgentCardItem,
 } from "../../lib/cards-config";
-import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { FullPageHeader } from "./FullPageHeader";
 import { TableEmptyState, TableNoMatchState } from "../common/CollectionStates";
 import { apiUrl } from "../../lib/api";
@@ -50,30 +45,13 @@ export function AgentCard({
   const [fallbackLastWindow, setFallbackLastWindow] = useState<Record<string, string>>({});
   const [fallbackUptime, setFallbackUptime] = useState<Record<string, { secs: number; receivedAtMs: number }>>({});
   const [powerModal, setPowerModal] = useState<null | { agentId: string }>(null);
-  const [preferences, setPreferences] = useLocalStorage(
-    "sentinel-cards-preferences",
-    DEFAULT_PREFERENCES
+
+  // Dev-friendly defaults: avoid persisting card preferences in localStorage.
+  const visibleSections = useMemo(
+    () => ["details", "quick-actions", "agent-id"],
+    [],
   );
-
-  const allowedSectionIds = useMemo(() => {
-    return new Set(VISIBLE_CONTENT_OPTIONS.map((o) => o.id));
-  }, []);
-
-  const visibleSections = useMemo(() => {
-    const raw = preferences.visibleContent ?? DEFAULT_PREFERENCES.visibleContent;
-    const migrated = raw.map((id) => {
-      if (id === "window" || id === "uptime" || id === "last-seen" || id === "url") return "details";
-      return id;
-    });
-    const cleaned = migrated.filter((id) => allowedSectionIds.has(id));
-    const unique = Array.from(new Set(cleaned));
-
-    // Ensure we don't end up with "status only" after a migration.
-    if (!unique.includes("details")) unique.splice(1, 0, "details");
-
-    const final = unique.length > 0 ? unique : DEFAULT_PREFERENCES.visibleContent;
-    return final;
-  }, [allowedSectionIds, preferences.visibleContent]);
+  const pageSize = 12;
 
   useEffect(() => {
     const t = setInterval(() => setNowMs(Date.now()), 1000);
@@ -167,7 +145,7 @@ export function AgentCard({
         isDescending: true,
       },
     },
-    pagination: { pageSize: preferences.pageSize },
+    pagination: { pageSize },
     selection: {},
   });
 
@@ -208,30 +186,6 @@ export function AgentCard({
           />
         }
         pagination={<Pagination {...paginationProps} />}
-        preferences={
-          <CollectionPreferences
-            title="Preferences"
-            confirmLabel="Confirm"
-            cancelLabel="Cancel"
-            preferences={preferences}
-            pageSizePreference={{
-              title: "Page size",
-              options: PAGE_SIZE_OPTIONS,
-            }}
-            visibleContentPreference={{
-              title: "Visible sections",
-              options: [{ label: "Agent information", options: VISIBLE_CONTENT_OPTIONS }],
-            }}
-            onConfirm={({ detail }) =>
-              setPreferences({
-                pageSize: detail.pageSize ?? DEFAULT_PREFERENCES.pageSize,
-                visibleContent: [
-                  ...(detail.visibleContent ?? DEFAULT_PREFERENCES.visibleContent),
-                ],
-              })
-            }
-          />
-        }
         empty={
           filterProps.filteringText ? (
             <TableNoMatchState

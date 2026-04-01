@@ -5,6 +5,7 @@ import Box from "@cloudscape-design/components/box";
 import Link from "@cloudscape-design/components/link";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Button from "@cloudscape-design/components/button";
+import { isAgentIconKey, AGENT_ICON_MAP } from "./agentIcons";
 
 export interface AgentCardItem extends Agent {
   liveStatus?: AgentLiveStatus;
@@ -46,36 +47,38 @@ export function createCardDefinitions(
   };
   return {
     header: (item) => (
-      <SpaceBetween direction="horizontal" size="xs">
-        <Link
-          href="#"
-          fontSize="heading-m"
-          onFollow={(event) => {
-            event.preventDefault();
-            onSelectAgent(item.id);
-          }}
-        >
-          {item.agentInfo?.hostname || item.name}
-        </Link>
-      </SpaceBetween>
+      <div className="sentinel-agent-card-header">
+        <div className="sentinel-agent-icon-lg" aria-hidden="true">
+          {(() => {
+            const key = isAgentIconKey(item.icon) ? item.icon : "monitor";
+            const Icon = AGENT_ICON_MAP[key].Icon;
+            return <Icon size={28} />;
+          })()}
+        </div>
+        <div className="sentinel-agent-card-header-meta">
+          <Link
+            href="#"
+            fontSize="heading-m"
+            onFollow={(event) => {
+              event.preventDefault();
+              onSelectAgent(item.id);
+            }}
+          >
+            {item.agentInfo?.hostname || item.name}
+          </Link>
+          <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+            <ConnectionStatus
+              connected={item.online}
+              lastSeen={item.last_seen ? new Date(item.last_seen) : null}
+            />
+            {item.online && item.liveStatus?.activity === "afk" && (
+              <ActivityStatus isAfk idleSeconds={item.liveStatus?.idleSecs} />
+            )}
+          </SpaceBetween>
+        </div>
+      </div>
     ),
     sections: [
-    {
-      id: "status",
-      header: "Status",
-      content: (item) => (
-        <SpaceBetween direction="horizontal" size="xs" alignItems="center">
-          <Box variant="awsui-key-label">Connection status:</Box>
-          <ConnectionStatus
-            connected={item.online}
-            lastSeen={item.last_seen ? new Date(item.last_seen) : null}
-          />
-          {item.online && item.liveStatus?.activity === "afk" && (
-            <ActivityStatus isAfk idleSeconds={item.liveStatus?.idleSecs} />
-          )}
-        </SpaceBetween>
-      ),
-    },
     {
       id: "details",
       header: "Details",
@@ -127,7 +130,6 @@ export function createCardDefinitions(
 }
 
 export const VISIBLE_CONTENT_OPTIONS: CollectionPreferencesProps.VisibleContentOption[] = [
-  { label: "Status", id: "status" },
   { label: "Details", id: "details" },
   { label: "Quick actions", id: "quick-actions" },
   { label: "Agent ID", id: "agent-id" },
@@ -141,5 +143,5 @@ export const PAGE_SIZE_OPTIONS: CollectionPreferencesProps.PageSizeOption[] = [
 
 export const DEFAULT_PREFERENCES = {
   pageSize: 12,
-  visibleContent: ["status", "details", "quick-actions"],
+  visibleContent: ["details", "quick-actions"],
 };

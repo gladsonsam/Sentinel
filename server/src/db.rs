@@ -345,7 +345,7 @@ pub async fn insert_activity(pool: &PgPool, agent: Uuid, v: &serde_json::Value) 
 
 pub async fn list_agents(pool: &PgPool) -> Result<Vec<serde_json::Value>> {
     let rows =
-        sqlx::query("SELECT id, name, first_seen, last_seen FROM agents ORDER BY last_seen DESC")
+        sqlx::query("SELECT id, name, first_seen, last_seen, icon FROM agents ORDER BY last_seen DESC")
             .fetch_all(pool)
             .await?;
 
@@ -356,9 +356,29 @@ pub async fn list_agents(pool: &PgPool) -> Result<Vec<serde_json::Value>> {
             let name: String = r.try_get("name").unwrap_or_default();
             let first: DateTime<Utc> = r.try_get("first_seen").unwrap_or_else(|_| Utc::now());
             let last: DateTime<Utc> = r.try_get("last_seen").unwrap_or_else(|_| Utc::now());
-            serde_json::json!({ "id": id, "name": name, "first_seen": first, "last_seen": last })
+            let icon: Option<String> = r.try_get("icon").ok();
+            serde_json::json!({ "id": id, "name": name, "first_seen": first, "last_seen": last, "icon": icon })
         })
         .collect())
+}
+
+/// Set (or clear) an agent icon label.
+pub async fn set_agent_icon(pool: &PgPool, agent_id: Uuid, icon: Option<&str>) -> Result<()> {
+    sqlx::query("UPDATE agents SET icon = $2 WHERE id = $1")
+        .bind(agent_id)
+        .bind(icon)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn get_agent_icon(pool: &PgPool, agent_id: Uuid) -> Result<Option<String>> {
+    let v: Option<String> = sqlx::query_scalar("SELECT icon FROM agents WHERE id = $1")
+        .bind(agent_id)
+        .fetch_optional(pool)
+        .await?
+        .flatten();
+    Ok(v)
 }
 
 pub async fn insert_audit_log(
