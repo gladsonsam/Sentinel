@@ -15,6 +15,7 @@ import Alert from "@cloudscape-design/components/alert";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
 import { api } from "../lib/api";
 import type { DashboardRole, DashboardUser } from "../lib/types";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 
 const ROLE_OPTIONS: { label: string; value: DashboardRole }[] = [
   { label: "viewer", value: "viewer" },
@@ -23,6 +24,7 @@ const ROLE_OPTIONS: { label: string; value: DashboardRole }[] = [
 ];
 
 export function UsersPage() {
+  const isNarrow = useMediaQuery("(max-width: 768px)");
   const [me, setMe] = useState<{ id: string; username: string; role: DashboardRole } | null>(null);
   const [users, setUsers] = useState<DashboardUser[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -81,31 +83,79 @@ export function UsersPage() {
     { id: "delete", text: "Delete" },
   ];
 
+  const runUserAction = async (u: DashboardUser, actionId: string) => {
+    if (!canManage) return;
+    const { id, username } = u;
+
+    switch (actionId) {
+      case "role_viewer":
+      case "role_operator":
+      case "role_admin": {
+        try {
+          setActionError(null);
+          const role = actionId.replace("role_", "") as DashboardRole;
+          await api.userSetRole(id, role);
+          await load();
+        } catch (e: any) {
+          setActionError(String(e?.message || "Failed to update role"));
+        }
+        break;
+      }
+      case "reset_password": {
+        setPwValue("");
+        setPwModal({ id, username });
+        break;
+      }
+      case "linked_oidc": {
+        setIdentities(null);
+        setIdentityLink({ issuer: "", subject: "" });
+        setIdModal({ id, username });
+        try {
+          setActionError(null);
+          const r = await api.userIdentities(id);
+          setIdentities(r.identities as any);
+        } catch (e: any) {
+          setActionError(String(e?.message || "Failed to load identities"));
+        }
+        break;
+      }
+      case "delete": {
+        try {
+          setActionError(null);
+          await api.userDelete(id);
+          await load();
+        } catch (e: any) {
+          setActionError(String(e?.message || "Failed to delete user"));
+        }
+        break;
+      }
+    }
+  };
+
+  const headerActions = (
+    <SpaceBetween direction="horizontal" size="xs">
+      <Button iconName="refresh" onClick={load} loading={loading}>
+        Refresh
+      </Button>
+      <Button variant="primary" disabled={!canManage} onClick={() => setCreateOpen(true)}>
+        Create user
+      </Button>
+    </SpaceBetween>
+  );
+
   return (
     <ContentLayout
       header={
         <Header
           variant="h1"
           description="Manage local users and link/unlink OIDC identities (Authentik). Admin-only."
-          actions={
-            <SpaceBetween direction="horizontal" size="xs">
-              <Button iconName="refresh" onClick={load} loading={loading}>
-                Refresh
-              </Button>
-              <Button
-                variant="primary"
-                disabled={!canManage}
-                onClick={() => setCreateOpen(true)}
-              >
-                Create user
-              </Button>
-            </SpaceBetween>
-          }
+          actions={isNarrow ? undefined : headerActions}
         >
           Users
         </Header>
       }
     >
+      <div className="sentinel-users-page">
       <SpaceBetween size="l">
         {me && (
           <Box color="text-body-secondary">
@@ -119,81 +169,80 @@ export function UsersPage() {
           </Alert>
         )}
 
-        <Table
-          items={items}
-          loading={loading}
-          loadingText="Loading users"
-          columnDefinitions={[
-            { id: "username", header: "Username", cell: (u) => u.username },
-            { id: "role", header: "Role", cell: (u) => u.role },
-            { id: "created", header: "Created", cell: (u) => new Date(u.created_at).toLocaleString() },
-            {
-              id: "actions",
-              header: "",
-              cell: (u) => (
-                <ButtonDropdown
-                  variant="normal"
-                  disabled={!canManage}
-                  items={rowActions()}
-                  expandToViewport
-                  onItemClick={async ({ detail }) => {
-                    if (!canManage) return;
-                    const id = u.id;
-                    const username = u.username;
+        {isNarrow && (
+          <div className="sentinel-users-toolbar-mobile">{headerActions}</div>
+        )}
 
-                    switch (detail.id) {
-                      case "role_viewer":
-                      case "role_operator":
-                      case "role_admin": {
-                        try {
-                          setActionError(null);
-                          const role = detail.id.replace("role_", "") as DashboardRole;
-                          await api.userSetRole(id, role);
-                          await load();
-                        } catch (e: any) {
-                          setActionError(String(e?.message || "Failed to update role"));
-                        }
-                        break;
-                      }
-                      case "reset_password": {
-                        setPwValue("");
-                        setPwModal({ id, username });
-                        break;
-                      }
-                      case "linked_oidc": {
-                        setIdentities(null);
-                        setIdentityLink({ issuer: "", subject: "" });
-                        setIdModal({ id, username });
-                        try {
-                          setActionError(null);
-                          const r = await api.userIdentities(id);
-                          setIdentities(r.identities as any);
-                        } catch (e: any) {
-                          setActionError(String(e?.message || "Failed to load identities"));
-                        }
-                        break;
-                      }
-                      case "delete": {
-                        try {
-                          setActionError(null);
-                          await api.userDelete(id);
-                          await load();
-                        } catch (e: any) {
-                          setActionError(String(e?.message || "Failed to delete user"));
-                        }
-                        break;
-                      }
-                    }
-                  }}
-                >
-                  Manage
-                </ButtonDropdown>
-              ),
-            },
-          ]}
-          empty={<Box color="text-body-secondary">No users.</Box>}
-          variant="embedded"
-        />
+        {isNarrow ? (
+          loading && items.length === 0 ? (
+            <Box color="text-body-secondary">Loading users…</Box>
+          ) : items.length === 0 ? (
+            <Box color="text-body-secondary">No users.</Box>
+          ) : (
+            <SpaceBetween size="m">
+              {items.map((u) => (
+                <Box key={u.id} variant="div" className="sentinel-users-mobile-card">
+                  <SpaceBetween size="s">
+                    <Box variant="h3" tagOverride="div" fontSize="heading-m">
+                      {u.username}
+                    </Box>
+                    <Box color="text-body-secondary">Role: {u.role}</Box>
+                    <Box color="text-body-secondary" fontSize="body-s">
+                      Created {new Date(u.created_at).toLocaleString()}
+                    </Box>
+                    <div className="sentinel-users-manage-slot">
+                      <ButtonDropdown
+                        variant="primary"
+                        disabled={!canManage}
+                        items={rowActions()}
+                        expandToViewport
+                        onItemClick={({ detail }) => {
+                          void runUserAction(u, detail.id);
+                        }}
+                      >
+                        Manage
+                      </ButtonDropdown>
+                    </div>
+                  </SpaceBetween>
+                </Box>
+              ))}
+            </SpaceBetween>
+          )
+        ) : (
+          <Table
+            items={items}
+            loading={loading}
+            loadingText="Loading users"
+            columnDefinitions={[
+              { id: "username", header: "Username", cell: (u) => u.username },
+              { id: "role", header: "Role", cell: (u) => u.role },
+              {
+                id: "created",
+                header: "Created",
+                cell: (u) => new Date(u.created_at).toLocaleString(),
+              },
+              {
+                id: "actions",
+                header: "",
+                cell: (u) => (
+                  <ButtonDropdown
+                    variant="normal"
+                    disabled={!canManage}
+                    items={rowActions()}
+                    expandToViewport
+                    onItemClick={({ detail }) => {
+                      void runUserAction(u, detail.id);
+                    }}
+                  >
+                    Manage
+                  </ButtonDropdown>
+                ),
+              },
+            ]}
+            empty={<Box color="text-body-secondary">No users.</Box>}
+            variant="embedded"
+          />
+        )}
       </SpaceBetween>
 
       <Modal
@@ -232,7 +281,7 @@ export function UsersPage() {
         }
       >
         <SpaceBetween size="m">
-          <ColumnLayout columns={2}>
+          <ColumnLayout columns={isNarrow ? 1 : 2}>
             <FormField label="Username">
               <Input value={create.username} onChange={({ detail }) => setCreate((p) => ({ ...p, username: detail.value }))} />
             </FormField>
@@ -325,7 +374,7 @@ export function UsersPage() {
         }
       >
         <SpaceBetween size="m">
-          <ColumnLayout columns={2}>
+          <ColumnLayout columns={isNarrow ? 1 : 2}>
             <FormField label="Issuer">
               <Input value={identityLink.issuer} onChange={({ detail }) => setIdentityLink((p) => ({ ...p, issuer: detail.value }))} />
             </FormField>
@@ -379,6 +428,7 @@ export function UsersPage() {
           )}
         </SpaceBetween>
       </Modal>
+      </div>
     </ContentLayout>
   );
 }

@@ -481,6 +481,68 @@
   min-width: 96px;
 }
 
+/* ── Users page (narrow viewports) ───────────────────────────────────────── */
+
+.sentinel-users-page {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+.sentinel-users-toolbar-mobile {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.sentinel-users-toolbar-mobile > * {
+  flex: 1 1 140px;
+  min-width: 0;
+}
+
+.sentinel-users-toolbar-mobile button {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.sentinel-users-mobile-card {
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px solid var(--awsui-color-border-container-top);
+  background: var(--awsui-color-background-container-content);
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.sentinel-users-manage-slot {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  margin-top: 8px;
+  min-width: 0;
+}
+
+/* Let the Cloudscape trigger fill the card width on small screens */
+.sentinel-users-manage-slot > * {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  align-self: stretch;
+}
+
+.sentinel-users-manage-slot button {
+  width: 100%;
+  max-width: 100%;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
 /* ── Custom Vertical Timeline (vtl) ──────────────────────────────────────── */
 
 /* Loading / empty states */
