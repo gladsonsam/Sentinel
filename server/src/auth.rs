@@ -717,8 +717,9 @@ pub async fn oidc_callback(
         Err(e) => return crate::error::internal_error(e),
     };
 
-    // Ensure role stays in sync with groups.
-    let _ = db::dashboard_user_set_role(&state.db, user_id, &role).await;
+    // IMPORTANT: do not overwrite roles on every login.
+    // Roles are assigned on first provision; afterwards admins can manage roles
+    // in-app without OIDC groups forcing them back to viewer/operator.
 
     let _ = db::dashboard_identity_upsert(
         &state.db,

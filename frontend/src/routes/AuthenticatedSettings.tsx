@@ -10,7 +10,9 @@ interface Props {
   onLogout: () => void;
   onShowPreferences: () => void;
   onOpenActivityLog: () => void;
+  onOpenUsers: () => void;
   onGoHome: () => void;
+  currentUser?: { username: string; role: "admin" | "operator" | "viewer" } | null;
   notifications: NotificationItem[];
   onDismissNotification: (id: string) => void;
   toolsOpen: boolean;
@@ -24,7 +26,9 @@ export function AuthenticatedSettings({
   onLogout,
   onShowPreferences,
   onOpenActivityLog,
+  onOpenUsers,
   onGoHome,
+  currentUser = null,
   notifications,
   onDismissNotification,
   toolsOpen,
@@ -36,8 +40,10 @@ export function AuthenticatedSettings({
       onLogout={onLogout}
       onShowPreferences={onShowPreferences}
       onOpenActivityLog={onOpenActivityLog}
+      onOpenUsers={onOpenUsers}
       onGoHome={onGoHome}
       contentType="default"
+      currentUser={currentUser}
       notifications={notifications}
       onDismissNotification={onDismissNotification}
       showTools={false}

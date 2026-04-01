@@ -12,6 +12,9 @@ import type {
   WindowTopRow,
   LocalUiPasswordGlobalState,
   LocalUiPasswordAgentState,
+  DashboardUser,
+  DashboardIdentity,
+  DashboardRole,
 } from "./types";
 import { buildApiUrl } from "./serverSettings";
 
@@ -114,6 +117,9 @@ export const api = {
   logout: async (): Promise<void> => {
     await fetch(apiUrl("/logout"), { method: "POST", credentials: "include" });
   },
+
+  me: (): Promise<{ id: string; username: string; role: "admin" | "operator" | "viewer" }> =>
+    get("/me"),
 
   // ── Dashboard data ────────────────────────────────────────────────────────
 
@@ -277,4 +283,34 @@ export const api = {
     timeout_secs?: number;
   }): Promise<{ results: Record<string, unknown>[] }> =>
     postJsonRes("/agents/bulk-script", body),
+
+  // ── Admin: users / identities ─────────────────────────────────────────────
+
+  usersList: (): Promise<{ users: DashboardUser[] }> => get("/users"),
+
+  userCreate: (body: {
+    username: string;
+    password: string;
+    role: DashboardRole;
+  }): Promise<{ id: string }> => postJsonRes("/users", body),
+
+  userSetPassword: (id: string, password: string): Promise<{ ok: boolean }> =>
+    postJsonRes(`/users/${id}/password`, { password }),
+
+  userSetRole: (id: string, role: DashboardRole): Promise<{ ok: boolean }> =>
+    postJsonRes(`/users/${id}/role`, { role }),
+
+  userDelete: (id: string): Promise<{ ok: boolean }> =>
+    postEmpty(`/users/${id}/delete`),
+
+  userIdentities: (id: string): Promise<{ identities: DashboardIdentity[] }> =>
+    get(`/users/${id}/identities`),
+
+  userIdentityLink: (
+    id: string,
+    body: { issuer: string; subject: string },
+  ): Promise<{ ok: boolean }> => postJsonRes(`/users/${id}/identities/link`, body),
+
+  identityUnlink: (identityId: number): Promise<{ ok: boolean }> =>
+    postEmpty(`/identities/${identityId}/unlink`),
 };

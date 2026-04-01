@@ -29,6 +29,7 @@ fn audit_ip(headers: &HeaderMap, connect: SocketAddr) -> Option<String> {
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
+        .route("/me", get(me))
         .route("/agents", get(list_agents))
         .route("/agents/overview", get(list_agents_overview))
         .route("/agents/:id/icon", get(agent_icon_get).put(agent_icon_put))
@@ -36,6 +37,9 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/users/:id/password", post(user_set_password))
         .route("/users/:id/role", post(user_set_role))
         .route("/users/:id/delete", post(user_delete))
+        .route("/users/:id/identities", get(user_identities))
+        .route("/users/:id/identities/link", post(user_identity_link))
+        .route("/identities/:id/unlink", post(identity_unlink))
         .route("/agents/bulk-script", post(agents_bulk_script))
         .route("/agents/:id/info", get(agent_info))
         .route("/agents/:id/windows", get(agent_windows))
@@ -72,6 +76,15 @@ pub fn router() -> Router<Arc<AppState>> {
                 .put(local_ui_password_agent_put)
                 .delete(local_ui_password_agent_delete),
         )
+}
+
+async fn me(Extension(user): Extension<auth::AuthUser>) -> Response {
+    Json(serde_json::json!({
+        "id": user.user_id,
+        "username": user.username,
+        "role": user.role
+    }))
+    .into_response()
 }
 
 async fn list_agents(State(s): State<Arc<AppState>>) -> Response {
@@ -359,6 +372,90 @@ async fn user_delete(
                 "user_delete",
                 "ok",
                 &serde_json::json!({ "user_id": id }),
+                ip.as_deref(),
+            )
+            .await;
+            Json(serde_json::json!({ "ok": true })).into_response()
+        }
+        Err(e) => err500(e),
+    }
+}
+
+async fn user_identities(
+    Path(id): Path<Uuid>,
+    State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+) -> Response {
+    if !user.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
+    match db::dashboard_identities_for_user(&s.db, id).await {
+        Ok(rows) => Json(serde_json::json!({ "identities": rows })).into_response(),
+        Err(e) => err500(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct IdentityLinkBody {
+    issuer: String,
+    subject: String,
+}
+
+async fn user_identity_link(
+    Path(id): Path<Uuid>,
+    State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(body): Json<IdentityLinkBody>,
+) -> Response {
+    if !user.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
+    let issuer = body.issuer.trim();
+    let subject = body.subject.trim();
+    if issuer.is_empty() || subject.is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "issuer and subject are required" }))).into_response();
+    }
+    let ip = audit_ip(&headers, addr);
+    match db::dashboard_identity_link(&s.db, issuer, subject, id).await {
+        Ok(()) => {
+            let _ = db::insert_audit_log(
+                &s.db,
+                user.username.as_str(),
+                None,
+                "identity_link",
+                "ok",
+                &serde_json::json!({ "user_id": id, "issuer": issuer, "subject": subject }),
+                ip.as_deref(),
+            )
+            .await;
+            Json(serde_json::json!({ "ok": true })).into_response()
+        }
+        Err(e) => err500(e),
+    }
+}
+
+async fn identity_unlink(
+    Path(id): Path<i64>,
+    State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> Response {
+    if !user.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
+    let ip = audit_ip(&headers, addr);
+    match db::dashboard_identity_unlink(&s.db, id).await {
+        Ok(()) => {
+            let _ = db::insert_audit_log(
+                &s.db,
+                user.username.as_str(),
+                None,
+                "identity_unlink",
+                "ok",
+                &serde_json::json!({ "identity_id": id }),
                 ip.as_deref(),
             )
             .await;

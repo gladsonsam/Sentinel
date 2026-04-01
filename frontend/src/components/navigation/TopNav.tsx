@@ -5,17 +5,21 @@ interface TopNavProps {
   onShowPreferences: () => void;
   /** Opens the central activity / audit log page. */
   onOpenActivityLog?: () => void;
+  onOpenUsers?: () => void;
   onBackToOverview?: () => void;
   /** Clicking the Sentinel logo/title returns here (usually agent overview). */
   onGoHome: () => void;
+  currentUser?: { username: string; role: "admin" | "operator" | "viewer" } | null;
 }
 
 export function TopNav({
   onLogout,
   onShowPreferences,
   onOpenActivityLog,
+  onOpenUsers,
   onBackToOverview,
   onGoHome,
+  currentUser = null,
 }: TopNavProps) {
   return (
     <div id="sentinel-top-nav" className="sentinel-top-nav">
@@ -55,19 +59,23 @@ export function TopNav({
               ]
             : []),
           {
-            type: "button" as const,
-            iconName: "settings" as const,
-            title: "Settings",
-            ariaLabel: "Settings",
-            onClick: onShowPreferences,
-          },
-          {
-            type: "button" as const,
+            type: "menu-dropdown" as const,
             iconName: "user-profile" as const,
-            text: "Logout",
-            title: "Logout",
-            ariaLabel: "Logout",
-            onClick: onLogout,
+            text: currentUser ? `${currentUser.username} (${currentUser.role})` : "Account",
+            title: "Account",
+            ariaLabel: "Account",
+            items: [
+              ...(onOpenUsers
+                ? [{ id: "users", text: "Users" }]
+                : []),
+              { id: "settings", text: "Settings" },
+              { id: "logout", text: "Logout" },
+            ],
+            onItemClick: ({ detail }) => {
+              if (detail.id === "users") onOpenUsers?.();
+              else if (detail.id === "settings") onShowPreferences();
+              else if (detail.id === "logout") onLogout();
+            },
           },
         ]}
       />

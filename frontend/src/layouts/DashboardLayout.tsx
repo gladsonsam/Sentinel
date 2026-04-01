@@ -12,8 +12,10 @@ interface DashboardLayoutProps {
   onLogout: () => void;
   onShowPreferences: () => void;
   onOpenActivityLog?: () => void;
+  onOpenUsers?: () => void;
   onBackToOverview?: () => void;
   onGoHome: () => void;
+  currentUser?: { username: string; role: "admin" | "operator" | "viewer" } | null;
   contentType?: "default" | "table" | "form" | "cards";
   notifications: NotificationItem[];
   onDismissNotification: (id: string) => void;
@@ -28,8 +30,10 @@ export function DashboardLayout({
   onLogout,
   onShowPreferences,
   onOpenActivityLog,
+  onOpenUsers,
   onBackToOverview,
   onGoHome,
+  currentUser = null,
   contentType = "default",
   notifications,
   onDismissNotification,
@@ -45,8 +49,10 @@ export function DashboardLayout({
         onLogout={onLogout}
         onShowPreferences={onShowPreferences}
         onOpenActivityLog={onOpenActivityLog}
+        onOpenUsers={onOpenUsers}
         onBackToOverview={onBackToOverview}
         onGoHome={onGoHome}
+        currentUser={currentUser}
       />
       <AppLayout
         navigation={navigation}

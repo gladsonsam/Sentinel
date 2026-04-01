@@ -10,6 +10,7 @@ import { api, apiUrl } from "./lib/api";
 import type { Agent, AgentInfo, AgentLiveStatus, TabKey } from "./lib/types";
 import type { NotificationItem } from "./hooks/useNotifications";
 import type { ThemeMode } from "./hooks/useTheme";
+import { DashboardLayout } from "./layouts/DashboardLayout";
 
 const LoginPage = lazy(() => import("./pages/LoginPage").then((m) => ({ default: m.LoginPage })));
 const AuthenticatedOverview = lazy(() =>
@@ -24,6 +25,7 @@ const AuthenticatedSettings = lazy(() =>
 const AuthenticatedLogs = lazy(() =>
   import("./routes/AuthenticatedLogs").then((m) => ({ default: m.AuthenticatedLogs })),
 );
+const UsersPage = lazy(() => import("./pages/UsersPage").then((m) => ({ default: m.UsersPage })));
 
 /** Minimal first paint (no Cloudscape) while auth or route chunks load. */
 function LoadShell({ label = "Loading…" }: { label?: string }) {
@@ -79,6 +81,8 @@ function OverviewRoute({
   loadingAgents,
   onSelectAgent,
   onOpenScreen,
+  onOpenUsers,
+  currentUser,
   checkAuth,
   runBatchWake,
   runBatchAction,
@@ -97,6 +101,8 @@ function OverviewRoute({
   loadingAgents: boolean;
   onSelectAgent: (agentId: string) => void;
   onOpenScreen: (agentId: string) => void;
+  onOpenUsers: () => void;
+  currentUser: { id: string; username: string; role: "admin" | "operator" | "viewer" } | null;
   checkAuth: () => void;
   runBatchWake: (ids: string[]) => Promise<void>;
   runBatchAction: (agentIds: string[], cmdType: "RestartHost" | "ShutdownHost") => void;
@@ -129,11 +135,13 @@ function OverviewRoute({
         onLogout={() => void handleLogout()}
         onShowPreferences={openSettings}
         onOpenActivityLog={openLogs}
+        onOpenUsers={onOpenUsers}
         onGoHome={() => {}}
         notifications={notifications}
         onDismissNotification={removeNotification}
         toolsOpen={toolsOpen}
         onToolsChange={setToolsOpen}
+        currentUser={currentUser ? { username: currentUser.username, role: currentUser.role } : null}
       />
     </Suspense>
   );
@@ -226,6 +234,8 @@ function SettingsRoute({
   handleLogout,
   openSettings,
   openLogs,
+  onOpenUsers,
+  currentUser,
   notifications,
   removeNotification,
   toolsOpen,
@@ -236,6 +246,8 @@ function SettingsRoute({
   handleLogout: () => Promise<void>;
   openSettings: () => void;
   openLogs: () => void;
+  onOpenUsers: () => void;
+  currentUser: { id: string; username: string; role: "admin" | "operator" | "viewer" } | null;
   notifications: NotificationItem[];
   removeNotification: (id: string) => void;
   toolsOpen: boolean;
@@ -252,11 +264,13 @@ function SettingsRoute({
         onLogout={() => void handleLogout()}
         onShowPreferences={openSettings}
         onOpenActivityLog={openLogs}
+        onOpenUsers={onOpenUsers}
         onGoHome={() => navigate("/")}
         notifications={notifications}
         onDismissNotification={removeNotification}
         toolsOpen={toolsOpen}
         onToolsChange={setToolsOpen}
+        currentUser={currentUser ? { username: currentUser.username, role: currentUser.role } : null}
       />
     </Suspense>
   );
@@ -269,6 +283,8 @@ function LogsRoute({
   removeNotification,
   toolsOpen,
   setToolsOpen,
+  onOpenUsers,
+  currentUser,
 }: {
   handleLogout: () => Promise<void>;
   openSettings: () => void;
@@ -276,6 +292,8 @@ function LogsRoute({
   removeNotification: (id: string) => void;
   toolsOpen: boolean;
   setToolsOpen: (open: boolean) => void;
+  onOpenUsers: () => void;
+  currentUser: { id: string; username: string; role: "admin" | "operator" | "viewer" } | null;
 }) {
   const back = useReturnTo();
   const navigate = useNavigate();
@@ -285,11 +303,13 @@ function LogsRoute({
         onBack={back}
         onLogout={() => void handleLogout()}
         onShowPreferences={openSettings}
+        onOpenUsers={onOpenUsers}
         onGoHome={() => navigate("/")}
         notifications={notifications}
         onDismissNotification={removeNotification}
         toolsOpen={toolsOpen}
         onToolsChange={setToolsOpen}
+        currentUser={currentUser ? { username: currentUser.username, role: currentUser.role } : null}
       />
     </Suspense>
   );
@@ -299,6 +319,7 @@ export function App() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [wsInitReceived, setWsInitReceived] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
+  const [me, setMe] = useState<{ id: string; username: string; role: "admin" | "operator" | "viewer" } | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -325,8 +346,17 @@ export function App() {
         credentials: "include",
       });
       setAuthenticated(response.ok);
+      if (response.ok) {
+        fetch(apiUrl("/me"), { credentials: "include" })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((data) => setMe(data))
+          .catch(() => setMe(null));
+      } else {
+        setMe(null);
+      }
     } catch {
       setAuthenticated(false);
+      setMe(null);
     }
   }, []);
 
@@ -585,6 +615,8 @@ export function App() {
             loadingAgents={!wsInitReceived}
             onSelectAgent={handleSelectAgent}
             onOpenScreen={handleOpenScreen}
+            onOpenUsers={() => navigate("/users")}
+            currentUser={me}
             checkAuth={checkAuth}
             runBatchWake={runBatchWake}
             runBatchAction={runBatchAction}
@@ -628,6 +660,8 @@ export function App() {
             handleLogout={handleLogout}
             openSettings={handleOpenSettings}
             openLogs={handleOpenLogs}
+            onOpenUsers={() => navigate("/users")}
+            currentUser={me}
             notifications={notifications}
             removeNotification={removeNotification}
             toolsOpen={toolsOpen}
@@ -645,7 +679,31 @@ export function App() {
             removeNotification={removeNotification}
             toolsOpen={toolsOpen}
             setToolsOpen={setToolsOpen}
+            onOpenUsers={() => navigate("/users")}
+            currentUser={me}
           />
+        }
+      />
+      <Route
+        path="/users"
+        element={
+          <Suspense fallback={<LoadShell label="Loading users…" />}>
+            <DashboardLayout
+              content={<UsersPage />}
+              onLogout={() => void handleLogout()}
+              onShowPreferences={handleOpenSettings}
+              onOpenActivityLog={handleOpenLogs}
+              onGoHome={() => navigate("/")}
+              contentType="default"
+              notifications={notifications}
+              onDismissNotification={removeNotification}
+              showTools={false}
+              toolsOpen={toolsOpen}
+              onToolsChange={setToolsOpen}
+              currentUser={me}
+              onOpenUsers={() => navigate("/users")}
+            />
+          </Suspense>
         }
       />
       <Route path="*" element={<Navigate to="/" replace />} />

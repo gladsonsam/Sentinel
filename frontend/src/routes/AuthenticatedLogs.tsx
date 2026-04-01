@@ -6,7 +6,9 @@ interface Props {
   onBack: () => void;
   onLogout: () => void;
   onShowPreferences: () => void;
+  onOpenUsers: () => void;
   onGoHome: () => void;
+  currentUser?: { username: string; role: "admin" | "operator" | "viewer" } | null;
   notifications: NotificationItem[];
   onDismissNotification: (id: string) => void;
   toolsOpen: boolean;
@@ -17,7 +19,9 @@ export function AuthenticatedLogs({
   onBack,
   onLogout,
   onShowPreferences,
+  onOpenUsers,
   onGoHome,
+  currentUser = null,
   notifications,
   onDismissNotification,
   toolsOpen,
@@ -28,9 +32,11 @@ export function AuthenticatedLogs({
       content={<LogsPage />}
       onLogout={onLogout}
       onShowPreferences={onShowPreferences}
+      onOpenUsers={onOpenUsers}
       onGoHome={onGoHome}
       onBackToOverview={onBack}
       contentType="default"
+      currentUser={currentUser}
       notifications={notifications}
       onDismissNotification={onDismissNotification}
       showTools={false}

@@ -234,6 +234,7 @@ export function SettingsPage({ themeMode, onThemeChange, onBack }: SettingsPageP
             <Box color="text-body-secondary">No storage data yet.</Box>
           )}
         </Container>
+
       </SpaceBetween>
     </ContentLayout>
   );

@@ -182,6 +182,28 @@ export interface LocalUiPasswordAgentState {
   override: { password_set: boolean } | null;
 }
 
+// ── Dashboard users (admin) ───────────────────────────────────────────────────
+
+export type DashboardRole = "admin" | "operator" | "viewer";
+
+export interface DashboardUser {
+  id: string;
+  username: string;
+  role: DashboardRole;
+  created_at: string;
+}
+
+export interface DashboardIdentity {
+  id: number;
+  issuer: string;
+  subject: string;
+  preferred_username?: string | null;
+  email?: string | null;
+  name?: string | null;
+  last_login_at: string;
+  created_at: string;
+}
+
 // ── UI ────────────────────────────────────────────────────────────────────────
 
 export type TabKey =

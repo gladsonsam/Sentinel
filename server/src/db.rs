@@ -341,6 +341,77 @@ pub async fn dashboard_identity_upsert(
     Ok(())
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct DashboardIdentityRow {
+    pub id: i64,
+    pub issuer: String,
+    pub subject: String,
+    pub preferred_username: Option<String>,
+    pub email: Option<String>,
+    pub name: Option<String>,
+    pub last_login_at: DateTime<Utc>,
+    pub created_at: DateTime<Utc>,
+}
+
+pub async fn dashboard_identities_for_user(pool: &PgPool, user_id: Uuid) -> Result<Vec<DashboardIdentityRow>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT id, issuer, subject, preferred_username, email, name, last_login_at, created_at
+        FROM dashboard_identities
+        WHERE user_id = $1
+        ORDER BY last_login_at DESC
+        "#,
+    )
+    .bind(user_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .iter()
+        .map(|r| DashboardIdentityRow {
+            id: r.try_get("id").unwrap_or_default(),
+            issuer: r.try_get("issuer").unwrap_or_else(|_| "".to_string()),
+            subject: r.try_get("subject").unwrap_or_else(|_| "".to_string()),
+            preferred_username: r.try_get("preferred_username").ok().flatten(),
+            email: r.try_get("email").ok().flatten(),
+            name: r.try_get("name").ok().flatten(),
+            last_login_at: r.try_get("last_login_at").unwrap_or_else(|_| Utc::now()),
+            created_at: r.try_get("created_at").unwrap_or_else(|_| Utc::now()),
+        })
+        .collect())
+}
+
+pub async fn dashboard_identity_unlink(pool: &PgPool, identity_id: i64) -> Result<()> {
+    sqlx::query("DELETE FROM dashboard_identities WHERE id = $1")
+        .bind(identity_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn dashboard_identity_link(
+    pool: &PgPool,
+    issuer: &str,
+    subject: &str,
+    user_id: Uuid,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO dashboard_identities (issuer, subject, user_id, last_login_at)
+        VALUES ($1, $2, $3, NOW())
+        ON CONFLICT (issuer, subject) DO UPDATE SET
+            user_id = EXCLUDED.user_id,
+            last_login_at = NOW()
+        "#,
+    )
+    .bind(issuer)
+    .bind(subject)
+    .bind(user_id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 // ─── Agents ───────────────────────────────────────────────────────────────────
 
 /// Insert the agent if it doesn't exist yet; always bump `last_seen`.
