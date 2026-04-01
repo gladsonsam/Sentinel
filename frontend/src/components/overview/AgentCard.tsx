@@ -48,7 +48,7 @@ export function AgentCard({
 
   // Dev-friendly defaults: avoid persisting card preferences in localStorage.
   const visibleSections = useMemo(
-    () => ["details", "quick-actions", "agent-id"],
+    () => ["main"],
     [],
   );
   const pageSize = 12;
@@ -60,10 +60,11 @@ export function AgentCard({
 
   useEffect(() => {
     let cancelled = false;
-    const onlineAgents = Object.entries(agents).filter(([, a]) => a.online);
+    const allAgents = Object.entries(agents);
 
-    for (const [id] of onlineAgents) {
+    for (const [id, agent] of allAgents) {
       // Seed "Last window" from stored telemetry if we haven't seen a live window_focus yet.
+      // Do this for offline agents too so cards stay aligned.
       const hasLiveWindow = Boolean(liveStatus[id]?.window);
       if (!hasLiveWindow && fallbackLastWindow[id] == null) {
         fetch(apiUrl(`/agents/${id}/windows?limit=1`), { credentials: "include" })
@@ -81,7 +82,7 @@ export function AgentCard({
 
       // Seed uptime from stored agent info if we haven't received an agent_info WS event yet.
       const hasLiveUptime = agentInfo[id]?.uptime_secs != null;
-      if (!hasLiveUptime && fallbackUptime[id] == null) {
+      if (agent.online && !hasLiveUptime && fallbackUptime[id] == null) {
         fetch(apiUrl(`/agents/${id}/info`), { credentials: "include" })
           .then((r) => (r.ok ? r.json() : null))
           .then((data) => {

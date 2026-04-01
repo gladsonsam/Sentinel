@@ -79,60 +79,53 @@ export function createCardDefinitions(
       </div>
     ),
     sections: [
-    {
-      id: "details",
-      header: "Details",
-      content: (item) => {
-        const lastWindow = item.liveStatus?.window || item.fallbackLastWindow || "—";
-        const uptime = formatUptime(liveUptimeSecs(item));
-        const lastSeen = formatTimestamp(item.last_seen);
-        return (
-          <SpaceBetween size="xs">
-            <Box>
-              <Box variant="awsui-key-label">Uptime</Box>
-              <Box>{uptime}</Box>
-            </Box>
-            <Box>
-              <Box variant="awsui-key-label">Last window</Box>
-              <Box>{lastWindow}</Box>
-            </Box>
-            {!item.online && (
-              <Box>
-                <Box variant="awsui-key-label">Last seen</Box>
-                <Box>{lastSeen}</Box>
-              </Box>
-            )}
-          </SpaceBetween>
-        );
+      {
+        id: "main",
+        header: "",
+        content: (item) => {
+          const lastWindow = item.liveStatus?.window || item.fallbackLastWindow || "—";
+          const lastSeen = formatTimestamp(item.last_seen);
+          const uptime = formatUptime(liveUptimeSecs(item));
+
+          const leftLabel = item.online ? "Uptime" : "Last seen";
+          const leftValue = item.online ? uptime : lastSeen;
+
+          return (
+            <div className="sentinel-agent-card-main">
+              <div className="sentinel-agent-card-main-top">
+                <Box className="sentinel-agent-card-block sentinel-agent-card-block-details">
+                  <Box variant="h3">Details</Box>
+                  <SpaceBetween size="xs">
+                    <Box>
+                      <Box variant="awsui-key-label">{leftLabel}</Box>
+                      <Box>{leftValue}</Box>
+                    </Box>
+                    <Box>
+                      <Box variant="awsui-key-label">Last window</Box>
+                      <Box className="sentinel-last-window">{lastWindow}</Box>
+                    </Box>
+                  </SpaceBetween>
+                </Box>
+              </div>
+
+              <div className="sentinel-agent-card-actions-bottom">
+                <Button
+                  iconName={item.online ? "status-negative" : "refresh"}
+                  ariaLabel={item.online ? "Shutdown" : "Wake"}
+                  variant="icon"
+                  onClick={() => onPowerAction(item.id)}
+                />
+              </div>
+            </div>
+          );
+        },
       },
-    },
-    {
-      id: "quick-actions",
-      header: "Quick actions",
-      content: (item) => (
-        <SpaceBetween direction="horizontal" size="xs" alignItems="center">
-          <Button
-            iconName={item.online ? "status-negative" : "refresh"}
-            ariaLabel={item.online ? "Shutdown" : "Wake"}
-            variant="icon"
-            onClick={() => onPowerAction(item.id)}
-          />
-        </SpaceBetween>
-      ),
-    },
-    {
-      id: "agent-id",
-      header: "Agent ID",
-      content: (item) => item.id,
-    },
     ],
   };
 }
 
 export const VISIBLE_CONTENT_OPTIONS: CollectionPreferencesProps.VisibleContentOption[] = [
-  { label: "Details", id: "details" },
-  { label: "Quick actions", id: "quick-actions" },
-  { label: "Agent ID", id: "agent-id" },
+  { label: "Main", id: "main" },
 ];
 
 export const PAGE_SIZE_OPTIONS: CollectionPreferencesProps.PageSizeOption[] = [
@@ -143,5 +136,5 @@ export const PAGE_SIZE_OPTIONS: CollectionPreferencesProps.PageSizeOption[] = [
 
 export const DEFAULT_PREFERENCES = {
   pageSize: 12,
-  visibleContent: ["details", "quick-actions"],
+  visibleContent: ["main"],
 };

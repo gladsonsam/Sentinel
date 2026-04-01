@@ -135,6 +135,59 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--awsui-color-border-item-selected) 45%, transparent);
 }
 
+.sentinel-agent-id {
+  font-size: 12px;
+  color: var(--awsui-color-text-body-secondary);
+  word-break: break-word;
+}
+
+.sentinel-last-window {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  /* Reserve exactly 2 lines worth of height for alignment */
+  line-height: 1.35;
+  min-height: calc(1.35em * 2);
+}
+
+.sentinel-agent-card-main {
+  display: flex;
+  flex-direction: column;
+  /* Gives the flex layout room so Agent ID can pin */
+  min-height: 210px;
+}
+
+.sentinel-agent-card-main-top {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sentinel-agent-card-block {
+  padding: 12px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--awsui-color-border-divider-default);
+  background: color-mix(in srgb, var(--awsui-color-background-container-content) 92%, #000);
+}
+
+/* Slightly varied “strip” backgrounds for visual separation. */
+.sentinel-agent-card-block-details {
+  background: color-mix(in srgb, var(--awsui-color-background-container-content) 88%, var(--sentinel-primary));
+  border-color: color-mix(in srgb, var(--awsui-color-border-divider-default) 65%, var(--sentinel-primary));
+}
+
+.sentinel-agent-card-block > [class*="awsui_header"] {
+  margin-bottom: 6px;
+}
+
+.sentinel-agent-card-actions-bottom {
+  margin-top: auto;
+  padding-top: 10px;
+  display: flex;
+  justify-content: flex-start;
+}
+
 .sentinel-status-online {
   color: var(--status-online);
 }
