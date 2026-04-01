@@ -11,6 +11,7 @@ import FormField from "@cloudscape-design/components/form-field";
 import Input from "@cloudscape-design/components/input";
 import Select from "@cloudscape-design/components/select";
 import Box from "@cloudscape-design/components/box";
+import Alert from "@cloudscape-design/components/alert";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
 import { api } from "../lib/api";
 import type { DashboardRole, DashboardUser } from "../lib/types";
@@ -26,6 +27,7 @@ export function UsersPage() {
   const [users, setUsers] = useState<DashboardUser[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [create, setCreate] = useState<{ username: string; password: string; role: DashboardRole }>({
@@ -111,6 +113,11 @@ export function UsersPage() {
           </Box>
         )}
         {error && <Box color="text-status-error">{error}</Box>}
+        {actionError && (
+          <Alert type="error" dismissible onDismiss={() => setActionError(null)}>
+            {actionError}
+          </Alert>
+        )}
 
         <Table
           items={items}
@@ -138,9 +145,14 @@ export function UsersPage() {
                       case "role_viewer":
                       case "role_operator":
                       case "role_admin": {
-                        const role = detail.id.replace("role_", "") as DashboardRole;
-                        await api.userSetRole(id, role);
-                        await load();
+                        try {
+                          setActionError(null);
+                          const role = detail.id.replace("role_", "") as DashboardRole;
+                          await api.userSetRole(id, role);
+                          await load();
+                        } catch (e: any) {
+                          setActionError(String(e?.message || "Failed to update role"));
+                        }
                         break;
                       }
                       case "reset_password": {
@@ -152,13 +164,23 @@ export function UsersPage() {
                         setIdentities(null);
                         setIdentityLink({ issuer: "", subject: "" });
                         setIdModal({ id, username });
-                        const r = await api.userIdentities(id);
-                        setIdentities(r.identities as any);
+                        try {
+                          setActionError(null);
+                          const r = await api.userIdentities(id);
+                          setIdentities(r.identities as any);
+                        } catch (e: any) {
+                          setActionError(String(e?.message || "Failed to load identities"));
+                        }
                         break;
                       }
                       case "delete": {
-                        await api.userDelete(id);
-                        await load();
+                        try {
+                          setActionError(null);
+                          await api.userDelete(id);
+                          await load();
+                        } catch (e: any) {
+                          setActionError(String(e?.message || "Failed to delete user"));
+                        }
                         break;
                       }
                     }
@@ -188,14 +210,19 @@ export function UsersPage() {
                 variant="primary"
                 disabled={!create.username.trim() || create.password.length < 6}
                 onClick={async () => {
-                  await api.userCreate({
-                    username: create.username.trim(),
-                    password: create.password,
-                    role: create.role,
-                  });
-                  setCreate({ username: "", password: "", role: "viewer" });
-                  setCreateOpen(false);
-                  await load();
+                  try {
+                    setActionError(null);
+                    await api.userCreate({
+                      username: create.username.trim(),
+                      password: create.password,
+                      role: create.role,
+                    });
+                    setCreate({ username: "", password: "", role: "viewer" });
+                    setCreateOpen(false);
+                    await load();
+                  } catch (e: any) {
+                    setActionError(String(e?.message || "Failed to create user"));
+                  }
                 }}
               >
                 Create
@@ -241,9 +268,14 @@ export function UsersPage() {
                 disabled={pwValue.length < 6 || !pwModal}
                 onClick={async () => {
                   if (!pwModal) return;
-                  await api.userSetPassword(pwModal.id, pwValue);
-                  setPwModal(null);
-                  setPwValue("");
+                  try {
+                    setActionError(null);
+                    await api.userSetPassword(pwModal.id, pwValue);
+                    setPwModal(null);
+                    setPwValue("");
+                  } catch (e: any) {
+                    setActionError(String(e?.message || "Failed to set password"));
+                  }
                 }}
               >
                 Set password
@@ -272,13 +304,18 @@ export function UsersPage() {
                 disabled={!identityLink.issuer.trim() || !identityLink.subject.trim() || !idModal}
                 onClick={async () => {
                   if (!idModal) return;
-                  await api.userIdentityLink(idModal.id, {
-                    issuer: identityLink.issuer.trim(),
-                    subject: identityLink.subject.trim(),
-                  });
-                  const r = await api.userIdentities(idModal.id);
-                  setIdentities(r.identities as any);
-                  setIdentityLink({ issuer: "", subject: "" });
+                  try {
+                    setActionError(null);
+                    await api.userIdentityLink(idModal.id, {
+                      issuer: identityLink.issuer.trim(),
+                      subject: identityLink.subject.trim(),
+                    });
+                    const r = await api.userIdentities(idModal.id);
+                    setIdentities(r.identities as any);
+                    setIdentityLink({ issuer: "", subject: "" });
+                  } catch (e: any) {
+                    setActionError(String(e?.message || "Failed to link identity"));
+                  }
                 }}
               >
                 Link identity
@@ -320,10 +357,15 @@ export function UsersPage() {
                       iconName="close"
                       ariaLabel="Unlink identity"
                       onClick={async () => {
-                        await api.identityUnlink(i.id);
-                        if (idModal) {
-                          const r = await api.userIdentities(idModal.id);
-                          setIdentities(r.identities as any);
+                        try {
+                          setActionError(null);
+                          await api.identityUnlink(i.id);
+                          if (idModal) {
+                            const r = await api.userIdentities(idModal.id);
+                            setIdentities(r.identities as any);
+                          }
+                        } catch (e: any) {
+                          setActionError(String(e?.message || "Failed to unlink identity"));
                         }
                       }}
                     />

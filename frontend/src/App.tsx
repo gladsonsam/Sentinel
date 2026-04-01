@@ -6,7 +6,7 @@ import { useWebSocket } from "./hooks/useWebSocket";
 import { useAgents } from "./hooks/useAgents";
 import { useTheme } from "./hooks/useTheme";
 import { useNotifications } from "./hooks/useNotifications";
-import { api, apiUrl } from "./lib/api";
+import { api, apiUrl, setDashboardCsrfToken } from "./lib/api";
 import type { Agent, AgentInfo, AgentLiveStatus, TabKey } from "./lib/types";
 import type { NotificationItem } from "./hooks/useNotifications";
 import type { ThemeMode } from "./hooks/useTheme";
@@ -355,14 +355,26 @@ export function App() {
       if (response.ok) {
         fetch(apiUrl("/me"), { credentials: "include" })
           .then((r) => (r.ok ? r.json() : null))
-          .then((data) => setMe(data))
-          .catch(() => setMe(null));
+          .then((data) => {
+            setMe(data);
+            if (data && typeof data.csrf_token === "string" && data.csrf_token.length > 0) {
+              setDashboardCsrfToken(data.csrf_token);
+            } else {
+              setDashboardCsrfToken(null);
+            }
+          })
+          .catch(() => {
+            setMe(null);
+            setDashboardCsrfToken(null);
+          });
       } else {
         setMe(null);
+        setDashboardCsrfToken(null);
       }
     } catch {
       setAuthenticated(false);
       setMe(null);
+      setDashboardCsrfToken(null);
     }
   }, []);
 
@@ -508,6 +520,7 @@ export function App() {
     } catch (err) {
       console.error("Logout error:", err);
     }
+    setDashboardCsrfToken(null);
     setAuthenticated(false);
   };
 

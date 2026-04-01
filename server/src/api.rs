@@ -82,7 +82,8 @@ async fn me(Extension(user): Extension<auth::AuthUser>) -> Response {
     Json(serde_json::json!({
         "id": user.user_id,
         "username": user.username,
-        "role": user.role
+        "role": user.role,
+        "csrf_token": user.csrf_token,
     }))
     .into_response()
 }

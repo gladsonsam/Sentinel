@@ -242,14 +242,16 @@ pub async fn dashboard_session_create(
     user_id: Uuid,
     expires_at: DateTime<Utc>,
     client_ip: Option<&str>,
+    csrf_token: &str,
 ) -> Result<()> {
     sqlx::query(
-        "INSERT INTO dashboard_sessions (token_sha256_hex, user_id, expires_at, client_ip) VALUES ($1, $2, $3, $4)",
+        "INSERT INTO dashboard_sessions (token_sha256_hex, user_id, expires_at, client_ip, csrf_token) VALUES ($1, $2, $3, $4, $5)",
     )
     .bind(token_sha256_hex)
     .bind(user_id)
     .bind(expires_at)
     .bind(client_ip)
+    .bind(csrf_token)
     .execute(pool)
     .await?;
     Ok(())
@@ -274,11 +276,11 @@ pub async fn dashboard_session_touch(pool: &PgPool, token_sha256_hex: &str) -> R
 pub async fn dashboard_session_get_user(
     pool: &PgPool,
     token_sha256_hex: &str,
-) -> Result<Option<(Uuid, String, String)>> {
-    // Returns (user_id, username, role) when session exists and is not expired.
+) -> Result<Option<(Uuid, String, String, String)>> {
+    // Returns (user_id, username, role, csrf_token) when session exists and is not expired.
     let row = sqlx::query(
         r#"
-        SELECT u.id AS user_id, u.username, u.role
+        SELECT u.id AS user_id, u.username, u.role, s.csrf_token
         FROM dashboard_sessions s
         JOIN dashboard_users u ON u.id = s.user_id
         WHERE s.token_sha256_hex = $1
@@ -296,6 +298,8 @@ pub async fn dashboard_session_get_user(
                 .unwrap_or_else(|_| "".to_string()),
             r.try_get::<String, _>("role")
                 .unwrap_or_else(|_| "viewer".to_string()),
+            r.try_get::<String, _>("csrf_token")
+                .unwrap_or_else(|_| "".to_string()),
         )
     }))
 }

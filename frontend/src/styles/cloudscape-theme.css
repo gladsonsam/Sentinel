@@ -373,24 +373,38 @@
   /* Ensure the login card is centered even if any parent layout adds offsets. */
   position: fixed;
   inset: 0;
-  width: 100vw;
+  box-sizing: border-box;
+  /* Avoid 100vw (scrollbar gutter) and keep gutters inside the flex box so the card
+     width is relative to the same box — 92vw + Cloudscape padding used to overflow
+     and push the card off-center on narrow viewports. */
+  width: 100%;
+  max-width: 100%;
   min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-top: max(12px, env(safe-area-inset-top, 0px));
+  padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
   /* Force Sentinel dark-blue scheme (Cloudscape token was near-black here). */
   background:
     radial-gradient(1100px 700px at 35% 30%, rgba(9, 114, 211, 0.18), rgba(9, 114, 211, 0) 55%),
     radial-gradient(900px 600px at 70% 65%, rgba(91, 141, 239, 0.14), rgba(91, 141, 239, 0) 60%),
     linear-gradient(180deg, #0b1930 0%, #0a1324 55%, #090f1c 100%);
-  overflow: visible;
+  overflow: auto;
 }
 
 .sentinel-auth-card {
-  --sentinel-auth-size: min(460px, 92vw);
-  width: var(--sentinel-auth-size);
+  width: 100%;
+  max-width: 460px;
+  min-width: 0;
+  flex-shrink: 0;
+  margin-inline: auto;
   height: auto;
-  max-height: calc(100vh - 48px);
+  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
   border-radius: 16px;
   border: 1px solid var(--awsui-color-border-container-top);
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.25);

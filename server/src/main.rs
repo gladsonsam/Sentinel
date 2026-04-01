@@ -24,7 +24,8 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use axum::http::header::HeaderValue;
+use axum::http::header::{self, HeaderValue};
+use axum::http::{HeaderName, Method};
 use axum::middleware::Next;
 use axum::response::Response;
 use axum::response::IntoResponse;
@@ -271,6 +272,18 @@ fn cors_layer_from_env() -> CorsLayer {
     CorsLayer::new()
         .allow_origin(origins)
         .allow_credentials(true)
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([
+            header::CONTENT_TYPE,
+            HeaderName::from_static("x-csrf-token"),
+        ])
 }
 
 /// Read config either from `NAME` or `NAME_FILE` (Docker secrets pattern).

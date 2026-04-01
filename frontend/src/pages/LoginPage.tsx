@@ -7,7 +7,7 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
 import { AuthLayout } from "../layouts/AuthLayout";
-import { apiUrl } from "../lib/api";
+import { apiUrl, setDashboardCsrfToken } from "../lib/api";
 
 interface LoginPageProps {
   onLoginSuccess: () => void;
@@ -51,6 +51,12 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
       });
 
       if (response.ok) {
+        const okBody = (await response.json().catch(() => ({}))) as {
+          csrf_token?: string;
+        };
+        if (typeof okBody.csrf_token === "string" && okBody.csrf_token.length > 0) {
+          setDashboardCsrfToken(okBody.csrf_token);
+        }
         onLoginSuccess();
       } else {
         const data = (await response.json().catch(() => ({}))) as {

@@ -10,6 +10,9 @@
 //! 2. Every protected request checks the cookie token hash against the DB and
 //!    injects the current user into request extensions.
 //! 3. `POST /api/logout` deletes the DB session and clears the cookie.
+//! 4. Mutating requests (`POST`/`PUT`/`PATCH`/`DELETE`) on protected routes require
+//!    header `X-CSRF-Token` matching the per-session value stored in Postgres (also
+//!    returned in `POST /api/login` and `GET /api/me`). WebSocket upgrades stay `GET`-only.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -19,11 +22,13 @@ use std::net::SocketAddr;
 use anyhow::anyhow;
 use axum::{
     extract::{ConnectInfo, Request, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
     Json,
 };
+use rand::RngCore;
+use subtle::ConstantTimeEq;
 use axum::response::Redirect;
 use serde::Deserialize;
 use tracing::{info, warn};
@@ -42,6 +47,50 @@ const MAX_LOGIN_FAILURES_PER_WINDOW: usize = 10;
 const OIDC_STATE_COOKIE: &str = "oidc_state";
 const OIDC_NONCE_COOKIE: &str = "oidc_nonce";
 const OIDC_RETURN_COOKIE: &str = "oidc_return_to";
+
+const CSRF_HEADER: &str = "x-csrf-token";
+
+fn new_dashboard_csrf_token() -> String {
+    let mut b = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut b);
+    b.iter().map(|x| format!("{:02x}", x)).collect()
+}
+
+fn csrf_header_matches(expected: &str, supplied: Option<&str>) -> bool {
+    let Some(s) = supplied else {
+        return false;
+    };
+    let a = expected.as_bytes();
+    let b = s.as_bytes();
+    if a.len() != b.len() {
+        return false;
+    }
+    a.ct_eq(b).into()
+}
+
+fn request_requires_csrf_token(method: &Method) -> bool {
+    matches!(
+        method,
+        &Method::POST | &Method::PUT | &Method::PATCH | &Method::DELETE
+    )
+}
+
+fn sanitize_return_to(raw: &str) -> &str {
+    let t = raw.trim();
+    if t.is_empty() {
+        return "/";
+    }
+    // Only allow relative paths to avoid open-redirects.
+    // Reject protocol-relative URLs and anything containing a scheme.
+    if !t.starts_with('/') || t.starts_with("//") || t.contains("://") {
+        return "/";
+    }
+    // Keep it simple: don't allow control chars.
+    if t.chars().any(|c| c.is_control()) {
+        return "/";
+    }
+    t
+}
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 
@@ -74,7 +123,29 @@ pub async fn require_auth(
 
     let token_hash = db::sha256_hex_bytes(token.as_bytes());
     let user = match db::dashboard_session_get_user(&state.db, &token_hash).await {
-        Ok(Some((user_id, username, role))) => AuthUser { user_id, username, role },
+        Ok(Some((user_id, username, role, csrf_token))) => {
+            if request_requires_csrf_token(req.method()) {
+                let supplied = req
+                    .headers()
+                    .get(CSRF_HEADER)
+                    .and_then(|v| v.to_str().ok());
+                if !csrf_header_matches(&csrf_token, supplied) {
+                    return (
+                        StatusCode::FORBIDDEN,
+                        Json(serde_json::json!({
+                            "error": "CSRF token missing or invalid"
+                        })),
+                    )
+                        .into_response();
+                }
+            }
+            AuthUser {
+                user_id,
+                username,
+                role,
+                csrf_token,
+            }
+        }
         Ok(None) => {
             return (
                 StatusCode::UNAUTHORIZED,
@@ -310,8 +381,18 @@ pub async fn login(
     // New random session token; store only its hash in the DB.
     let token = uuid::Uuid::new_v4().to_string();
     let token_hash = db::sha256_hex_bytes(token.as_bytes());
+    let csrf_token = new_dashboard_csrf_token();
     let expires_at = chrono::Utc::now() + chrono::Duration::days(1);
-    if let Err(e) = db::dashboard_session_create(&state.db, &token_hash, user_id, expires_at, ip_ref).await {
+    if let Err(e) = db::dashboard_session_create(
+        &state.db,
+        &token_hash,
+        user_id,
+        expires_at,
+        ip_ref,
+        &csrf_token,
+    )
+    .await
+    {
         return crate::error::internal_error(e);
     }
 
@@ -355,7 +436,7 @@ pub async fn login(
 
     (
         [(header::SET_COOKIE, HeaderValue::from_str(&cookie).unwrap())],
-        Json(serde_json::json!({ "ok": true })),
+        Json(serde_json::json!({ "ok": true, "csrf_token": csrf_token })),
     )
         .into_response()
 }
@@ -494,8 +575,7 @@ pub async fn oidc_login(
     let return_to = headers
         .get("x-sentinel-return-to")
         .and_then(|v| v.to_str().ok())
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
+        .map(sanitize_return_to)
         .unwrap_or("/");
 
     let forwarded_proto = headers
@@ -735,8 +815,18 @@ pub async fn oidc_callback(
     // Create a dashboard session cookie like local login.
     let token_plain = uuid::Uuid::new_v4().to_string();
     let token_hash = db::sha256_hex_bytes(token_plain.as_bytes());
+    let csrf_token = new_dashboard_csrf_token();
     let expires_at = chrono::Utc::now() + chrono::Duration::days(1);
-    if let Err(e) = db::dashboard_session_create(&state.db, &token_hash, user_id, expires_at, ip_ref).await {
+    if let Err(e) = db::dashboard_session_create(
+        &state.db,
+        &token_hash,
+        user_id,
+        expires_at,
+        ip_ref,
+        &csrf_token,
+    )
+    .await
+    {
         return crate::error::internal_error(e);
     }
 
@@ -770,6 +860,8 @@ pub struct AuthUser {
     pub user_id: uuid::Uuid,
     pub username: String,
     pub role: String, // 'admin' | 'operator' | 'viewer'
+    /// Per-session secret; sent to the SPA for `X-CSRF-Token` on mutating requests.
+    pub csrf_token: String,
 }
 
 impl AuthUser {

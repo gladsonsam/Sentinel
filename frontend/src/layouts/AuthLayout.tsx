@@ -7,11 +7,7 @@ interface AuthLayoutProps {
 
 export function AuthLayout({ children }: AuthLayoutProps) {
   return (
-    <Box
-      padding={{ horizontal: "l" }}
-      className="sentinel-auth-shell"
-      textAlign="center"
-    >
+    <Box className="sentinel-auth-shell" textAlign="center">
       <Box className="sentinel-auth-card">
         <Box className="sentinel-auth-card-content">
           <Box className="sentinel-auth-card-brand">

@@ -28,6 +28,18 @@ export function apiUrl(path: string): string {
   return buildApiUrl(path);
 }
 
+/** Per-tab CSRF secret from login or `GET /api/me`; sent as `X-CSRF-Token` on mutating requests. */
+let dashboardCsrfToken: string | null = null;
+
+export function setDashboardCsrfToken(token: string | null): void {
+  dashboardCsrfToken = token;
+}
+
+function csrfHeaders(): Record<string, string> {
+  if (!dashboardCsrfToken) return {};
+  return { "X-CSRF-Token": dashboardCsrfToken };
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(apiUrl(path), { credentials: "include" });
   if (!res.ok) throw new Error(`HTTP ${res.status} – ${path}`);
@@ -37,7 +49,7 @@ async function get<T>(path: string): Promise<T> {
 async function putJson<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(apiUrl(path), {
     method: "PUT",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...csrfHeaders() },
     body: JSON.stringify(body),
     credentials: "include",
   });
@@ -51,6 +63,7 @@ async function putJson<T>(path: string, body: unknown): Promise<T> {
 async function postEmpty<T>(path: string): Promise<T> {
   const res = await fetch(apiUrl(path), {
     method: "POST",
+    headers: { ...csrfHeaders() },
     credentials: "include",
   });
   if (!res.ok) {
@@ -63,7 +76,7 @@ async function postEmpty<T>(path: string): Promise<T> {
 async function postJsonRes<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(apiUrl(path), {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...csrfHeaders() },
     body: JSON.stringify(body),
     credentials: "include",
   });
@@ -77,6 +90,7 @@ async function postJsonRes<T>(path: string, body: unknown): Promise<T> {
 async function delJson<T>(path: string): Promise<T> {
   const res = await fetch(apiUrl(path), {
     method: "DELETE",
+    headers: { ...csrfHeaders() },
     credentials: "include",
   });
   if (!res.ok) {
@@ -111,11 +125,16 @@ export const api = {
       const body = (await res.json().catch(() => ({}))) as { error?: string };
       throw new Error(body.error ?? "Login failed");
     }
+    const data = (await res.json().catch(() => ({}))) as { csrf_token?: string };
+    if (typeof data.csrf_token === "string" && data.csrf_token.length > 0) {
+      setDashboardCsrfToken(data.csrf_token);
+    }
   },
 
   /** Clear the current session cookie. */
   logout: async (): Promise<void> => {
     await fetch(apiUrl("/logout"), { method: "POST", credentials: "include" });
+    setDashboardCsrfToken(null);
   },
 
   me: (): Promise<{ id: string; username: string; role: "admin" | "operator" | "viewer" }> =>
@@ -213,6 +232,7 @@ export const api = {
     const qs = p.toString();
     const res = await fetch(apiUrl(`/agents/${id}/wake${qs ? `?${qs}` : ""}`), {
       method: "POST",
+      headers: { ...csrfHeaders() },
       credentials: "include",
     });
     const body = (await res.json().catch(() => ({}))) as {
