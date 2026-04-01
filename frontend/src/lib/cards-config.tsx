@@ -10,6 +10,9 @@ export interface AgentCardItem extends Agent {
   liveStatus?: AgentLiveStatus;
   agentInfo?: AgentInfo | null;
   agentInfoReceivedAtMs?: number;
+  fallbackLastWindow?: string;
+  fallbackUptimeSecs?: number;
+  fallbackUptimeReceivedAtMs?: number;
 }
 
 const formatTimestamp = (timestamp: string | null | undefined) => {
@@ -32,10 +35,10 @@ export function createCardDefinitions(
     return `${mins}m`;
   };
   const liveUptimeSecs = (item: AgentCardItem) => {
-    const base = item.agentInfo?.uptime_secs;
+    const base = item.agentInfo?.uptime_secs ?? item.fallbackUptimeSecs;
     if (base == null) return undefined;
     if (!item.online) return base;
-    const receivedAt = item.agentInfoReceivedAtMs ?? 0;
+    const receivedAt = item.agentInfoReceivedAtMs ?? item.fallbackUptimeReceivedAtMs ?? 0;
     if (!receivedAt) return base;
     const extra = Math.max(0, Math.floor((nowMs - receivedAt) / 1000));
     return base + extra;
@@ -80,19 +83,32 @@ export function createCardDefinitions(
       ),
     },
     {
-      id: "window",
-      header: "Last window",
-      content: (item) => (item.online ? item.liveStatus?.window || "—" : "—"),
-    },
-    {
-      id: "uptime",
-      header: "Uptime",
-      content: (item) => (item.online ? formatUptime(liveUptimeSecs(item)) : "—"),
-    },
-    {
-      id: "last-seen",
-      header: "Last seen",
-      content: (item) => (!item.online ? formatTimestamp(item.last_seen) : "—"),
+      id: "details",
+      header: "Details",
+      content: (item) => {
+        if (item.online) {
+          const lastWindow = item.liveStatus?.window || item.fallbackLastWindow || "—";
+          const uptime = formatUptime(liveUptimeSecs(item));
+          return (
+            <SpaceBetween size="xs">
+              <Box>
+                <Box variant="awsui-key-label">Last window</Box>
+                <Box>{lastWindow}</Box>
+              </Box>
+              <Box>
+                <Box variant="awsui-key-label">Uptime</Box>
+                <Box>{uptime}</Box>
+              </Box>
+            </SpaceBetween>
+          );
+        }
+        return (
+          <Box>
+            <Box variant="awsui-key-label">Last seen</Box>
+            <Box>{formatTimestamp(item.last_seen)}</Box>
+          </Box>
+        );
+      },
     },
     {
       id: "agent-id",
@@ -105,9 +121,7 @@ export function createCardDefinitions(
 
 export const VISIBLE_CONTENT_OPTIONS: CollectionPreferencesProps.VisibleContentOption[] = [
   { label: "Status", id: "status" },
-  { label: "Last window", id: "window" },
-  { label: "Uptime", id: "uptime" },
-  { label: "Last seen", id: "last-seen" },
+  { label: "Details", id: "details" },
   { label: "Agent ID", id: "agent-id" },
 ];
 
@@ -119,5 +133,5 @@ export const PAGE_SIZE_OPTIONS: CollectionPreferencesProps.PageSizeOption[] = [
 
 export const DEFAULT_PREFERENCES = {
   pageSize: 12,
-  visibleContent: ["status", "window", "uptime", "last-seen"],
+  visibleContent: ["status", "details", "agent-id"],
 };
