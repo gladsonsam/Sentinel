@@ -330,6 +330,22 @@ async fn user_set_role(
         Ok(r) => r,
         Err(msg) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response(),
     };
+
+    // Safety: do not allow demoting the last remaining admin.
+    if role != "admin" {
+        let is_target_admin = db::dashboard_user_is_admin(&s.db, id).await.unwrap_or(false);
+        if is_target_admin {
+            let admin_count = db::dashboard_admin_count(&s.db).await.unwrap_or(0);
+            if admin_count <= 1 {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": "Cannot demote the last admin user" })),
+                )
+                    .into_response();
+            }
+        }
+    }
+
     let ip = audit_ip(&headers, addr);
     match db::dashboard_user_set_role(&s.db, id, &role).await {
         Ok(()) => {
@@ -362,6 +378,20 @@ async fn user_delete(
     if id == user.user_id {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "cannot delete your own user" }))).into_response();
     }
+
+    // Safety: do not allow deleting the last remaining admin.
+    let is_target_admin = db::dashboard_user_is_admin(&s.db, id).await.unwrap_or(false);
+    if is_target_admin {
+        let admin_count = db::dashboard_admin_count(&s.db).await.unwrap_or(0);
+        if admin_count <= 1 {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": "Cannot delete the last admin user" })),
+            )
+                .into_response();
+        }
+    }
+
     let ip = audit_ip(&headers, addr);
     match db::dashboard_user_delete(&s.db, id).await {
         Ok(()) => {

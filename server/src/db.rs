@@ -134,6 +134,22 @@ pub async fn dashboard_user_count(pool: &PgPool) -> Result<i64> {
     Ok(n)
 }
 
+pub async fn dashboard_admin_count(pool: &PgPool) -> Result<i64> {
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dashboard_users WHERE role = 'admin'")
+        .fetch_one(pool)
+        .await?;
+    Ok(n)
+}
+
+pub async fn dashboard_user_is_admin(pool: &PgPool, user_id: Uuid) -> Result<bool> {
+    let v: Option<String> = sqlx::query_scalar("SELECT role FROM dashboard_users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?
+        .flatten();
+    Ok(v.as_deref() == Some("admin"))
+}
+
 pub async fn dashboard_user_get_by_username(
     pool: &PgPool,
     username: &str,
