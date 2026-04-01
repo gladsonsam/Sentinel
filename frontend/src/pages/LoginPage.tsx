@@ -89,11 +89,13 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
           }
         >
           <SpaceBetween size="l">
-            {error && (
-              <Alert type="error" dismissible onDismiss={() => setError(null)}>
-                {error}
-              </Alert>
-            )}
+            <Box className="sentinel-auth-error-slot">
+              {error && (
+                <Alert type="error" dismissible onDismiss={() => setError(null)}>
+                  {error}
+                </Alert>
+              )}
+            </Box>
 
             <FormField
               label="Password"
