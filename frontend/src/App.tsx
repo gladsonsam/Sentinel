@@ -76,7 +76,9 @@ function OverviewRoute({
   liveStatus,
   agentInfo,
   agentInfoReceivedAtMs,
+  loadingAgents,
   onSelectAgent,
+  onOpenScreen,
   checkAuth,
   runBatchWake,
   runBatchAction,
@@ -92,7 +94,9 @@ function OverviewRoute({
   liveStatus: Record<string, AgentLiveStatus>;
   agentInfo: Record<string, AgentInfo | null>;
   agentInfoReceivedAtMs: Record<string, number>;
+  loadingAgents: boolean;
   onSelectAgent: (agentId: string) => void;
+  onOpenScreen: (agentId: string) => void;
   checkAuth: () => void;
   runBatchWake: (ids: string[]) => Promise<void>;
   runBatchAction: (agentIds: string[], cmdType: "RestartHost" | "ShutdownHost") => void;
@@ -111,7 +115,9 @@ function OverviewRoute({
         liveStatus={liveStatus}
         agentInfo={agentInfo}
         agentInfoReceivedAtMs={agentInfoReceivedAtMs}
+        loadingAgents={loadingAgents}
         onSelectAgent={onSelectAgent}
+        onOpenScreen={onOpenScreen}
         onRefresh={checkAuth}
         onBatchWake={(ids) => void runBatchWake(ids)}
         onBatchRestart={(agentIds) => {
@@ -291,6 +297,7 @@ function LogsRoute({
 
 export function App() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
+  const [wsInitReceived, setWsInitReceived] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
@@ -329,6 +336,12 @@ export function App() {
 
   const wsEnabled = authenticated === true;
 
+  useEffect(() => {
+    if (authenticated !== true) {
+      setWsInitReceived(false);
+    }
+  }, [authenticated]);
+
   const { send } = useWebSocket({
     enabled: wsEnabled,
     onMessage: (event: any) => {
@@ -341,6 +354,7 @@ export function App() {
             });
             setAllAgents(agentMap);
           }
+          setWsInitReceived(true);
           break;
 
         case "agent_connected":
@@ -465,6 +479,10 @@ export function App() {
     navigate(`/agents/${agentId}?tab=activity`);
   };
 
+  const handleOpenScreen = (agentId: string) => {
+    navigate(`/agents/${agentId}?tab=screen`);
+  };
+
   const handleOpenSettings = () => {
     navigate("/settings", { state: { from: location.pathname + location.search } satisfies NavState });
   };
@@ -564,7 +582,9 @@ export function App() {
             liveStatus={liveStatus}
             agentInfo={agentInfo}
             agentInfoReceivedAtMs={agentInfoReceivedAtMs}
+            loadingAgents={!wsInitReceived}
             onSelectAgent={handleSelectAgent}
+            onOpenScreen={handleOpenScreen}
             checkAuth={checkAuth}
             runBatchWake={runBatchWake}
             runBatchAction={runBatchAction}

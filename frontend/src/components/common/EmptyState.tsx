@@ -1,6 +1,7 @@
 import Container from "@cloudscape-design/components/container";
 // import Header from "@cloudscape-design/components/header";
 import Box from "@cloudscape-design/components/box";
+import Spinner from "@cloudscape-design/components/spinner";
 
 interface EmptyStateProps {
   title: string;
@@ -33,6 +34,16 @@ export function NoAgentsState() {
     <EmptyState
       title="No agents connected"
       description="Connect an agent to start monitoring. Configure the agent with your server URL and credentials."
+    />
+  );
+}
+
+export function LoadingAgentsState() {
+  return (
+    <EmptyState
+      title="Loading agents…"
+      description="Waiting for the server to send the initial agent list."
+      icon={<Spinner size="large" />}
     />
   );
 }

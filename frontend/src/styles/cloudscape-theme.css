@@ -188,6 +188,30 @@
   justify-content: flex-start;
 }
 
+.sentinel-agent-card-actions-bottom-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.sentinel-qa-icon {
+  appearance: none;
+  border: 1px solid var(--awsui-color-border-divider-default);
+  background: var(--awsui-color-background-container-content);
+  color: var(--awsui-color-text-body-default);
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.sentinel-qa-icon:hover {
+  background: color-mix(in srgb, var(--awsui-color-background-container-content) 90%, #ffffff 10%);
+}
+
 .sentinel-status-online {
   color: var(--status-online);
 }

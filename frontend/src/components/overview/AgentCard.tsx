@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import Cards from "@cloudscape-design/components/cards";
 import Box from "@cloudscape-design/components/box";
+import SegmentedControl from "@cloudscape-design/components/segmented-control";
 import TextFilter from "@cloudscape-design/components/text-filter";
 import Pagination from "@cloudscape-design/components/pagination";
 import Modal from "@cloudscape-design/components/modal";
@@ -22,6 +23,7 @@ interface AgentCardProps {
   agentInfo: Record<string, AgentInfo | null>;
   agentInfoReceivedAtMs: Record<string, number>;
   onSelectAgent: (agentId: string) => void;
+  onOpenScreen: (agentId: string) => void;
   onRefresh: () => void;
   onBatchWake: (agentIds: string[]) => void;
   onBulkScript: (agentIds: string[]) => void;
@@ -35,6 +37,7 @@ export function AgentCard({
   agentInfo,
   agentInfoReceivedAtMs,
   onSelectAgent,
+  onOpenScreen,
   onRefresh,
   onBatchWake,
   onBulkScript,
@@ -45,6 +48,7 @@ export function AgentCard({
   const [fallbackLastWindow, setFallbackLastWindow] = useState<Record<string, string>>({});
   const [fallbackUptime, setFallbackUptime] = useState<Record<string, { secs: number; receivedAtMs: number }>>({});
   const [powerModal, setPowerModal] = useState<null | { agentId: string }>(null);
+  const [statusFilter, setStatusFilter] = useState<"all" | "connected" | "disconnected" | "afk">("all");
 
   // Dev-friendly defaults: avoid persisting card preferences in localStorage.
   const visibleSections = useMemo(
@@ -118,10 +122,11 @@ export function AgentCard({
     () =>
       createCardDefinitions(
         onSelectAgent,
+        onOpenScreen,
         (agentId) => setPowerModal({ agentId }),
         nowMs
       ),
-    [onSelectAgent, nowMs]
+    [onSelectAgent, onOpenScreen, nowMs]
   );
 
   const { items, filteredItemsCount, filterProps, collectionProps, paginationProps } = useCollection(
@@ -131,9 +136,22 @@ export function AgentCard({
       filteringFunction: (item, filteringText) => {
         const searchText = filteringText.toLowerCase();
         const detailsWindow = (item.liveStatus?.window || item.fallbackLastWindow || "").toLowerCase();
+        const hostname = (item.agentInfo?.hostname || "").toLowerCase();
+
+        const statusOk =
+          statusFilter === "all"
+            ? true
+            : statusFilter === "connected"
+              ? item.online
+              : statusFilter === "disconnected"
+                ? !item.online
+                : item.online && item.liveStatus?.activity === "afk";
+
+        if (!statusOk) return false;
         return (
           item.name.toLowerCase().includes(searchText) ||
           item.id.toLowerCase().includes(searchText) ||
+          hostname.includes(searchText) ||
           (detailsWindow.includes(searchText) ?? false)
         );
       },
@@ -180,21 +198,37 @@ export function AgentCard({
           </Box>
         }
         filter={
-          <TextFilter
-            {...filterProps}
-            countText={`${filteredItemsCount} matches`}
-            filteringPlaceholder="Find agents by name, window, or uptime"
-          />
+          <SpaceBetween size="s">
+            <SegmentedControl
+              label="Filters"
+              selectedId={statusFilter}
+              options={[
+                { id: "all", text: "All" },
+                { id: "connected", text: "Connected" },
+                { id: "disconnected", text: "Disconnected" },
+                { id: "afk", text: "AFK" },
+              ]}
+              onChange={({ detail }) =>
+                setStatusFilter(detail.selectedId as typeof statusFilter)
+              }
+            />
+            <TextFilter
+              {...filterProps}
+              countText={`${filteredItemsCount} matches`}
+              filteringPlaceholder="Search agents…"
+            />
+          </SpaceBetween>
         }
         pagination={<Pagination {...paginationProps} />}
         empty={
-          filterProps.filteringText ? (
+          filterProps.filteringText || statusFilter !== "all" ? (
             <TableNoMatchState
-              onClearFilter={() =>
+              onClearFilter={() => {
+                setStatusFilter("all");
                 filterProps.onChange({
                   detail: { filteringText: "" },
                 } as any)
-              }
+              }}
             />
           ) : (
             <TableEmptyState

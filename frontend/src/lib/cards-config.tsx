@@ -6,6 +6,7 @@ import Link from "@cloudscape-design/components/link";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Button from "@cloudscape-design/components/button";
 import { isAgentIconKey, AGENT_ICON_MAP } from "./agentIcons";
+import { MonitorPlay } from "lucide-react";
 
 export interface AgentCardItem extends Agent {
   liveStatus?: AgentLiveStatus;
@@ -24,6 +25,7 @@ const formatTimestamp = (timestamp: string | null | undefined) => {
 
 export function createCardDefinitions(
   onSelectAgent: (agentId: string) => void,
+  onOpenScreen: (agentId: string) => void,
   onPowerAction: (agentId: string) => void,
   nowMs: number
 ): CardsProps.CardDefinition<AgentCardItem> {
@@ -109,12 +111,24 @@ export function createCardDefinitions(
               </div>
 
               <div className="sentinel-agent-card-actions-bottom">
-                <Button
-                  iconName={item.online ? "status-negative" : "refresh"}
-                  ariaLabel={item.online ? "Shutdown" : "Wake"}
-                  variant="icon"
-                  onClick={() => onPowerAction(item.id)}
-                />
+                <div className="sentinel-agent-card-actions-bottom-row">
+                  {item.online && (
+                    <button
+                      type="button"
+                      className="sentinel-qa-icon"
+                      aria-label="Open screen"
+                      onClick={() => onOpenScreen(item.id)}
+                    >
+                      <MonitorPlay size={18} />
+                    </button>
+                  )}
+                  <Button
+                    iconName={item.online ? "status-negative" : "refresh"}
+                    ariaLabel={item.online ? "Shutdown" : "Wake"}
+                    variant="icon"
+                    onClick={() => onPowerAction(item.id)}
+                  />
+                </div>
               </div>
             </div>
           );

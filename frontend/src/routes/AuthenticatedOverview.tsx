@@ -8,7 +8,9 @@ interface Props {
   liveStatus: Record<string, AgentLiveStatus>;
   agentInfo: Record<string, AgentInfo | null>;
   agentInfoReceivedAtMs: Record<string, number>;
+  loadingAgents: boolean;
   onSelectAgent: (agentId: string) => void;
+  onOpenScreen: (agentId: string) => void;
   onRefresh: () => void;
   onBatchWake: (agentIds: string[]) => void;
   onBatchRestart: (agentIds: string[]) => void;
@@ -29,7 +31,9 @@ export function AuthenticatedOverview({
   liveStatus,
   agentInfo,
   agentInfoReceivedAtMs,
+  loadingAgents,
   onSelectAgent,
+  onOpenScreen,
   onRefresh,
   onBatchWake,
   onBatchRestart,
@@ -51,7 +55,9 @@ export function AuthenticatedOverview({
           liveStatus={liveStatus}
           agentInfo={agentInfo}
           agentInfoReceivedAtMs={agentInfoReceivedAtMs}
+          loadingAgents={loadingAgents}
           onSelectAgent={onSelectAgent}
+          onOpenScreen={onOpenScreen}
           onRefresh={onRefresh}
           onBatchWake={onBatchWake}
           onBatchRestart={onBatchRestart}
