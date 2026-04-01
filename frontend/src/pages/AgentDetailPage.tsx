@@ -352,7 +352,6 @@ export function AgentDetailPage({
 
         <PageHeader
           agent={agent}
-          onBackToOverview={onBackToOverview}
           onOpenHelp={onOpenHelp}
           onRunAction={runAgentAction}
         />

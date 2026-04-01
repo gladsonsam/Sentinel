@@ -128,6 +128,7 @@ export function UsersPage() {
                   variant="normal"
                   disabled={!canManage}
                   items={rowActions()}
+                  expandToViewport
                   onItemClick={async ({ detail }) => {
                     if (!canManage) return;
                     const id = u.id;
@@ -298,16 +299,26 @@ export function UsersPage() {
           {identities && identities.length > 0 ? (
             <Table
               items={identities as any}
+              wrapLines
               columnDefinitions={[
-                { id: "issuer", header: "Issuer", cell: (i: any) => i.issuer },
-                { id: "subject", header: "Subject", cell: (i: any) => i.subject },
-                { id: "email", header: "Email", cell: (i: any) => i.email ?? "—" },
-                { id: "last", header: "Last login", cell: (i: any) => new Date(i.last_login_at).toLocaleString() },
+                {
+                  id: "issuer",
+                  header: "Issuer",
+                  cell: (i: any) => <Box className="sentinel-wrap-anywhere">{i.issuer}</Box>,
+                },
+                {
+                  id: "subject",
+                  header: "Subject",
+                  cell: (i: any) => <Box className="sentinel-wrap-anywhere">{i.subject}</Box>,
+                },
                 {
                   id: "unlink",
                   header: "",
                   cell: (i: any) => (
                     <Button
+                      variant="icon"
+                      iconName="close"
+                      ariaLabel="Unlink identity"
                       onClick={async () => {
                         await api.identityUnlink(i.id);
                         if (idModal) {
@@ -315,9 +326,7 @@ export function UsersPage() {
                           setIdentities(r.identities as any);
                         }
                       }}
-                    >
-                      Unlink
-                    </Button>
+                    />
                   ),
                 },
               ]}

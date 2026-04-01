@@ -158,6 +158,8 @@ function AgentDetailRoute({
   handleLogout,
   openSettings,
   openLogs,
+  onOpenUsers,
+  currentUser,
   notifications,
   removeNotification,
   toolsOpen,
@@ -173,6 +175,8 @@ function AgentDetailRoute({
   handleLogout: () => Promise<void>;
   openSettings: () => void;
   openLogs: () => void;
+  onOpenUsers: () => void;
+  currentUser: { id: string; username: string; role: "admin" | "operator" | "viewer" } | null;
   notifications: NotificationItem[];
   removeNotification: (id: string) => void;
   toolsOpen: boolean;
@@ -218,11 +222,13 @@ function AgentDetailRoute({
         onLogout={() => void handleLogout()}
         onShowPreferences={openSettings}
         onOpenActivityLog={openLogs}
+        onOpenUsers={onOpenUsers}
         onGoHome={() => navigate("/")}
         notifications={notifications}
         onDismissNotification={removeNotification}
         toolsOpen={toolsOpen}
         onToolsChange={setToolsOpen}
+        currentUser={currentUser ? { username: currentUser.username, role: currentUser.role } : null}
       />
     </Suspense>
   );
@@ -644,6 +650,8 @@ export function App() {
             handleLogout={handleLogout}
             openSettings={handleOpenSettings}
             openLogs={handleOpenLogs}
+            onOpenUsers={() => navigate("/users")}
+            currentUser={me}
             notifications={notifications}
             removeNotification={removeNotification}
             toolsOpen={toolsOpen}

@@ -12,11 +12,7 @@ import Table from "@cloudscape-design/components/table";
 import Box from "@cloudscape-design/components/box";
 import { api } from "../lib/api";
 import type { ThemeMode } from "../hooks/useTheme";
-import {
-  getServerSettings,
-  saveServerSettings,
-  type ServerSettings,
-} from "../lib/serverSettings";
+import { saveServerSettings, type ServerSettings, getServerSettings } from "../lib/serverSettings";
 
 interface SettingsPageProps {
   themeMode: ThemeMode;
@@ -38,7 +34,7 @@ function formatBytesAdaptive(bytes: number): string {
 }
 
 export function SettingsPage({ themeMode, onThemeChange, onBack }: SettingsPageProps) {
-  const [settings, setSettings] = useState<ServerSettings>(getServerSettings);
+  const [settings] = useState<ServerSettings>(getServerSettings);
   const [retention, setRetention] = useState({ keylog_days: 30, window_days: 30, url_days: 30 });
   const [storage, setStorage] = useState<{ database_bytes: number; tables: { name: string; bytes: number }[] } | null>(null);
   const [loadingMeta, setLoadingMeta] = useState(false);
@@ -117,39 +113,6 @@ export function SettingsPage({ themeMode, onThemeChange, onBack }: SettingsPageP
                   { label: "Light", value: "light" },
                   { label: "Dark", value: "dark" },
                 ]}
-              />
-            </FormField>
-
-            <FormField
-              label="Server origin"
-              description="Optional. Example: https://sentinel.example.com"
-            >
-              <Input
-                value={settings.serverOrigin}
-                onChange={({ detail }) =>
-                  setSettings((prev) => ({ ...prev, serverOrigin: detail.value.trim() }))
-                }
-                placeholder="(empty = current host)"
-              />
-            </FormField>
-
-            <FormField label="API prefix">
-              <Input
-                value={settings.apiPrefix}
-                onChange={({ detail }) =>
-                  setSettings((prev) => ({ ...prev, apiPrefix: detail.value || "/api" }))
-                }
-                placeholder="/api"
-              />
-            </FormField>
-
-            <FormField label="Viewer WebSocket path">
-              <Input
-                value={settings.wsViewerPath}
-                onChange={({ detail }) =>
-                  setSettings((prev) => ({ ...prev, wsViewerPath: detail.value || "/ws/view" }))
-                }
-                placeholder="/ws/view"
               />
             </FormField>
 

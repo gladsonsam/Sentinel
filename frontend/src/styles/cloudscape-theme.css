@@ -212,6 +212,12 @@
   background: color-mix(in srgb, var(--awsui-color-background-container-content) 90%, #ffffff 10%);
 }
 
+.sentinel-wrap-anywhere {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  white-space: normal;
+}
+
 .sentinel-status-online {
   color: var(--status-online);
 }

@@ -42,14 +42,19 @@ const NAV_ITEMS: SideNavigationProps.Item[] = [
 interface SideNavProps {
   activeTab: TabKey;
   onTabChange: (tabKey: TabKey) => void;
+  onGoOverview?: () => void;
 }
 
-export function SideNav({ activeTab, onTabChange }: SideNavProps) {
+export function SideNav({ activeTab, onTabChange, onGoOverview }: SideNavProps) {
   const activeHref = `#${activeTab}`;
 
   const handleFollow: SideNavigationProps["onFollow"] = (event) => {
     event.preventDefault();
     const href = event.detail.href;
+    if (href === "#overview") {
+      onGoOverview?.();
+      return;
+    }
     if (!href.startsWith("#")) return;
     const raw = href.slice(1);
     if (!raw || !(AGENT_TAB_ORDER as readonly string[]).includes(raw)) return;
@@ -58,7 +63,7 @@ export function SideNav({ activeTab, onTabChange }: SideNavProps) {
 
   return (
     <SideNavigation
-      header={{ text: "Agent", href: "#" }}
+      header={{ text: "Agent", href: "#overview" }}
       activeHref={activeHref}
       items={NAV_ITEMS}
       onFollow={handleFollow}

@@ -18,7 +18,9 @@ interface Props {
   onLogout: () => void;
   onShowPreferences: () => void;
   onOpenActivityLog: () => void;
+  onOpenUsers: () => void;
   onGoHome: () => void;
+  currentUser?: { username: string; role: "admin" | "operator" | "viewer" } | null;
   notifications: NotificationItem[];
   onDismissNotification: (id: string) => void;
   toolsOpen: boolean;
@@ -39,7 +41,9 @@ export function AuthenticatedAgentDetail({
   onLogout,
   onShowPreferences,
   onOpenActivityLog,
+  onOpenUsers,
   onGoHome,
+  currentUser = null,
   notifications,
   onDismissNotification,
   toolsOpen,
@@ -47,7 +51,13 @@ export function AuthenticatedAgentDetail({
 }: Props) {
   return (
     <DashboardLayout
-      navigation={<SideNav activeTab={activeTab} onTabChange={onTabChange} />}
+      navigation={
+        <SideNav
+          activeTab={activeTab}
+          onTabChange={onTabChange}
+          onGoOverview={onBackToOverview}
+        />
+      }
       content={
         <AgentDetailPage
           agent={agent}
@@ -65,9 +75,11 @@ export function AuthenticatedAgentDetail({
       onLogout={onLogout}
       onShowPreferences={onShowPreferences}
       onOpenActivityLog={onOpenActivityLog}
+      onOpenUsers={onOpenUsers}
       onGoHome={onGoHome}
       onBackToOverview={onBackToOverview}
       contentType="default"
+      currentUser={currentUser}
       notifications={notifications}
       onDismissNotification={onDismissNotification}
       showTools={true}

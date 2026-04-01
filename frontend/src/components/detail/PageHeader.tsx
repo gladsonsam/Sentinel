@@ -1,6 +1,5 @@
 import Header from "@cloudscape-design/components/header";
 import SpaceBetween from "@cloudscape-design/components/space-between";
-import Button from "@cloudscape-design/components/button";
 import ButtonDropdown from "@cloudscape-design/components/button-dropdown";
 import type { ButtonDropdownProps } from "@cloudscape-design/components/button-dropdown";
 import type { Agent } from "../../lib/types";
@@ -14,14 +13,12 @@ export type AgentAction =
 
 interface PageHeaderProps {
   agent: Agent;
-  onBackToOverview?: () => void;
   onOpenHelp: () => void;
   onRunAction: (action: AgentAction) => void;
 }
 
 export function PageHeader({
   agent,
-  onBackToOverview,
   onOpenHelp,
   onRunAction,
 }: PageHeaderProps) {
@@ -36,12 +33,12 @@ export function PageHeader({
       description={`Connected: ${agent.connected_at ? fmtDateTime(agent.connected_at) : "offline"}`}
       actions={
         <SpaceBetween direction="horizontal" size="xs">
-          {onBackToOverview && (
-            <Button iconName="angle-left" onClick={onBackToOverview}>
-              Back to overview
-            </Button>
-          )}
-          <Button onClick={onOpenHelp}>Open help</Button>
+          <ButtonDropdown
+            items={[{ id: "help", text: "Open help" }]}
+            onItemClick={() => onOpenHelp()}
+          >
+            Open help
+          </ButtonDropdown>
           <ButtonDropdown
             items={[
               { id: "wake-lan", text: "Wake on LAN" },
