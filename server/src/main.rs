@@ -26,7 +26,7 @@ use axum::http::header::HeaderValue;
 use axum::middleware::Next;
 use axum::response::Response;
 use axum::response::IntoResponse;
-use tower_http::{cors::CorsLayer, services::ServeDir};
+use tower_http::{cors::CorsLayer, services::{ServeDir, ServeFile}};
 use std::io::{stderr, IsTerminal};
 
 use tracing::info;
@@ -158,7 +158,12 @@ async fn main() -> anyhow::Result<()> {
         .merge(health_routes)
         .merge(auth_routes)
         .merge(protected)
-        .fallback_service(ServeDir::new(&static_dir).append_index_html_on_directories(true))
+        // SPA routing: serve `index.html` for unknown paths so reload/back/forward work.
+        .fallback_service(
+            ServeDir::new(&static_dir)
+                .append_index_html_on_directories(true)
+                .not_found_service(ServeFile::new(format!("{static_dir}/index.html"))),
+        )
         .layer(cors_layer_from_env())
         .layer(from_fn_with_state(
             https_enforced(),

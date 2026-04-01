@@ -1,12 +1,15 @@
-import { useState, useEffect, useRef, useCallback, lazy, Suspense } from "react";
+import { useState, useEffect, useRef, useCallback, lazy, Suspense, useMemo } from "react";
 import "@cloudscape-design/global-styles/index.css";
 import "./styles/cloudscape-theme.css";
+import { Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { useAgents } from "./hooks/useAgents";
 import { useTheme } from "./hooks/useTheme";
 import { useNotifications } from "./hooks/useNotifications";
 import { api, apiUrl } from "./lib/api";
-import type { TabKey } from "./lib/types";
+import type { Agent, AgentInfo, AgentLiveStatus, TabKey } from "./lib/types";
+import type { NotificationItem } from "./hooks/useNotifications";
+import type { ThemeMode } from "./hooks/useTheme";
 
 const LoginPage = lazy(() => import("./pages/LoginPage").then((m) => ({ default: m.LoginPage })));
 const AuthenticatedOverview = lazy(() =>
@@ -41,20 +44,255 @@ function LoadShell({ label = "Loading…" }: { label?: string }) {
   );
 }
 
-type ViewMode = "overview" | "detail" | "settings" | "logs";
+type NavState = { from?: string } | null;
+
+function isTabKey(v: string | null): v is TabKey {
+  return (
+    v === "activity" ||
+    v === "specs" ||
+    v === "screen" ||
+    v === "software" ||
+    v === "scripts" ||
+    v === "keys" ||
+    v === "windows" ||
+    v === "urls" ||
+    v === "files" ||
+    v === "audit" ||
+    v === "settings"
+  );
+}
+
+function useReturnTo() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const from = (location.state as NavState)?.from;
+  return useCallback(() => {
+    navigate(from ?? "/", { replace: true });
+  }, [from, navigate]);
+}
+
+function OverviewRoute({
+  agents,
+  liveStatus,
+  onSelectAgent,
+  checkAuth,
+  runBatchWake,
+  runBatchAction,
+  handleLogout,
+  openSettings,
+  openLogs,
+  notifications,
+  removeNotification,
+  toolsOpen,
+  setToolsOpen,
+}: {
+  agents: Record<string, Agent>;
+  liveStatus: Record<string, AgentLiveStatus>;
+  onSelectAgent: (agentId: string) => void;
+  checkAuth: () => void;
+  runBatchWake: (ids: string[]) => Promise<void>;
+  runBatchAction: (agentIds: string[], cmdType: "RestartHost" | "ShutdownHost") => void;
+  handleLogout: () => Promise<void>;
+  openSettings: () => void;
+  openLogs: () => void;
+  notifications: NotificationItem[];
+  removeNotification: (id: string) => void;
+  toolsOpen: boolean;
+  setToolsOpen: (open: boolean) => void;
+}) {
+  return (
+    <Suspense fallback={<LoadShell label="Loading dashboard…" />}>
+      <AuthenticatedOverview
+        agents={agents}
+        liveStatus={liveStatus}
+        onSelectAgent={onSelectAgent}
+        onRefresh={checkAuth}
+        onBatchWake={(ids) => void runBatchWake(ids)}
+        onBatchRestart={(agentIds) => {
+          runBatchAction(agentIds, "RestartHost");
+        }}
+        onBatchShutdown={(agentIds) => {
+          runBatchAction(agentIds, "ShutdownHost");
+        }}
+        onLogout={() => void handleLogout()}
+        onShowPreferences={openSettings}
+        onOpenActivityLog={openLogs}
+        onGoHome={() => {}}
+        notifications={notifications}
+        onDismissNotification={removeNotification}
+        toolsOpen={toolsOpen}
+        onToolsChange={setToolsOpen}
+      />
+    </Suspense>
+  );
+}
+
+function AgentDetailRoute({
+  agents,
+  agentInfo,
+  setSelectedAgentId,
+  send,
+  info,
+  warning,
+  error,
+  handleLogout,
+  openSettings,
+  openLogs,
+  notifications,
+  removeNotification,
+  toolsOpen,
+  setToolsOpen,
+}: {
+  agents: Record<string, Agent>;
+  agentInfo: Record<string, AgentInfo | null>;
+  setSelectedAgentId: (id: string | null) => void;
+  send: (msg: unknown) => void;
+  info: (header: string, content?: string) => void;
+  warning: (header: string, content?: string) => void;
+  error: (header: string, content?: string) => void;
+  handleLogout: () => Promise<void>;
+  openSettings: () => void;
+  openLogs: () => void;
+  notifications: NotificationItem[];
+  removeNotification: (id: string) => void;
+  toolsOpen: boolean;
+  setToolsOpen: (open: boolean) => void;
+}) {
+  const { agentId } = useParams();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  const activeTab = useMemo<TabKey>(() => {
+    const tab = searchParams.get("tab");
+    return isTabKey(tab) ? tab : "activity";
+  }, [searchParams]);
+
+  useEffect(() => {
+    setSelectedAgentId(agentId ?? null);
+    return () => setSelectedAgentId(null);
+  }, [agentId, setSelectedAgentId]);
+
+  const agent = agentId ? agents[agentId] : null;
+  if (!agentId) return <Navigate to="/" replace />;
+  if (!agent) return <LoadShell label="Loading agent…" />;
+
+  return (
+    <Suspense fallback={<LoadShell label="Loading agent…" />}>
+      <AuthenticatedAgentDetail
+        agent={agent}
+        agentInfo={agentInfo[agent.id] || null}
+        sendWsMessage={send}
+        onNotifyInfo={info}
+        onNotifyWarning={warning}
+        onNotifyError={error}
+        activeTab={activeTab}
+        onTabChange={(tab) => {
+          setSearchParams((prev) => {
+            const next = new URLSearchParams(prev);
+            next.set("tab", tab);
+            return next;
+          });
+        }}
+        onBackToOverview={() => navigate("/")}
+        onOpenHelp={() => setToolsOpen(true)}
+        onLogout={() => void handleLogout()}
+        onShowPreferences={openSettings}
+        onOpenActivityLog={openLogs}
+        onGoHome={() => navigate("/")}
+        notifications={notifications}
+        onDismissNotification={removeNotification}
+        toolsOpen={toolsOpen}
+        onToolsChange={setToolsOpen}
+      />
+    </Suspense>
+  );
+}
+
+function SettingsRoute({
+  themeMode,
+  changeTheme,
+  handleLogout,
+  openSettings,
+  openLogs,
+  notifications,
+  removeNotification,
+  toolsOpen,
+  setToolsOpen,
+}: {
+  themeMode: ThemeMode;
+  changeTheme: (mode: ThemeMode) => void;
+  handleLogout: () => Promise<void>;
+  openSettings: () => void;
+  openLogs: () => void;
+  notifications: NotificationItem[];
+  removeNotification: (id: string) => void;
+  toolsOpen: boolean;
+  setToolsOpen: (open: boolean) => void;
+}) {
+  const back = useReturnTo();
+  const navigate = useNavigate();
+  return (
+    <Suspense fallback={<LoadShell label="Loading settings…" />}>
+      <AuthenticatedSettings
+        themeMode={themeMode}
+        onThemeChange={changeTheme}
+        onBack={back}
+        onLogout={() => void handleLogout()}
+        onShowPreferences={openSettings}
+        onOpenActivityLog={openLogs}
+        onGoHome={() => navigate("/")}
+        notifications={notifications}
+        onDismissNotification={removeNotification}
+        toolsOpen={toolsOpen}
+        onToolsChange={setToolsOpen}
+      />
+    </Suspense>
+  );
+}
+
+function LogsRoute({
+  handleLogout,
+  openSettings,
+  notifications,
+  removeNotification,
+  toolsOpen,
+  setToolsOpen,
+}: {
+  handleLogout: () => Promise<void>;
+  openSettings: () => void;
+  notifications: NotificationItem[];
+  removeNotification: (id: string) => void;
+  toolsOpen: boolean;
+  setToolsOpen: (open: boolean) => void;
+}) {
+  const back = useReturnTo();
+  const navigate = useNavigate();
+  return (
+    <Suspense fallback={<LoadShell label="Loading activity log…" />}>
+      <AuthenticatedLogs
+        onBack={back}
+        onLogout={() => void handleLogout()}
+        onShowPreferences={openSettings}
+        onGoHome={() => navigate("/")}
+        notifications={notifications}
+        onDismissNotification={removeNotification}
+        toolsOpen={toolsOpen}
+        onToolsChange={setToolsOpen}
+      />
+    </Suspense>
+  );
+}
 
 export function App() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>("overview");
-  const [activeTab, setActiveTab] = useState<TabKey>("activity");
   const [toolsOpen, setToolsOpen] = useState(false);
-  const adminReturnRef = useRef<ViewMode>("overview");
+  const location = useLocation();
+  const navigate = useNavigate();
 
   const {
     agents,
     liveStatus,
     agentInfo,
-    selectedAgent,
     updateAgent,
     updateAgentLiveStatus,
     updateAgentInfo,
@@ -110,7 +348,7 @@ export function App() {
               last_connected_at: event.connected_at,
               last_disconnected_at: null,
             });
-            if (viewMode === "detail" && selectedAgent?.id === event.agent_id) {
+            if (location.pathname === `/agents/${event.agent_id}`) {
               success("Agent Connected", `${event.name} is now online`);
             }
           }
@@ -215,30 +453,15 @@ export function App() {
   };
 
   const handleSelectAgent = (agentId: string) => {
-    setSelectedAgentId(agentId);
-    setViewMode("detail");
-    setActiveTab("activity");
-  };
-
-  const handleBackToOverview = () => {
-    setViewMode("overview");
-    setSelectedAgentId(null);
+    navigate(`/agents/${agentId}?tab=activity`);
   };
 
   const handleOpenSettings = () => {
-    if (viewMode === "settings") return;
-    adminReturnRef.current = viewMode;
-    setViewMode("settings");
+    navigate("/settings", { state: { from: location.pathname + location.search } satisfies NavState });
   };
 
   const handleOpenLogs = () => {
-    if (viewMode === "logs") return;
-    adminReturnRef.current = viewMode;
-    setViewMode("logs");
-  };
-
-  const handleBackFromAdmin = () => {
-    setViewMode(adminReturnRef.current);
+    navigate("/logs", { state: { from: location.pathname + location.search } satisfies NavState });
   };
 
   const runBatchWake = useCallback(
@@ -322,121 +545,79 @@ export function App() {
     );
   }
 
-  if (viewMode === "overview") {
-    return (
-      <Suspense fallback={<LoadShell label="Loading dashboard…" />}>
-        <AuthenticatedOverview
-          agents={agents}
-          liveStatus={liveStatus}
-          onSelectAgent={handleSelectAgent}
-          onRefresh={checkAuth}
-          onBatchWake={(ids) => void runBatchWake(ids)}
-          onBatchRestart={(agentIds) => {
-            runBatchAction(agentIds, "RestartHost");
-          }}
-          onBatchShutdown={(agentIds) => {
-            runBatchAction(agentIds, "ShutdownHost");
-          }}
-          onLogout={handleLogout}
-          onShowPreferences={handleOpenSettings}
-          onOpenActivityLog={handleOpenLogs}
-          onGoHome={handleBackToOverview}
-          notifications={notifications}
-          onDismissNotification={removeNotification}
-          toolsOpen={toolsOpen}
-          onToolsChange={setToolsOpen}
-        />
-      </Suspense>
-    );
-  }
-
-  if (viewMode === "detail" && selectedAgent) {
-    return (
-      <Suspense fallback={<LoadShell label="Loading agent…" />}>
-        <AuthenticatedAgentDetail
-          agent={selectedAgent}
-          agentInfo={agentInfo[selectedAgent.id] || null}
-          sendWsMessage={send}
-          onNotifyInfo={info}
-          onNotifyWarning={warning}
-          onNotifyError={error}
-          activeTab={activeTab}
-          onTabChange={setActiveTab}
-          onBackToOverview={handleBackToOverview}
-          onOpenHelp={() => setToolsOpen(true)}
-          onLogout={handleLogout}
-          onShowPreferences={handleOpenSettings}
-          onOpenActivityLog={handleOpenLogs}
-          onGoHome={handleBackToOverview}
-          notifications={notifications}
-          onDismissNotification={removeNotification}
-          toolsOpen={toolsOpen}
-          onToolsChange={setToolsOpen}
-        />
-      </Suspense>
-    );
-  }
-
-  if (viewMode === "settings") {
-    return (
-      <Suspense fallback={<LoadShell label="Loading settings…" />}>
-        <AuthenticatedSettings
-          themeMode={themeMode}
-          onThemeChange={changeTheme}
-          onBack={handleBackFromAdmin}
-          onLogout={handleLogout}
-          onShowPreferences={handleOpenSettings}
-          onOpenActivityLog={handleOpenLogs}
-          onGoHome={handleBackToOverview}
-          notifications={notifications}
-          onDismissNotification={removeNotification}
-          toolsOpen={toolsOpen}
-          onToolsChange={setToolsOpen}
-        />
-      </Suspense>
-    );
-  }
-
-  if (viewMode === "logs") {
-    return (
-      <Suspense fallback={<LoadShell label="Loading activity log…" />}>
-        <AuthenticatedLogs
-          onBack={handleBackFromAdmin}
-          onLogout={handleLogout}
-          onShowPreferences={handleOpenSettings}
-          onGoHome={handleBackToOverview}
-          notifications={notifications}
-          onDismissNotification={removeNotification}
-          toolsOpen={toolsOpen}
-          onToolsChange={setToolsOpen}
-        />
-      </Suspense>
-    );
-  }
-
   return (
-    <Suspense fallback={<LoadShell label="Loading dashboard…" />}>
-      <AuthenticatedOverview
-        agents={agents}
-        liveStatus={liveStatus}
-        onSelectAgent={handleSelectAgent}
-        onRefresh={checkAuth}
-        onBatchWake={(ids) => void runBatchWake(ids)}
-        onBatchRestart={(agentIds) => {
-          runBatchAction(agentIds, "RestartHost");
-        }}
-        onBatchShutdown={(agentIds) => {
-          runBatchAction(agentIds, "ShutdownHost");
-        }}
-        onLogout={handleLogout}
-        onShowPreferences={handleOpenSettings}
-        onOpenActivityLog={handleOpenLogs}
-        onGoHome={handleBackToOverview}
-        notifications={notifications}
-        onDismissNotification={removeNotification}
-        toolsOpen={toolsOpen}
-        onToolsChange={setToolsOpen}
+    <Routes>
+      <Route
+        path="/"
+        element={
+          <OverviewRoute
+            agents={agents}
+            liveStatus={liveStatus}
+            onSelectAgent={handleSelectAgent}
+            checkAuth={checkAuth}
+            runBatchWake={runBatchWake}
+            runBatchAction={runBatchAction}
+            handleLogout={handleLogout}
+            openSettings={handleOpenSettings}
+            openLogs={handleOpenLogs}
+            notifications={notifications}
+            removeNotification={removeNotification}
+            toolsOpen={toolsOpen}
+            setToolsOpen={setToolsOpen}
+          />
+        }
       />
-    </Suspense>
+      <Route
+        path="/agents/:agentId"
+        element={
+          <AgentDetailRoute
+            agents={agents}
+            agentInfo={agentInfo}
+            setSelectedAgentId={setSelectedAgentId}
+            send={send}
+            info={info}
+            warning={warning}
+            error={error}
+            handleLogout={handleLogout}
+            openSettings={handleOpenSettings}
+            openLogs={handleOpenLogs}
+            notifications={notifications}
+            removeNotification={removeNotification}
+            toolsOpen={toolsOpen}
+            setToolsOpen={setToolsOpen}
+          />
+        }
+      />
+      <Route
+        path="/settings"
+        element={
+          <SettingsRoute
+            themeMode={themeMode}
+            changeTheme={changeTheme}
+            handleLogout={handleLogout}
+            openSettings={handleOpenSettings}
+            openLogs={handleOpenLogs}
+            notifications={notifications}
+            removeNotification={removeNotification}
+            toolsOpen={toolsOpen}
+            setToolsOpen={setToolsOpen}
+          />
+        }
+      />
+      <Route
+        path="/logs"
+        element={
+          <LogsRoute
+            handleLogout={handleLogout}
+            openSettings={handleOpenSettings}
+            notifications={notifications}
+            removeNotification={removeNotification}
+            toolsOpen={toolsOpen}
+            setToolsOpen={setToolsOpen}
+          />
+        }
+      />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }
