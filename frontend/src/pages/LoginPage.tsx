@@ -14,11 +14,16 @@ interface LoginPageProps {
 }
 
 export function LoginPage({ onLoginSuccess }: LoginPageProps) {
+  const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async () => {
+    if (!username.trim()) {
+      setError("Username is required");
+      return;
+    }
     if (!password.trim()) {
       setError("Password is required");
       return;
@@ -32,7 +37,7 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ username, password }),
       });
 
       if (response.ok) {
@@ -82,7 +87,7 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
                 variant="primary"
                 onClick={handleSubmit}
                 loading={loading}
-                disabled={!password.trim()}
+                disabled={!username.trim() || !password.trim()}
               >
                 Sign in
               </Button>
@@ -99,6 +104,23 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
             </Box>
 
             <FormField
+              label="Username"
+            >
+              <Input
+                value={username}
+                onChange={(e) => setUsername(e.detail.value)}
+                placeholder="Enter username"
+                disabled={loading}
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.detail.key === "Enter") {
+                    handleSubmit();
+                  }
+                }}
+              />
+            </FormField>
+
+            <FormField
               label="Password"
             >
               <Input
@@ -107,7 +129,6 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
                 onChange={(e) => setPassword(e.detail.value)}
                 placeholder="Enter password"
                 disabled={loading}
-                autoFocus
                 onKeyDown={(e) => {
                   if (e.detail.key === "Enter") {
                     handleSubmit();

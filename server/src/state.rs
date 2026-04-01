@@ -1,6 +1,6 @@
 //! Shared application state, threaded through Axum via `Arc<AppState>`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -36,15 +36,12 @@ pub struct AppState {
     /// MJPEG viewer refcount per agent; drives `start_capture` / `stop_capture`.
     pub capture_viewers: Mutex<HashMap<Uuid, u32>>,
 
-    pub ui_password: Option<String>,
     pub allow_insecure_dashboard_open: bool,
     pub agent_secret: Option<String>,
     pub allow_insecure_agent_auth: bool,
-    pub sessions: Mutex<HashSet<String>>,
     wol_last_wake: Mutex<HashMap<Uuid, Instant>>,
     pub wol_min_interval: Duration,
     pub allow_remote_script: bool,
-    pub audit_operator_name: String,
     pub script_waiters: Mutex<HashMap<Uuid, oneshot::Sender<serde_json::Value>>>,
     pub(crate) login_failures: Mutex<HashMap<String, Vec<Instant>>>,
 }
@@ -59,13 +56,11 @@ pub struct Frame {
 impl AppState {
     pub fn new(
         db: PgPool,
-        ui_password: Option<String>,
         allow_insecure_dashboard_open: bool,
         agent_secret: Option<String>,
         allow_insecure_agent_auth: bool,
         wol_min_interval: Duration,
         allow_remote_script: bool,
-        audit_operator_name: String,
     ) -> Self {
         let (tx, _) = broadcast::channel(4096);
         Self {
@@ -75,15 +70,12 @@ impl AppState {
             frames: Mutex::new(HashMap::new()),
             agent_cmds: Mutex::new(HashMap::new()),
             capture_viewers: Mutex::new(HashMap::new()),
-            ui_password,
             allow_insecure_dashboard_open,
             agent_secret,
             allow_insecure_agent_auth,
-            sessions: Mutex::new(HashSet::new()),
             wol_last_wake: Mutex::new(HashMap::new()),
             wol_min_interval,
             allow_remote_script,
-            audit_operator_name,
             script_waiters: Mutex::new(HashMap::new()),
             login_failures: Mutex::new(HashMap::new()),
         }

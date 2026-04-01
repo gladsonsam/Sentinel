@@ -11,6 +11,10 @@ use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
+use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use argon2::Argon2;
+use rand::rngs::OsRng;
+
 /// Mirrors each persisted audit row to `tracing` so `docker logs` matches the dashboard log.
 fn emit_audit_tracing_line(actor: &str, action: &str, status: &str, client_ip: Option<&str>) {
     let ip = client_ip.unwrap_or("-");
@@ -86,6 +90,207 @@ pub struct WindowTopRow {
     pub title: String,
     pub focus_count: i64,
     pub last_ts: DateTime<Utc>,
+}
+
+// ─── Dashboard users & sessions ───────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DashboardUserRow {
+    pub id: Uuid,
+    pub username: String,
+    pub role: String,
+    pub created_at: DateTime<Utc>,
+}
+
+pub fn sha256_hex_bytes(bytes: &[u8]) -> String {
+    let mut h = Sha256::new();
+    h.update(bytes);
+    format!("{:x}", h.finalize())
+}
+
+pub fn hash_dashboard_password(plain: &str) -> Result<String> {
+    let salt = SaltString::generate(&mut OsRng);
+    let argon2 = Argon2::default();
+    let hash = argon2
+        .hash_password(plain.as_bytes(), &salt)
+        .map_err(|e| anyhow::anyhow!("argon2 hash failed: {e}"))?
+        .to_string();
+    Ok(hash)
+}
+
+pub fn verify_dashboard_password(hash: &str, plain: &str) -> bool {
+    let Ok(parsed) = PasswordHash::new(hash) else {
+        return false;
+    };
+    Argon2::default()
+        .verify_password(plain.as_bytes(), &parsed)
+        .is_ok()
+}
+
+pub async fn dashboard_user_count(pool: &PgPool) -> Result<i64> {
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM dashboard_users")
+        .fetch_one(pool)
+        .await?;
+    Ok(n)
+}
+
+pub async fn dashboard_user_get_by_username(
+    pool: &PgPool,
+    username: &str,
+) -> Result<Option<(Uuid, String, String)>> {
+    // Returns (id, password_hash, role)
+    let row = sqlx::query(
+        "SELECT id, password_hash, role FROM dashboard_users WHERE lower(username) = lower($1)",
+    )
+    .bind(username)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row.map(|r| {
+        (
+            r.try_get::<Uuid, _>("id").unwrap_or_default(),
+            r.try_get::<String, _>("password_hash")
+                .unwrap_or_else(|_| "".to_string()),
+            r.try_get::<String, _>("role")
+                .unwrap_or_else(|_| "viewer".to_string()),
+        )
+    }))
+}
+
+pub async fn dashboard_user_list(pool: &PgPool) -> Result<Vec<DashboardUserRow>> {
+    let rows = sqlx::query("SELECT id, username, role, created_at FROM dashboard_users ORDER BY lower(username) ASC")
+        .fetch_all(pool)
+        .await?;
+
+    Ok(rows
+        .iter()
+        .map(|r| DashboardUserRow {
+            id: r.try_get("id").unwrap_or_default(),
+            username: r.try_get("username").unwrap_or_else(|_| "".to_string()),
+            role: r.try_get("role").unwrap_or_else(|_| "viewer".to_string()),
+            created_at: r
+                .try_get("created_at")
+                .unwrap_or_else(|_| Utc::now()),
+        })
+        .collect())
+}
+
+pub async fn dashboard_user_create(
+    pool: &PgPool,
+    username: &str,
+    password_plain: &str,
+    role: &str,
+) -> Result<Uuid> {
+    let hash = hash_dashboard_password(password_plain)?;
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO dashboard_users (username, password_hash, role) VALUES ($1, $2, $3) RETURNING id",
+    )
+    .bind(username)
+    .bind(hash)
+    .bind(role)
+    .fetch_one(pool)
+    .await?;
+    Ok(id)
+}
+
+pub async fn dashboard_user_set_password(pool: &PgPool, user_id: Uuid, password_plain: &str) -> Result<()> {
+    let hash = hash_dashboard_password(password_plain)?;
+    sqlx::query("UPDATE dashboard_users SET password_hash = $2 WHERE id = $1")
+        .bind(user_id)
+        .bind(hash)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn dashboard_user_set_role(pool: &PgPool, user_id: Uuid, role: &str) -> Result<()> {
+    sqlx::query("UPDATE dashboard_users SET role = $2 WHERE id = $1")
+        .bind(user_id)
+        .bind(role)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn dashboard_user_delete(pool: &PgPool, user_id: Uuid) -> Result<()> {
+    sqlx::query("DELETE FROM dashboard_users WHERE id = $1")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn dashboard_session_create(
+    pool: &PgPool,
+    token_sha256_hex: &str,
+    user_id: Uuid,
+    expires_at: DateTime<Utc>,
+    client_ip: Option<&str>,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO dashboard_sessions (token_sha256_hex, user_id, expires_at, client_ip) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(token_sha256_hex)
+    .bind(user_id)
+    .bind(expires_at)
+    .bind(client_ip)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn dashboard_session_delete(pool: &PgPool, token_sha256_hex: &str) -> Result<()> {
+    sqlx::query("DELETE FROM dashboard_sessions WHERE token_sha256_hex = $1")
+        .bind(token_sha256_hex)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn dashboard_session_touch(pool: &PgPool, token_sha256_hex: &str) -> Result<()> {
+    sqlx::query("UPDATE dashboard_sessions SET last_seen_at = NOW() WHERE token_sha256_hex = $1")
+        .bind(token_sha256_hex)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn dashboard_session_get_user(
+    pool: &PgPool,
+    token_sha256_hex: &str,
+) -> Result<Option<(Uuid, String, String)>> {
+    // Returns (user_id, username, role) when session exists and is not expired.
+    let row = sqlx::query(
+        r#"
+        SELECT u.id AS user_id, u.username, u.role
+        FROM dashboard_sessions s
+        JOIN dashboard_users u ON u.id = s.user_id
+        WHERE s.token_sha256_hex = $1
+          AND s.expires_at > NOW()
+        "#,
+    )
+    .bind(token_sha256_hex)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row.map(|r| {
+        (
+            r.try_get::<Uuid, _>("user_id").unwrap_or_default(),
+            r.try_get::<String, _>("username")
+                .unwrap_or_else(|_| "".to_string()),
+            r.try_get::<String, _>("role")
+                .unwrap_or_else(|_| "viewer".to_string()),
+        )
+    }))
+}
+
+pub async fn bootstrap_default_admin(pool: &PgPool, username: &str, password_plain: &str) -> Result<()> {
+    if dashboard_user_count(pool).await? > 0 {
+        return Ok(());
+    }
+    // First boot: create the initial admin user.
+    let _ = dashboard_user_create(pool, username, password_plain, "admin").await?;
+    Ok(())
 }
 
 // ─── Agents ───────────────────────────────────────────────────────────────────

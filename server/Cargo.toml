@@ -43,5 +43,9 @@ async-stream = "0.3"
 anyhow = "1"
 subtle = "2.6.1"
 
+# ── Dashboard auth (multi-user) ───────────────────────────────────────────────
+argon2 = "0.5"
+rand = "0.8"
+
 # ── Agent local UI password (SHA-256, match Windows agent config.rs) ─────────
 sha2 = "0.10"

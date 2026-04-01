@@ -96,12 +96,12 @@ export const api = {
     return res.json();
   },
 
-  /** Submit the UI password; throws with the server error message on failure. */
-  login: async (password: string): Promise<void> => {
+  /** Submit credentials; throws with the server error message on failure. */
+  login: async (username: string, password: string): Promise<void> => {
     const res = await fetch(apiUrl("/login"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password }),
+      body: JSON.stringify({ username, password }),
       credentials: "include",
     });
     if (!res.ok) {

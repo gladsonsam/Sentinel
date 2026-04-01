@@ -22,12 +22,14 @@ use std::sync::Arc;
 use axum::extract::ws::WebSocket;
 use axum::{
     extract::{ws::Message, State, WebSocketUpgrade},
+    extract::Extension,
     response::IntoResponse,
 };
 use tokio::sync::broadcast::error::RecvError;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use crate::auth::AuthUser;
 use crate::state::{AppState, Broadcast};
 
 // Conservative bounds for viewer -> server control messages.
@@ -41,11 +43,12 @@ const MAX_NOTIFY_MESSAGE_CHARS: usize = 256;
 pub async fn handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
+    Extension(user): Extension<AuthUser>,
 ) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| run(socket, state))
+    ws.on_upgrade(move |socket| run(socket, state, user))
 }
 
-async fn run(mut ws: WebSocket, state: Arc<AppState>) {
+async fn run(mut ws: WebSocket, state: Arc<AppState>, user: AuthUser) {
     // ── Send initial agent list (includes offline agents + last session times) ──
     let agents = match crate::db::list_agents(&state.db).await {
         Ok(rows) => rows,
@@ -110,7 +113,7 @@ async fn run(mut ws: WebSocket, state: Arc<AppState>) {
             frame = ws.recv() => {
                 match frame {
                     Some(Ok(Message::Text(text))) => {
-                        handle_viewer_message(&text, &state);
+                        handle_viewer_message(&text, &state, &user);
                     }
                     Some(Ok(Message::Close(_))) | None => break,
                     _ => {}
@@ -124,12 +127,17 @@ async fn run(mut ws: WebSocket, state: Arc<AppState>) {
 
 // ─── Viewer → agent control forwarding ───────────────────────────────────────
 
-fn handle_viewer_message(text: &str, state: &Arc<AppState>) {
+fn handle_viewer_message(text: &str, state: &Arc<AppState>, user: &AuthUser) {
     if text.len() > MAX_VIEWER_TEXT_BYTES {
         warn!(
             "Dropping viewer message: payload too large ({} bytes)",
             text.len()
         );
+        return;
+    }
+
+    // RBAC: only operators/admins can send agent control commands via WebSocket.
+    if !user.is_operator() {
         return;
     }
 
@@ -209,7 +217,7 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>) {
             "reason": "invalid cmd type/shape",
         });
         let pool = state.db.clone();
-        let actor = state.audit_operator_name.clone();
+        let actor = user.username.clone();
         tokio::spawn(async move {
             let _ = crate::db::insert_audit_log_dedup(
                 &pool,
@@ -254,7 +262,7 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>) {
         "agent_online": sent.is_some(),
     });
     let pool = state.db.clone();
-    let actor = state.audit_operator_name.clone();
+    let actor = user.username.clone();
     let dedup_window_secs = if cmd_type == "MouseMove" { 5 } else { 2 };
     tokio::spawn(async move {
         let _ = crate::db::insert_audit_log_dedup(

@@ -64,6 +64,39 @@ async fn main() -> anyhow::Result<()> {
 
     info!("Database ready.");
 
+    // ── Dashboard users bootstrap ────────────────────────────────────────────
+    let allow_insecure_dashboard_open = read_env_or_file("ALLOW_INSECURE_DASHBOARD_OPEN")
+        .map(|v| parse_bool(&v))
+        .unwrap_or(false);
+
+    let admin_username = read_env_or_file("ADMIN_USERNAME")
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "admin".to_string());
+
+    // Backward compatible: UI_PASSWORD becomes the default admin password.
+    let admin_password = read_env_or_file("ADMIN_PASSWORD")
+        .or_else(|| read_env_or_file("UI_PASSWORD"))
+        .filter(|s| !s.is_empty());
+
+    let users = db::dashboard_user_count(&pool).await.unwrap_or(0);
+    if users == 0 {
+        match admin_password {
+            Some(ref pw) => {
+                db::bootstrap_default_admin(&pool, &admin_username, pw).await?;
+                info!("Bootstrapped default dashboard user '{admin_username}' (role: admin).");
+            }
+            None => {
+                if allow_insecure_dashboard_open {
+                    info!("No dashboard users exist yet; dashboard is open (ALLOW_INSECURE_DASHBOARD_OPEN=true).");
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "No dashboard users exist. Set ADMIN_PASSWORD (or UI_PASSWORD) to bootstrap the default admin."
+                    ));
+                }
+            }
+        }
+    }
+
     let pool_retention = pool.clone();
     tokio::spawn(async move {
         if let Err(e) = db::prune_telemetry_by_retention(&pool_retention).await {
@@ -79,19 +112,8 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
-    let ui_password = read_env_or_file("UI_PASSWORD").filter(|s| !s.is_empty());
-    let allow_insecure_dashboard_open = read_env_or_file("ALLOW_INSECURE_DASHBOARD_OPEN")
-        .map(|v| parse_bool(&v))
-        .unwrap_or(false);
-
-    if ui_password.is_some() {
-        info!("Dashboard password protection enabled.");
-    } else {
-        if allow_insecure_dashboard_open {
-            info!("Dashboard password protection disabled (insecure opt-in).");
-        } else {
-            info!("Dashboard password protection disabled (deny access; set UI_PASSWORD).");
-        }
+    if allow_insecure_dashboard_open {
+        info!("Dashboard can run without users (insecure opt-in).");
     }
 
     let agent_secret = read_env_or_file("AGENT_SECRET").filter(|s| !s.is_empty());
@@ -124,19 +146,13 @@ async fn main() -> anyhow::Result<()> {
         info!("Remote script execution from the dashboard is ENABLED (ALLOW_REMOTE_SCRIPT_EXECUTION).");
     }
 
-    let audit_operator_name = read_env_or_file("DASHBOARD_OPERATOR_NAME")
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "operator".to_string());
-
     let state = Arc::new(state::AppState::new(
         pool,
-        ui_password,
         allow_insecure_dashboard_open,
         agent_secret,
         allow_insecure_agent_auth,
         wol_min_interval,
         allow_remote_script,
-        audit_operator_name,
     ));
 
     let static_dir = std::env::var("STATIC_DIR").unwrap_or_else(|_| "./static".into());

@@ -15,6 +15,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use axum::extract::Extension;
 use bytes::Bytes;
 use futures_util::StreamExt;
 use serde::Deserialize;
@@ -31,6 +32,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/agents", get(list_agents))
         .route("/agents/overview", get(list_agents_overview))
         .route("/agents/:id/icon", get(agent_icon_get).put(agent_icon_put))
+        .route("/users", get(users_list).post(users_create))
+        .route("/users/:id/password", post(user_set_password))
+        .route("/users/:id/role", post(user_set_role))
+        .route("/users/:id/delete", post(user_delete))
         .route("/agents/bulk-script", post(agents_bulk_script))
         .route("/agents/:id/info", get(agent_info))
         .route("/agents/:id/windows", get(agent_windows))
@@ -152,10 +157,14 @@ async fn agent_icon_get(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) ->
 async fn agent_icon_put(
     Path(id): Path<Uuid>,
     State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(body): Json<AgentIconBody>,
 ) -> Response {
+    if !user.is_operator() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
     let icon = match normalize_icon(body.icon) {
         Ok(v) => v,
         Err(msg) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response(),
@@ -165,7 +174,7 @@ async fn agent_icon_put(
         Ok(()) => {
             let _ = db::insert_audit_log(
                 &s.db,
-                s.audit_operator_name.as_str(),
+                user.username.as_str(),
                 Some(id),
                 "set_agent_icon",
                 "ok",
@@ -174,6 +183,186 @@ async fn agent_icon_put(
             )
             .await;
             Json(serde_json::json!({ "icon": icon })).into_response()
+        }
+        Err(e) => err500(e),
+    }
+}
+
+// ─── Dashboard user management (admin-only) ───────────────────────────────────
+
+#[derive(Deserialize)]
+struct CreateUserBody {
+    username: String,
+    password: String,
+    role: Option<String>,
+}
+
+fn normalize_role(raw: Option<String>) -> Result<String, &'static str> {
+    let r = raw.unwrap_or_else(|| "viewer".to_string());
+    let t = r.trim().to_lowercase();
+    if matches!(t.as_str(), "admin" | "operator" | "viewer") {
+        Ok(t)
+    } else {
+        Err("role must be one of: admin, operator, viewer")
+    }
+}
+
+async fn users_list(
+    State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+) -> Response {
+    if !user.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
+    match db::dashboard_user_list(&s.db).await {
+        Ok(rows) => Json(serde_json::json!({ "users": rows })).into_response(),
+        Err(e) => err500(e),
+    }
+}
+
+async fn users_create(
+    State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(body): Json<CreateUserBody>,
+) -> Response {
+    if !user.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
+    let role = match normalize_role(body.role) {
+        Ok(r) => r,
+        Err(msg) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response(),
+    };
+    if body.username.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "username is required" }))).into_response();
+    }
+    if body.password.len() < 6 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "password must be at least 6 characters" }))).into_response();
+    }
+    let ip = audit_ip(&headers, addr);
+    match db::dashboard_user_create(&s.db, body.username.trim(), &body.password, &role).await {
+        Ok(new_id) => {
+            let _ = db::insert_audit_log(
+                &s.db,
+                user.username.as_str(),
+                None,
+                "user_create",
+                "ok",
+                &serde_json::json!({ "user_id": new_id, "username": body.username.trim(), "role": role }),
+                ip.as_deref(),
+            )
+            .await;
+            Json(serde_json::json!({ "id": new_id })).into_response()
+        }
+        Err(e) => err500(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct PasswordBody {
+    password: String,
+}
+
+async fn user_set_password(
+    Path(id): Path<Uuid>,
+    State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(body): Json<PasswordBody>,
+) -> Response {
+    if !user.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
+    if body.password.len() < 6 {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "password must be at least 6 characters" }))).into_response();
+    }
+    let ip = audit_ip(&headers, addr);
+    match db::dashboard_user_set_password(&s.db, id, &body.password).await {
+        Ok(()) => {
+            let _ = db::insert_audit_log(
+                &s.db,
+                user.username.as_str(),
+                None,
+                "user_set_password",
+                "ok",
+                &serde_json::json!({ "user_id": id }),
+                ip.as_deref(),
+            )
+            .await;
+            Json(serde_json::json!({ "ok": true })).into_response()
+        }
+        Err(e) => err500(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct RoleBody {
+    role: String,
+}
+
+async fn user_set_role(
+    Path(id): Path<Uuid>,
+    State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(body): Json<RoleBody>,
+) -> Response {
+    if !user.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
+    let role = match normalize_role(Some(body.role)) {
+        Ok(r) => r,
+        Err(msg) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response(),
+    };
+    let ip = audit_ip(&headers, addr);
+    match db::dashboard_user_set_role(&s.db, id, &role).await {
+        Ok(()) => {
+            let _ = db::insert_audit_log(
+                &s.db,
+                user.username.as_str(),
+                None,
+                "user_set_role",
+                "ok",
+                &serde_json::json!({ "user_id": id, "role": role }),
+                ip.as_deref(),
+            )
+            .await;
+            Json(serde_json::json!({ "ok": true })).into_response()
+        }
+        Err(e) => err500(e),
+    }
+}
+
+async fn user_delete(
+    Path(id): Path<Uuid>,
+    State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> Response {
+    if !user.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
+    if id == user.user_id {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "cannot delete your own user" }))).into_response();
+    }
+    let ip = audit_ip(&headers, addr);
+    match db::dashboard_user_delete(&s.db, id).await {
+        Ok(()) => {
+            let _ = db::insert_audit_log(
+                &s.db,
+                user.username.as_str(),
+                None,
+                "user_delete",
+                "ok",
+                &serde_json::json!({ "user_id": id }),
+                ip.as_deref(),
+            )
+            .await;
+            Json(serde_json::json!({ "ok": true })).into_response()
         }
         Err(e) => err500(e),
     }
@@ -234,6 +423,7 @@ async fn agent_windows(
     Path(id): Path<Uuid>,
     Query(p): Query<PageParams>,
     State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
@@ -245,7 +435,7 @@ async fn agent_windows(
         Ok(rows) => {
             let _ = db::insert_audit_log_dedup(
                 &s.db,
-                s.audit_operator_name.as_str(),
+                user.username.as_str(),
                 Some(id),
                 "view_windows",
                 "ok",
@@ -264,6 +454,7 @@ async fn agent_keys(
     Path(id): Path<Uuid>,
     Query(p): Query<PageParams>,
     State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
@@ -275,7 +466,7 @@ async fn agent_keys(
         Ok(rows) => {
             let _ = db::insert_audit_log_dedup(
                 &s.db,
-                s.audit_operator_name.as_str(),
+                user.username.as_str(),
                 Some(id),
                 "view_keys",
                 "ok",
@@ -294,6 +485,7 @@ async fn agent_urls(
     Path(id): Path<Uuid>,
     Query(p): Query<PageParams>,
     State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
@@ -305,7 +497,7 @@ async fn agent_urls(
         Ok(rows) => {
             let _ = db::insert_audit_log_dedup(
                 &s.db,
-                s.audit_operator_name.as_str(),
+                user.username.as_str(),
                 Some(id),
                 "view_urls",
                 "ok",
@@ -324,6 +516,7 @@ async fn agent_activity(
     Path(id): Path<Uuid>,
     Query(p): Query<PageParams>,
     State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
@@ -335,7 +528,7 @@ async fn agent_activity(
         Ok(rows) => {
             let _ = db::insert_audit_log_dedup(
                 &s.db,
-                s.audit_operator_name.as_str(),
+                user.username.as_str(),
                 Some(id),
                 "view_activity",
                 "ok",
@@ -353,6 +546,7 @@ async fn agent_activity(
 async fn agent_info(
     Path(id): Path<Uuid>,
     State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
@@ -361,7 +555,7 @@ async fn agent_info(
         Ok(info) => {
             let _ = db::insert_audit_log_dedup(
                 &s.db,
-                s.audit_operator_name.as_str(),
+                user.username.as_str(),
                 Some(id),
                 "view_specs",
                 "ok",
@@ -408,15 +602,19 @@ async fn agent_top_windows(
 async fn clear_agent_history(
     Path(id): Path<Uuid>,
     State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
+    if !user.is_operator() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
     let ip = audit_ip(&headers, addr);
     match db::clear_agent_history(&s.db, id).await {
         Ok(cleared_rows) => {
             let _ = db::insert_audit_log(
                 &s.db,
-                s.audit_operator_name.as_str(),
+                user.username.as_str(),
                 Some(id),
                 "clear_agent_history",
                 "ok",
@@ -443,14 +641,18 @@ async fn agent_wake(
     Path(id): Path<Uuid>,
     Query(q): Query<WakeQuery>,
     State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
+    if !user.is_operator() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
     let ip = audit_ip(&headers, addr);
     if let Err(retry_secs) = s.wol_throttle_check(id) {
         let _ = db::insert_audit_log(
             &s.db,
-            s.audit_operator_name.as_str(),
+            user.username.as_str(),
             Some(id),
             "wake_on_lan",
             "rate_limited",
@@ -503,7 +705,7 @@ async fn agent_wake(
         tracing::warn!("WoL UDP send failed for {id}: {e}");
         let _ = db::insert_audit_log(
             &s.db,
-            s.audit_operator_name.as_str(),
+            user.username.as_str(),
             Some(id),
             "wake_on_lan",
             "error",
@@ -522,7 +724,7 @@ async fn agent_wake(
     s.wol_mark_sent(id);
     let _ = db::insert_audit_log(
         &s.db,
-        s.audit_operator_name.as_str(),
+        user.username.as_str(),
         Some(id),
         "wake_on_lan",
         "ok",
@@ -543,6 +745,7 @@ async fn agent_wake(
 async fn audit_log(
     Query(p): Query<AuditParams>,
     State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
@@ -564,7 +767,7 @@ async fn audit_log(
         Ok(rows) => {
             let _ = db::insert_audit_log_dedup(
                 &s.db,
-                s.audit_operator_name.as_str(),
+                user.username.as_str(),
                 p.agent_id,
                 "view_audit_log",
                 "ok",
@@ -622,10 +825,14 @@ async fn retention_global_get(State(s): State<Arc<AppState>>) -> Response {
 
 async fn retention_global_put(
     State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(body): Json<RetentionBody>,
 ) -> Response {
+    if !user.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
     if let Err(msg) = validate_retention_days(body.keylog_days, body.window_days, body.url_days) {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
     }
@@ -639,7 +846,7 @@ async fn retention_global_put(
         Ok(()) => {
             let _ = db::insert_audit_log(
                 &s.db,
-                s.audit_operator_name.as_str(),
+                user.username.as_str(),
                 None,
                 "set_retention_global",
                 "ok",
@@ -689,10 +896,14 @@ async fn agent_retention_get(Path(id): Path<Uuid>, State(s): State<Arc<AppState>
 async fn agent_retention_put(
     Path(id): Path<Uuid>,
     State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(body): Json<RetentionBody>,
 ) -> Response {
+    if !user.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
     if let Err(msg) = validate_retention_days(body.keylog_days, body.window_days, body.url_days) {
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
     }
@@ -706,7 +917,7 @@ async fn agent_retention_put(
         Ok(()) => {
             let _ = db::insert_audit_log(
                 &s.db,
-                s.audit_operator_name.as_str(),
+                user.username.as_str(),
                 Some(id),
                 "set_retention_agent",
                 "ok",
@@ -727,15 +938,19 @@ async fn agent_retention_put(
 async fn agent_retention_delete(
     Path(id): Path<Uuid>,
     State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
+    if !user.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
     let ip = audit_ip(&headers, addr);
     match db::clear_retention_agent(&s.db, id).await {
         Ok(()) => {
             let _ = db::insert_audit_log(
                 &s.db,
-                s.audit_operator_name.as_str(),
+                user.username.as_str(),
                 Some(id),
                 "clear_retention_agent",
                 "ok",
@@ -779,10 +994,14 @@ async fn local_ui_password_global_get(State(s): State<Arc<AppState>>) -> Respons
 
 async fn local_ui_password_global_put(
     State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(body): Json<LocalUiPasswordBody>,
 ) -> Response {
+    if !user.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
     if let Some(ref p) = body.password {
         if let Err(msg) = validate_local_ui_password_plain(p) {
             return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
@@ -798,7 +1017,7 @@ async fn local_ui_password_global_put(
         Ok(()) => {
             let _ = db::insert_audit_log(
                 &s.db,
-                s.audit_operator_name.as_str(),
+                user.username.as_str(),
                 None,
                 "set_local_ui_password_global",
                 "ok",
@@ -839,10 +1058,14 @@ async fn local_ui_password_agent_get(Path(id): Path<Uuid>, State(s): State<Arc<A
 async fn local_ui_password_agent_put(
     Path(id): Path<Uuid>,
     State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(body): Json<LocalUiPasswordBody>,
 ) -> Response {
+    if !user.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
     if let Some(ref p) = body.password {
         if let Err(msg) = validate_local_ui_password_plain(p) {
             return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
@@ -858,7 +1081,7 @@ async fn local_ui_password_agent_put(
         Ok(()) => {
             let _ = db::insert_audit_log(
                 &s.db,
-                s.audit_operator_name.as_str(),
+                user.username.as_str(),
                 Some(id),
                 "set_local_ui_password_override",
                 "ok",
@@ -876,15 +1099,19 @@ async fn local_ui_password_agent_put(
 async fn local_ui_password_agent_delete(
     Path(id): Path<Uuid>,
     State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
+    if !user.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
     let ip = audit_ip(&headers, addr);
     match db::clear_local_ui_override(&s.db, id).await {
         Ok(()) => {
             let _ = db::insert_audit_log(
                 &s.db,
-                s.audit_operator_name.as_str(),
+                user.username.as_str(),
                 Some(id),
                 "clear_local_ui_password_override",
                 "ok",
@@ -914,7 +1141,14 @@ async fn storage_usage(State(s): State<Arc<AppState>>) -> Response {
 }
 
 /// Serve the most-recent JPEG screenshot as a single image.
-async fn agent_screen(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Response {
+async fn agent_screen(
+    Path(id): Path<Uuid>,
+    State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+) -> Response {
+    if !user.is_operator() {
+        return (StatusCode::FORBIDDEN, "Forbidden").into_response();
+    }
     let frame = s.frames.lock().unwrap().get(&id).cloned();
     match frame {
         Some(f) => (
@@ -931,7 +1165,14 @@ async fn agent_screen(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> R
 
 /// `multipart/x-mixed-replace` MJPEG; polls cached frames every 200ms. Viewer refcount
 /// drives `start_capture` / `stop_capture` on the agent (guard dropped when HTTP ends).
-async fn agent_mjpeg(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Response {
+async fn agent_mjpeg(
+    Path(id): Path<Uuid>,
+    State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+) -> Response {
+    if !user.is_operator() {
+        return (StatusCode::FORBIDDEN, "Forbidden").into_response();
+    }
     const BOUNDARY: &str = "mjpegframe";
 
     let first_viewer = {
@@ -1065,9 +1306,13 @@ async fn agent_software_list(Path(id): Path<Uuid>, State(s): State<Arc<AppState>
 async fn agent_software_collect(
     Path(id): Path<Uuid>,
     State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
+    if !user.is_operator() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
     let ip = audit_ip(&headers, addr);
     let cmd = serde_json::json!({ "type": "CollectSoftware" });
     if !s.try_send_agent_command_json(id, &cmd) {
@@ -1079,7 +1324,7 @@ async fn agent_software_collect(
     }
     let _ = db::insert_audit_log(
         &s.db,
-        s.audit_operator_name.as_str(),
+        user.username.as_str(),
         Some(id),
         "software_collect",
         "ok",
@@ -1146,11 +1391,15 @@ async fn run_script_and_wait(
 async fn agent_run_script(
     Path(id): Path<Uuid>,
     State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(body): Json<RunScriptBody>,
 ) -> Response {
     let ip = audit_ip(&headers, addr);
+    if !user.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
     if !s.allow_remote_script {
         return (
             StatusCode::FORBIDDEN,
@@ -1178,7 +1427,7 @@ async fn agent_run_script(
     let timeout = body.timeout_secs.unwrap_or(120).clamp(5, 300);
     let _ = db::insert_audit_log(
         &s.db,
-        s.audit_operator_name.as_str(),
+        user.username.as_str(),
         Some(id),
         "remote_script",
         "dispatched",
@@ -1196,7 +1445,7 @@ async fn agent_run_script(
     };
     let _ = db::insert_audit_log(
         &s.db,
-        s.audit_operator_name.as_str(),
+        user.username.as_str(),
         Some(id),
         "remote_script",
         audit_status,
@@ -1212,10 +1461,14 @@ async fn agent_run_script(
 
 async fn agents_bulk_script(
     State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(body): Json<BulkScriptBody>,
 ) -> Response {
+    if !user.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
     if !s.allow_remote_script {
         return (
             StatusCode::FORBIDDEN,
@@ -1271,7 +1524,7 @@ async fn agents_bulk_script(
     let results = futures_util::future::join_all(futs).await;
     let _ = db::insert_audit_log(
         &s.db,
-        s.audit_operator_name.as_str(),
+        user.username.as_str(),
         None,
         "remote_script_bulk",
         "ok",
