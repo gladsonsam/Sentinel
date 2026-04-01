@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Form from "@cloudscape-design/components/form";
 import FormField from "@cloudscape-design/components/form-field";
 import Input from "@cloudscape-design/components/input";
@@ -16,8 +16,18 @@ interface LoginPageProps {
 export function LoginPage({ onLoginSuccess }: LoginPageProps) {
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
+  const [oidcEnabled, setOidcEnabled] = useState<boolean>(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(apiUrl("/auth/config"), { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data && typeof data.oidc_enabled === "boolean") setOidcEnabled(data.oidc_enabled);
+      })
+      .catch(() => {});
+  }, []);
 
   const handleSubmit = async () => {
     if (!username.trim()) {
@@ -82,6 +92,17 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
         <Form
           actions={
             <SpaceBetween direction="horizontal" size="xs" className="sentinel-auth-actions">
+              {oidcEnabled && (
+                <Button
+                  variant="normal"
+                  onClick={() => {
+                    window.location.href = apiUrl("/auth/oidc/login");
+                  }}
+                  disabled={loading}
+                >
+                  Sign in with Authentik
+                </Button>
+              )}
               <Button
                 className="sentinel-auth-submit"
                 variant="primary"
@@ -102,6 +123,8 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
                 </Alert>
               )}
             </Box>
+
+            {oidcEnabled && <Box padding={{ vertical: "s" }} />}
 
             <FormField
               label="Username"

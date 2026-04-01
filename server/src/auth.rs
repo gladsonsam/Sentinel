@@ -24,10 +24,12 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use axum::response::Redirect;
 use serde::Deserialize;
 use tracing::{info, warn};
 
 use crate::db;
+use crate::oidc;
 use crate::state::AppState;
 
 /// Stored in `audit_log.actor` for dashboard authentication events (login, logout, lockouts).
@@ -36,6 +38,10 @@ const AUTH_AUDIT_ACTOR: &str = "auth";
 /// Drop failures older than this; max failures within the window triggers 429 on `/api/login`.
 const LOGIN_FAIL_WINDOW: Duration = Duration::from_secs(15 * 60);
 const MAX_LOGIN_FAILURES_PER_WINDOW: usize = 10;
+
+const OIDC_STATE_COOKIE: &str = "oidc_state";
+const OIDC_NONCE_COOKIE: &str = "oidc_nonce";
+const OIDC_RETURN_COOKIE: &str = "oidc_return_to";
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
 
@@ -439,6 +445,321 @@ pub async fn status(State(state): State<Arc<AppState>>, headers: HeaderMap) -> R
         })),
     )
         .into_response()
+}
+
+/// `GET /api/auth/config` — lets the SPA decide whether to show OIDC/local login.
+pub async fn config() -> Response {
+    let oidc_enabled = oidc::OidcConfig::from_env().is_some();
+    Json(serde_json::json!({
+        "oidc_enabled": oidc_enabled,
+        "local_enabled": true
+    }))
+    .into_response()
+}
+
+/// `GET /api/auth/oidc/login` — redirect to the OIDC provider.
+pub async fn oidc_login(
+    headers: HeaderMap,
+) -> Response {
+    let Some(cfg) = oidc::OidcConfig::from_env() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "OIDC not configured" })),
+        )
+            .into_response();
+    };
+
+    let provider_metadata = match oidc::discover_provider_metadata(&cfg).await {
+        Ok(m) => m,
+        Err(e) => return crate::error::internal_error(e),
+    };
+    let client = openidconnect::core::CoreClient::from_provider_metadata(
+        provider_metadata,
+        openidconnect::ClientId::new(cfg.client_id.clone()),
+        Some(openidconnect::ClientSecret::new(cfg.client_secret.clone())),
+    )
+    .set_redirect_uri(openidconnect::RedirectUrl::new(cfg.redirect_url.clone()).unwrap());
+
+    let mut req = client.authorize_url(
+        openidconnect::core::CoreAuthenticationFlow::AuthorizationCode,
+        openidconnect::CsrfToken::new_random,
+        openidconnect::Nonce::new_random,
+    );
+    for s in &cfg.scopes {
+        req = req.add_scope(openidconnect::Scope::new(s.clone()));
+    }
+    let (url, state, nonce) = req.url();
+
+    // Preserve SPA return path if provided (query param).
+    let return_to = headers
+        .get("x-sentinel-return-to")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("/");
+
+    let forwarded_proto = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let secure = forwarded_proto == "https"
+        || std::env::var("COOKIE_SECURE")
+            .ok()
+            .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+            .unwrap_or(false);
+
+    let same_site = if secure { "SameSite=None; Secure" } else { "SameSite=Lax" };
+    let c_state = format!("{OIDC_STATE_COOKIE}={}; HttpOnly; {same_site}; Path=/; Max-Age=600", state.secret());
+    let c_nonce = format!("{OIDC_NONCE_COOKIE}={}; HttpOnly; {same_site}; Path=/; Max-Age=600", nonce.secret());
+    let c_ret = format!("{OIDC_RETURN_COOKIE}={}; HttpOnly; {same_site}; Path=/; Max-Age=600", urlencoding::encode(return_to));
+
+    let mut res = Redirect::to(url.as_str()).into_response();
+    res.headers_mut().append(header::SET_COOKIE, HeaderValue::from_str(&c_state).unwrap());
+    res.headers_mut().append(header::SET_COOKIE, HeaderValue::from_str(&c_nonce).unwrap());
+    res.headers_mut().append(header::SET_COOKIE, HeaderValue::from_str(&c_ret).unwrap());
+    res
+}
+
+#[derive(Deserialize)]
+pub struct OidcCallbackQuery {
+    code: Option<String>,
+    state: Option<String>,
+    error: Option<String>,
+    error_description: Option<String>,
+}
+
+fn cookie_get(headers: &HeaderMap, name: &str) -> Option<String> {
+    let cookie_str = headers.get(header::COOKIE)?.to_str().ok()?;
+    for part in cookie_str.split(';') {
+        let t = part.trim();
+        if let Some(val) = t.strip_prefix(&format!("{name}=")) {
+            return Some(val.to_string());
+        }
+    }
+    None
+}
+
+fn cookie_clear(name: &str, secure: bool) -> HeaderValue {
+    let samesite = if secure { "SameSite=None; Secure" } else { "SameSite=Lax" };
+    HeaderValue::from_str(&format!("{name}=; HttpOnly; {samesite}; Path=/; Max-Age=0")).unwrap()
+}
+
+fn map_role_from_groups(cfg: &oidc::OidcConfig, groups: &[String]) -> String {
+    if let Some(ref g) = cfg.admin_group {
+        if groups.iter().any(|x| x == g) {
+            return "admin".to_string();
+        }
+    }
+    if let Some(ref g) = cfg.operator_group {
+        if groups.iter().any(|x| x == g) {
+            return "operator".to_string();
+        }
+    }
+    "viewer".to_string()
+}
+
+/// `GET /api/auth/oidc/callback` — exchanges code, validates ID token, creates a dashboard session.
+pub async fn oidc_callback(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    axum::extract::Query(q): axum::extract::Query<OidcCallbackQuery>,
+) -> Response {
+    let client_ip = client_ip_for_audit(&headers, Some(addr));
+    let ip_ref = client_ip.as_deref();
+
+    let Some(cfg) = oidc::OidcConfig::from_env() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": "OIDC not configured" })),
+        )
+            .into_response();
+    };
+
+    let forwarded_proto = headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let secure = forwarded_proto == "https"
+        || std::env::var("COOKIE_SECURE")
+            .ok()
+            .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+            .unwrap_or(false);
+
+    // Always clear transient cookies.
+    let clear_state = cookie_clear(OIDC_STATE_COOKIE, secure);
+    let clear_nonce = cookie_clear(OIDC_NONCE_COOKIE, secure);
+    let clear_ret = cookie_clear(OIDC_RETURN_COOKIE, secure);
+
+    if let Some(err) = q.error {
+        let mut res = (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({
+                "error": err,
+                "error_description": q.error_description
+            })),
+        )
+            .into_response();
+        res.headers_mut().append(header::SET_COOKIE, clear_state);
+        res.headers_mut().append(header::SET_COOKIE, clear_nonce);
+        res.headers_mut().append(header::SET_COOKIE, clear_ret);
+        return res;
+    }
+
+    let Some(code) = q.code else {
+        let mut res = (StatusCode::BAD_REQUEST, "Missing code").into_response();
+        res.headers_mut().append(header::SET_COOKIE, clear_state);
+        res.headers_mut().append(header::SET_COOKIE, clear_nonce);
+        res.headers_mut().append(header::SET_COOKIE, clear_ret);
+        return res;
+    };
+    let Some(cb_state) = q.state else {
+        let mut res = (StatusCode::BAD_REQUEST, "Missing state").into_response();
+        res.headers_mut().append(header::SET_COOKIE, clear_state);
+        res.headers_mut().append(header::SET_COOKIE, clear_nonce);
+        res.headers_mut().append(header::SET_COOKIE, clear_ret);
+        return res;
+    };
+
+    let expected_state = cookie_get(&headers, OIDC_STATE_COOKIE);
+    let expected_nonce = cookie_get(&headers, OIDC_NONCE_COOKIE);
+    let return_to = cookie_get(&headers, OIDC_RETURN_COOKIE)
+        .and_then(|s| urlencoding::decode(&s).ok().map(|c| c.to_string()))
+        .unwrap_or_else(|| "/".to_string());
+
+    if expected_state.as_deref() != Some(cb_state.as_str()) {
+        let mut res = (StatusCode::UNAUTHORIZED, "Invalid state").into_response();
+        res.headers_mut().append(header::SET_COOKIE, clear_state);
+        res.headers_mut().append(header::SET_COOKIE, clear_nonce);
+        res.headers_mut().append(header::SET_COOKIE, clear_ret);
+        return res;
+    }
+    let Some(nonce_str) = expected_nonce else {
+        let mut res = (StatusCode::UNAUTHORIZED, "Missing nonce").into_response();
+        res.headers_mut().append(header::SET_COOKIE, clear_state);
+        res.headers_mut().append(header::SET_COOKIE, clear_nonce);
+        res.headers_mut().append(header::SET_COOKIE, clear_ret);
+        return res;
+    };
+
+    let provider_metadata = match oidc::discover_provider_metadata(&cfg).await {
+        Ok(m) => m,
+        Err(e) => return crate::error::internal_error(e),
+    };
+    let client = openidconnect::core::CoreClient::from_provider_metadata(
+        provider_metadata,
+        openidconnect::ClientId::new(cfg.client_id.clone()),
+        Some(openidconnect::ClientSecret::new(cfg.client_secret.clone())),
+    )
+    .set_redirect_uri(openidconnect::RedirectUrl::new(cfg.redirect_url.clone()).unwrap());
+
+    let token_req = match client.exchange_code(openidconnect::AuthorizationCode::new(code)) {
+        Ok(r) => r,
+        Err(e) => return crate::error::internal_error(anyhow!("OIDC token request build failed: {e}")),
+    };
+    let token = match token_req
+        .request_async(&crate::oidc_http::async_http_client)
+        .await
+    {
+        Ok(t) => t,
+        Err(e) => return crate::error::internal_error(anyhow!("OIDC token exchange failed: {e}")),
+    };
+
+    let id_token = match token.extra_fields().id_token() {
+        Some(t) => t,
+        None => return (StatusCode::UNAUTHORIZED, "Missing id_token").into_response(),
+    };
+
+    let nonce = openidconnect::Nonce::new(nonce_str);
+    let claims = match id_token.claims(&client.id_token_verifier(), &nonce) {
+        Ok(c) => c,
+        Err(e) => return crate::error::internal_error(anyhow!("ID token validation failed: {e}")),
+    };
+
+    let issuer = claims.issuer().url().to_string();
+    let subject = claims.subject().as_str().to_string();
+    let preferred_username = claims
+        .preferred_username()
+        .map(|s| s.to_string());
+    let email = claims.email().map(|e| e.as_str().to_string());
+    let name = claims.name().map(|n| n.get(None).map(|s| s.to_string())).flatten();
+
+    // Authentik: groups often appear as a custom claim `groups` (array of strings).
+    let mut groups: Vec<String> = Vec::new();
+    if let Ok(val) = serde_json::to_value(&claims) {
+        if let Some(arr) = val.get("groups").and_then(|v| v.as_array()) {
+            for it in arr {
+                if let Some(s) = it.as_str() {
+                    groups.push(s.to_string());
+                }
+            }
+        }
+    }
+
+    let role = map_role_from_groups(&cfg, &groups);
+
+    // Find or create the local dashboard user row.
+    let user_id = match db::dashboard_identity_get_user_id(&state.db, &issuer, &subject).await {
+        Ok(Some(uid)) => uid,
+        Ok(None) => {
+            // Create a local user record (password hash is required but unused for OIDC users).
+            // We generate a random password so local login is effectively disabled unless reset by an admin.
+            let uname = preferred_username
+                .clone()
+                .or(email.clone())
+                .unwrap_or_else(|| format!("oidc-{}", &subject[..subject.len().min(12)]));
+            let random_pw = uuid::Uuid::new_v4().to_string();
+            match db::dashboard_user_create(&state.db, &uname, &random_pw, &role).await {
+                Ok(uid) => uid,
+                Err(e) => return crate::error::internal_error(e),
+            }
+        }
+        Err(e) => return crate::error::internal_error(e),
+    };
+
+    // Ensure role stays in sync with groups.
+    let _ = db::dashboard_user_set_role(&state.db, user_id, &role).await;
+
+    let _ = db::dashboard_identity_upsert(
+        &state.db,
+        &issuer,
+        &subject,
+        user_id,
+        preferred_username.as_deref(),
+        email.as_deref(),
+        name.as_deref(),
+    )
+    .await;
+
+    // Create a dashboard session cookie like local login.
+    let token_plain = uuid::Uuid::new_v4().to_string();
+    let token_hash = db::sha256_hex_bytes(token_plain.as_bytes());
+    let expires_at = chrono::Utc::now() + chrono::Duration::days(1);
+    if let Err(e) = db::dashboard_session_create(&state.db, &token_hash, user_id, expires_at, ip_ref).await {
+        return crate::error::internal_error(e);
+    }
+
+    audit_auth_event(
+        &state,
+        "oidc_login_success",
+        "ok",
+        serde_json::json!({ "issuer": issuer, "subject": subject, "role": role }),
+        ip_ref,
+    )
+    .await;
+
+    let same_site = if secure { "SameSite=None; Secure" } else { "SameSite=Lax" };
+    let session_cookie = format!(
+        "session={}; HttpOnly; {same_site}; Path=/; Max-Age=86400",
+        token_plain
+    );
+
+    let mut res = Redirect::to(&return_to).into_response();
+    res.headers_mut().append(header::SET_COOKIE, HeaderValue::from_str(&session_cookie).unwrap());
+    res.headers_mut().append(header::SET_COOKIE, clear_state);
+    res.headers_mut().append(header::SET_COOKIE, clear_nonce);
+    res.headers_mut().append(header::SET_COOKIE, clear_ret);
+    res
 }
 
 // ─── Request extensions ──────────────────────────────────────────────────────

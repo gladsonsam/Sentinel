@@ -6,6 +6,8 @@ mod api;
 mod auth;
 mod db;
 mod error;
+mod oidc;
+mod oidc_http;
 mod state;
 mod wol;
 mod ws_agent;
@@ -162,7 +164,10 @@ async fn main() -> anyhow::Result<()> {
     let auth_routes = Router::new()
         .route("/api/login", post(auth::login))
         .route("/api/logout", post(auth::logout))
-        .route("/api/auth/status", get(auth::status));
+        .route("/api/auth/status", get(auth::status))
+        .route("/api/auth/config", get(auth::config))
+        .route("/api/auth/oidc/login", get(auth::oidc_login))
+        .route("/api/auth/oidc/callback", get(auth::oidc_callback));
 
     let protected = Router::new()
         .route("/ws/view", get(ws_viewer::handler))

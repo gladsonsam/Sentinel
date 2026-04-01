@@ -293,6 +293,54 @@ pub async fn bootstrap_default_admin(pool: &PgPool, username: &str, password_pla
     Ok(())
 }
 
+pub async fn dashboard_identity_get_user_id(
+    pool: &PgPool,
+    issuer: &str,
+    subject: &str,
+) -> Result<Option<Uuid>> {
+    let v: Option<Uuid> = sqlx::query_scalar(
+        "SELECT user_id FROM dashboard_identities WHERE issuer = $1 AND subject = $2",
+    )
+    .bind(issuer)
+    .bind(subject)
+    .fetch_optional(pool)
+    .await?
+    .flatten();
+    Ok(v)
+}
+
+pub async fn dashboard_identity_upsert(
+    pool: &PgPool,
+    issuer: &str,
+    subject: &str,
+    user_id: Uuid,
+    preferred_username: Option<&str>,
+    email: Option<&str>,
+    name: Option<&str>,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO dashboard_identities (issuer, subject, user_id, preferred_username, email, name, last_login_at)
+        VALUES ($1, $2, $3, $4, $5, $6, NOW())
+        ON CONFLICT (issuer, subject) DO UPDATE SET
+            user_id = EXCLUDED.user_id,
+            preferred_username = EXCLUDED.preferred_username,
+            email = EXCLUDED.email,
+            name = EXCLUDED.name,
+            last_login_at = NOW()
+        "#,
+    )
+    .bind(issuer)
+    .bind(subject)
+    .bind(user_id)
+    .bind(preferred_username)
+    .bind(email)
+    .bind(name)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 // ─── Agents ───────────────────────────────────────────────────────────────────
 
 /// Insert the agent if it doesn't exist yet; always bump `last_seen`.
