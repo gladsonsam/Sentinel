@@ -114,7 +114,10 @@ function SessionItem({ session, isLast }: { session: Session; isLast: boolean })
           aria-expanded={expanded}
         >
           <div className="vtl-card-main">
-            <div className="vtl-card-title">{session.appName}</div>
+            <div className="vtl-card-title">{session.appDisplayName || session.appName}</div>
+            <div style={{ fontSize: "12px", opacity: 0.8 }} className="sentinel-monospace">
+              {session.appName}
+            </div>
             {session.windowTitle && session.windowTitle !== session.appName && (
               <div className="vtl-card-subtitle">{session.windowTitle}</div>
             )}

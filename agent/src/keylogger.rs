@@ -69,6 +69,9 @@ pub enum InputEvent {
         text: String,
         /// Executable basename, e.g. `"chrome.exe"`.
         app: String,
+        /// Friendly executable name derived from file metadata.
+        /// Example: `"Microsoft Edge"`.
+        app_display: String,
         /// Window title at the time of typing.
         window: String,
         /// UNIX timestamp (seconds).
@@ -228,6 +231,7 @@ fn run_decoder(raw_rx: std::sync::mpsc::Receiver<String>, out_tx: UnboundedSende
 
     let mut buf = String::new();
     let mut cur_app = String::new();
+    let mut cur_app_display = String::new();
     let mut cur_win = String::new();
     let timeout = Duration::from_secs(FLUSH_TIMEOUT_SECS);
     let mut last_key = Instant::now();
@@ -236,21 +240,22 @@ fn run_decoder(raw_rx: std::sync::mpsc::Receiver<String>, out_tx: UnboundedSende
         match raw_rx.recv_timeout(timeout) {
             Ok(ch) => {
                 last_key = Instant::now();
-                let (app, win) = foreground_window_info();
+                let (app, app_display, win) = foreground_window_info();
 
                 // Window context changed → flush previous buffer first.
                 if !buf.is_empty() && (app != cur_app || win != cur_win) {
-                    emit(&buf, &cur_app, &cur_win, &out_tx);
+                    emit(&buf, &cur_app, &cur_app_display, &cur_win, &out_tx);
                     buf.clear();
                 }
                 cur_app = app;
+                cur_app_display = app_display;
                 cur_win = win;
 
                 buf.push_str(&ch);
 
                 // Flush when the buffer is large enough.
                 if buf.len() >= FLUSH_CHARS {
-                    emit(&buf, &cur_app, &cur_win, &out_tx);
+                    emit(&buf, &cur_app, &cur_app_display, &cur_win, &out_tx);
                     buf.clear();
                 }
             }
@@ -258,7 +263,7 @@ fn run_decoder(raw_rx: std::sync::mpsc::Receiver<String>, out_tx: UnboundedSende
             // 5-second silence: flush what we have so keys appear promptly.
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 if !buf.is_empty() && last_key.elapsed() >= timeout {
-                    emit(&buf, &cur_app, &cur_win, &out_tx);
+                    emit(&buf, &cur_app, &cur_app_display, &cur_win, &out_tx);
                     buf.clear();
                 }
             }
@@ -268,10 +273,17 @@ fn run_decoder(raw_rx: std::sync::mpsc::Receiver<String>, out_tx: UnboundedSende
     }
 }
 
-fn emit(text: &str, app: &str, win: &str, tx: &UnboundedSender<InputEvent>) {
+fn emit(
+    text: &str,
+    app: &str,
+    app_display: &str,
+    win: &str,
+    tx: &UnboundedSender<InputEvent>,
+) {
     let _ = tx.send(InputEvent::Keys {
         text: text.to_owned(),
         app: app.to_owned(),
+        app_display: app_display.to_owned(),
         window: win.to_owned(),
         ts: unix_ts(),
     });
@@ -327,12 +339,13 @@ async fn run_afk_watcher(out_tx: UnboundedSender<InputEvent>) {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-/// Return `(exe_basename, window_title)` for the current foreground window.
-fn foreground_window_info() -> (String, String) {
+/// Return `(exe_basename, app_display_name, window_title)` for the current
+/// foreground window.
+fn foreground_window_info() -> (String, String, String) {
     unsafe {
         let hwnd = GetForegroundWindow();
         if hwnd.0.is_null() {
-            return (String::new(), String::new());
+            return (String::new(), String::new(), String::new());
         }
 
         // Title
@@ -343,7 +356,7 @@ fn foreground_window_info() -> (String, String) {
         // PID → process image name
         let mut pid = 0u32;
         GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        let app = if pid != 0 {
+        let (app, app_display) = if pid != 0 {
             match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
                 Ok(handle) => {
                     let mut buf = [0u16; 1024];
@@ -356,19 +369,25 @@ fn foreground_window_info() -> (String, String) {
                     );
                     let _ = CloseHandle(handle);
                     if ok.is_ok() {
-                        let path = String::from_utf16_lossy(&buf[..size as usize]);
-                        path.rsplit(['\\', '/']).next().unwrap_or("").to_string()
+                        let full_path = String::from_utf16_lossy(&buf[..size as usize]);
+                        let app = full_path
+                            .rsplit(['\\', '/'])
+                            .next()
+                            .unwrap_or("")
+                            .to_string();
+                        let app_display = crate::app_display::app_display_name_from_full_path(&full_path);
+                        (app, app_display)
                     } else {
-                        String::new()
+                        (String::new(), String::new())
                     }
                 }
-                Err(_) => String::new(),
+                Err(_) => (String::new(), String::new()),
             }
         } else {
-            String::new()
+            (String::new(), String::new())
         };
 
-        (app, title)
+        (app, app_display, title)
     }
 }
 

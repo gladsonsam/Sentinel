@@ -88,6 +88,7 @@ pub struct UrlTopRow {
 #[derive(Debug, Clone, Serialize)]
 pub struct WindowTopRow {
     pub app: String,
+    pub app_display: String,
     pub title: String,
     pub focus_count: i64,
     pub last_ts: DateTime<Utc>,
@@ -538,15 +539,17 @@ pub async fn agent_last_session_times(
 pub async fn insert_window(pool: &PgPool, agent: Uuid, v: &serde_json::Value) -> Result<()> {
     let title = v["title"].as_str().unwrap_or("");
     let app = v["app"].as_str().unwrap_or("");
+    let app_display = v["app_display"].as_str().unwrap_or(app);
     let hwnd = v["hwnd"].as_i64().unwrap_or(0);
     let ts = unix_to_dt(v["ts"].as_i64());
 
     sqlx::query(
-        "INSERT INTO window_events (agent_id, title, app, hwnd, ts) VALUES ($1,$2,$3,$4,$5)",
+        "INSERT INTO window_events (agent_id, title, app, app_display, hwnd, ts) VALUES ($1,$2,$3,$4,$5,$6)",
     )
     .bind(agent)
     .bind(title)
     .bind(app)
+    .bind(app_display)
     .bind(hwnd)
     .bind(ts)
     .execute(pool)
@@ -554,15 +557,17 @@ pub async fn insert_window(pool: &PgPool, agent: Uuid, v: &serde_json::Value) ->
 
     sqlx::query(
         r#"
-        INSERT INTO window_top_stats (agent_id, app, title, focus_count, last_ts)
-        VALUES ($1, $2, $3, 1, $4)
+        INSERT INTO window_top_stats (agent_id, app, app_display, title, focus_count, last_ts)
+        VALUES ($1, $2, $3, $4, 1, $5)
         ON CONFLICT (agent_id, app, title) DO UPDATE
-        SET focus_count = window_top_stats.focus_count + 1,
+        SET app_display = EXCLUDED.app_display,
+            focus_count = window_top_stats.focus_count + 1,
             last_ts = GREATEST(window_top_stats.last_ts, EXCLUDED.last_ts)
         "#,
     )
     .bind(agent)
     .bind(app)
+    .bind(app_display)
     .bind(title)
     .bind(ts)
     .execute(pool)
@@ -577,6 +582,7 @@ pub async fn insert_window(pool: &PgPool, agent: Uuid, v: &serde_json::Value) ->
 /// Creates a new session row if no open one exists.
 pub async fn upsert_keys(pool: &PgPool, agent: Uuid, v: &serde_json::Value) -> Result<()> {
     let app = v["app"].as_str().unwrap_or("");
+    let app_display = v["app_display"].as_str().unwrap_or(app);
     let window = v["window"].as_str().unwrap_or("");
     let text = v["text"].as_str().unwrap_or("");
     let ts = unix_to_dt(v["ts"].as_i64());
@@ -585,14 +591,16 @@ pub async fn upsert_keys(pool: &PgPool, agent: Uuid, v: &serde_json::Value) -> R
         r#"
         UPDATE key_sessions
         SET    text         = text || $1,
+               app_display  = $2,
                updated_at   = NOW()
-        WHERE  agent_id     = $2
-          AND  app          = $3
-          AND  window_title = $4
+        WHERE  agent_id     = $3
+          AND  app          = $4
+          AND  window_title = $5
           AND  updated_at   > NOW() - INTERVAL '30 seconds'
         "#,
     )
     .bind(text)
+    .bind(app_display)
     .bind(agent)
     .bind(app)
     .bind(window)
@@ -601,11 +609,12 @@ pub async fn upsert_keys(pool: &PgPool, agent: Uuid, v: &serde_json::Value) -> R
 
     if updated.rows_affected() == 0 {
         sqlx::query(
-            "INSERT INTO key_sessions (agent_id, app, window_title, text, started_at, updated_at) \
-             VALUES ($1,$2,$3,$4,$5,NOW())",
+            "INSERT INTO key_sessions (agent_id, app, app_display, window_title, text, started_at, updated_at) \
+             VALUES ($1,$2,$3,$4,$5,$6,NOW())",
         )
         .bind(agent)
         .bind(app)
+        .bind(app_display)
         .bind(window)
         .bind(text)
         .bind(ts)
@@ -881,7 +890,7 @@ pub async fn query_top_windows(
 ) -> Result<Vec<WindowTopRow>> {
     let rows = sqlx::query(
         r#"
-        SELECT app, title, focus_count, last_ts
+        SELECT app, app_display, title, focus_count, last_ts
         FROM window_top_stats
         WHERE agent_id = $1
         ORDER BY focus_count DESC, last_ts DESC
@@ -898,6 +907,7 @@ pub async fn query_top_windows(
         .iter()
         .map(|r| WindowTopRow {
             app: r.try_get("app").unwrap_or_default(),
+            app_display: r.try_get("app_display").unwrap_or_default(),
             title: r.try_get("title").unwrap_or_default(),
             focus_count: r.try_get("focus_count").unwrap_or_default(),
             last_ts: r.try_get("last_ts").unwrap_or_else(|_| Utc::now()),
@@ -953,7 +963,7 @@ pub async fn query_windows(
     offset: i64,
 ) -> Result<Vec<serde_json::Value>> {
     let rows = sqlx::query(
-        "SELECT title, app, hwnd, ts \
+        "SELECT title, app, app_display, hwnd, ts \
          FROM window_events WHERE agent_id=$1 ORDER BY ts DESC LIMIT $2 OFFSET $3",
     )
     .bind(agent)
@@ -967,9 +977,10 @@ pub async fn query_windows(
         .map(|r| {
             let title: String = r.try_get("title").unwrap_or_default();
             let app: String = r.try_get("app").unwrap_or_default();
+            let app_display: String = r.try_get("app_display").unwrap_or_default();
             let hwnd: i64 = r.try_get("hwnd").unwrap_or_default();
             let ts: DateTime<Utc> = r.try_get("ts").unwrap_or_else(|_| Utc::now());
-            serde_json::json!({ "title": title, "app": app, "hwnd": hwnd, "ts": ts })
+            serde_json::json!({ "title": title, "app": app, "app_display": app_display, "hwnd": hwnd, "ts": ts })
         })
         .collect())
 }
@@ -981,7 +992,7 @@ pub async fn query_keys(
     offset: i64,
 ) -> Result<Vec<serde_json::Value>> {
     let rows = sqlx::query(
-        "SELECT app, window_title, text, started_at, updated_at \
+        "SELECT app, app_display, window_title, text, started_at, updated_at \
          FROM key_sessions WHERE agent_id=$1 ORDER BY updated_at DESC LIMIT $2 OFFSET $3",
     )
     .bind(agent)
@@ -994,12 +1005,14 @@ pub async fn query_keys(
         .iter()
         .map(|r| {
             let app: String = r.try_get("app").unwrap_or_default();
+            let app_display: String = r.try_get("app_display").unwrap_or_default();
             let window: String = r.try_get("window_title").unwrap_or_default();
             let text: String = r.try_get("text").unwrap_or_default();
             let started_at: DateTime<Utc> = r.try_get("started_at").unwrap_or_else(|_| Utc::now());
             let updated_at: DateTime<Utc> = r.try_get("updated_at").unwrap_or_else(|_| Utc::now());
             serde_json::json!({
-                "app": app, "window_title": window, "text": text,
+                "app": app, "app_display": app_display,
+                "window_title": window, "text": text,
                 "started_at": started_at, "updated_at": updated_at
             })
         })

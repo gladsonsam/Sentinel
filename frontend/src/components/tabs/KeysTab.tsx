@@ -14,6 +14,7 @@ import { fmtDateTime } from "../../lib/utils";
 interface KeystrokeEvent {
   id: number;
   exe_name: string;
+  app_display?: string;
   window_title: string;
   keys: string;
   timestamp: string;
@@ -46,6 +47,7 @@ export function KeysTab({ agentId }: KeysTabProps) {
           rows.map((row: any) => ({
             id: row.id ?? 0,
             exe_name: row.exe_name ?? row.app ?? "—",
+            app_display: row.app_display ?? row.exe_name ?? row.app ?? "—",
             window_title: row.window_title ?? row.title ?? "—",
             keys: row.keys ?? row.text ?? "",
             timestamp: row.timestamp ?? row.updated_at ?? row.started_at ?? "",
@@ -87,6 +89,7 @@ export function KeysTab({ agentId }: KeysTabProps) {
         filteringFunction: (item, filteringText) => {
           const searchText = filteringText.toLowerCase();
           return (
+            (item.app_display || "").toLowerCase().includes(searchText) ||
             (item.exe_name || "").toLowerCase().includes(searchText) ||
             (item.window_title || "").toLowerCase().includes(searchText) ||
             (item.keys || "").toLowerCase().includes(searchText)
@@ -119,7 +122,14 @@ export function KeysTab({ agentId }: KeysTabProps) {
         {
           id: "app",
           header: "Application",
-          cell: (item) => item.exe_name || "—",
+          cell: (item) => (
+            <div>
+              <div>{item.app_display || item.exe_name || "—"}</div>
+              <Box className="sentinel-monospace" fontSize="body-s" color="text-body-secondary">
+                {item.exe_name}
+              </Box>
+            </div>
+          ),
           sortingField: "exe_name",
           width: 150,
         },

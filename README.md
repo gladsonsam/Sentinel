@@ -18,7 +18,7 @@ A lightweight, self-hosted monitoring system built with Rust and React. A Window
 
 | Component | Technology |
 |-----------|------------|
-| **sentinel-agent** | Rust (Windows, egui tray, xcap, enigo) |
+| **sentinel-agent** | Rust (Windows, hidden Tauri settings window + hotkey, xcap, enigo) |
 | **sentinel-server** | Rust (Axum, Tokio, SQLx, PostgreSQL) |
 | **sentinel-dashboard** | React 18, Vite, TailwindCSS |
 

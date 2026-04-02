@@ -13,11 +13,13 @@ interface WindowEvent {
   id: number;
   window_title: string;
   exe_name: string;
+  app_display?: string;
   timestamp: string;
 }
 
 interface TopWindowRow {
   app: string;
+  app_display?: string;
   title: string;
   focus_count: number;
   last_ts: string;
@@ -51,6 +53,7 @@ export function WindowsTab({ agentId }: WindowsTabProps) {
             id: row.id ?? row.hwnd ?? 0,
             window_title: row.window_title ?? row.title ?? "—",
             exe_name: row.exe_name ?? row.app ?? "—",
+            app_display: row.app_display ?? row.exe_name ?? row.app ?? "—",
             timestamp: row.timestamp ?? row.ts ?? row.created ?? "",
           }))
         );
@@ -65,6 +68,7 @@ export function WindowsTab({ agentId }: WindowsTabProps) {
         setTopItems(
           topRows.map((row: any) => ({
             app: row.app ?? "",
+            app_display: row.app_display ?? row.app ?? "",
             title: row.title ?? "",
             focus_count: row.focus_count ?? 0,
             last_ts: row.last_ts ?? "",
@@ -87,6 +91,7 @@ export function WindowsTab({ agentId }: WindowsTabProps) {
         filteringFunction: (item, filteringText) => {
           const searchText = filteringText.toLowerCase();
           return (
+              (item.app_display || "").toLowerCase().includes(searchText) ||
             (item.exe_name || "").toLowerCase().includes(searchText) ||
             (item.window_title || "").toLowerCase().includes(searchText)
           );
@@ -118,7 +123,14 @@ export function WindowsTab({ agentId }: WindowsTabProps) {
         {
           id: "app",
           header: "Application",
-          cell: (item) => item.exe_name || "—",
+          cell: (item) => (
+            <div>
+              <div>{item.app_display || item.exe_name || "—"}</div>
+              <Box className="sentinel-monospace" fontSize="body-s" color="text-body-secondary">
+                {item.exe_name}
+              </Box>
+            </div>
+          ),
           sortingField: "exe_name",
           width: 200,
         },
@@ -142,7 +154,10 @@ export function WindowsTab({ agentId }: WindowsTabProps) {
           }
           description={
             topItems.length > 0
-              ? `Top windows retained long-term: ${topItems.slice(0, 2).map((t) => `${t.app} (${t.focus_count})`).join(" • ")}`
+              ? `Top windows retained long-term: ${topItems
+                  .slice(0, 2)
+                  .map((t) => `${t.app_display || t.app} (${t.focus_count})`)
+                  .join(" • ")}`
               : "Top window aggregates are retained after raw windows retention expiry."
           }
         >

@@ -59,6 +59,7 @@ mod software_inventory;
 mod system_info;
 mod ui;
 mod url_scraper;
+mod app_display;
 mod window_tracker;
 
 use std::sync::{
@@ -533,11 +534,18 @@ async fn run_session(
             // ── Branch 4: keystrokes / AFK ───────────────────────────────
             event = key_rx.recv() => {
                 let payload = match event {
-                    Some(InputEvent::Keys { text, app, window, ts }) => {
+                    Some(InputEvent::Keys {
+                        text,
+                        app,
+                        app_display,
+                        window,
+                        ts,
+                    }) => {
                         serde_json::json!({
                             "type"   : "keys",
                             "text"   : text,
                             "app"    : app,
+                            "app_display": app_display,
                             "window" : window,
                             "ts"     : ts,
                         })
@@ -574,6 +582,7 @@ async fn run_session(
                         "type"  : "window_focus",
                         "title" : event.title,
                         "app"   : event.app,
+                        "app_display": event.app_display,
                         "hwnd"  : event.hwnd,
                         "ts"    : unix_timestamp_secs(),
                     })

@@ -120,6 +120,7 @@ export function AgentDetailPage({
           id: row.id ?? row.hwnd ?? 0,
           window_title: row.window_title ?? row.title ?? "Unknown window",
           exe_name: row.exe_name ?? row.app ?? "Unknown app",
+          app_display: row.app_display ?? row.exe_name ?? row.app ?? "Unknown app",
           timestamp: row.timestamp ?? row.ts ?? row.created ?? "",
         }))
         .filter((row: any) => parseTimestamp(row.timestamp));
@@ -138,6 +139,7 @@ export function AgentDetailPage({
           id: row.id ?? 0,
           window_title: row.window_title ?? row.title ?? "",
           exe_name: row.exe_name ?? row.app ?? "",
+          app_display: row.app_display ?? row.exe_name ?? row.app ?? "",
           keys: row.keys ?? row.text ?? "",
           timestamp: row.timestamp ?? row.updated_at ?? row.started_at ?? "",
         }))

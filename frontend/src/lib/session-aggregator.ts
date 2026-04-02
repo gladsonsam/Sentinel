@@ -5,6 +5,7 @@ interface WindowEvent {
   id: number;
   window_title: string;
   exe_name: string;
+  app_display?: string;
   timestamp: string;
 }
 
@@ -19,6 +20,7 @@ interface KeystrokeEvent {
   id: number;
   window_title: string;
   exe_name: string;
+  app_display?: string;
   keys: string;
   timestamp: string;
 }
@@ -26,6 +28,7 @@ interface KeystrokeEvent {
 export interface Session {
   id: string;
   appName: string;
+  appDisplayName: string;
   windowTitle: string;
   startTime: Date;
   endTime: Date;
@@ -165,6 +168,7 @@ export function aggregateSessions({
       currentSession = {
         id: `session-${window.id}-${windowTime.getTime()}`,
         appName: window.exe_name,
+        appDisplayName: window.app_display ?? window.exe_name,
         windowTitle: window.window_title,
         startTime: windowTime,
         endTime: windowTime,
