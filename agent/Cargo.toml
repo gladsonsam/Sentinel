@@ -45,10 +45,9 @@ browser-url = "0.1"
 # ── Input injection ───────────────────────────────────────────────────────────
 enigo = "0.2"
 
-# ── Tauri (webview settings window) ──────────────────────────────────────────
-tauri = { version = "2", features = [] }
-tauri-plugin-global-shortcut = "2"
-tauri-plugin-single-instance = "2"
+## ── Tauri (webview settings window) ─────────────────────────────────────────
+## This agent is Windows-only; keeping these under cfg(windows) prevents pulling
+## Linux GTK/WebKit dependency trees (and their advisories) into Cargo.lock.
 
 # ── Windows API (keylogger, window tracker, toast notifications) ────────────
 windows = { version = "0.62", features = [
@@ -95,10 +94,13 @@ tempfile = "3"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
+tauri = { version = "2", features = [] }
+tauri-plugin-global-shortcut = "2"
+tauri-plugin-single-instance = "2"
 
 
 # ── Build dependencies ───────────────────────────────────────────────────────
-[build-dependencies]
+[target.'cfg(windows)'.build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 # ─────────────────────────────────────────────────────────────────────────────
