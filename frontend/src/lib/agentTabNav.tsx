@@ -3,6 +3,7 @@ import type { LucideIcon } from "lucide-react";
 import {
   Activity,
   AppWindow,
+  BellRing,
   Cpu,
   FolderOpen,
   History,
@@ -26,7 +27,7 @@ export const AGENT_SECTION_ORDER: AgentSectionId[] = ["activity", "system", "dat
 export const AGENT_SYSTEM_SUBTABS: TabKey[] = ["specs", "screen", "software", "scripts", "files"];
 
 /** Sub-views under “Data” (telemetry / history). */
-export const AGENT_DATA_SUBTABS: TabKey[] = ["keys", "windows", "urls", "audit"];
+export const AGENT_DATA_SUBTABS: TabKey[] = ["keys", "windows", "urls", "alerts", "audit"];
 
 export function agentSectionFromTabKey(tab: TabKey): AgentSectionId {
   if (tab === "activity") return "activity";
@@ -76,6 +77,7 @@ export const AGENT_TAB_ORDER: TabKey[] = [
   "keys",
   "windows",
   "urls",
+  "alerts",
   "audit",
   "settings",
 ];
@@ -135,6 +137,12 @@ export const AGENT_TAB_META: Record<TabKey, AgentTabDefinition> = {
     sideNavLabel: "URLs",
     breadcrumbLabel: "URLs",
     icon: Link2,
+  },
+  alerts: {
+    tabLabel: "Alerts",
+    sideNavLabel: "Alerts",
+    breadcrumbLabel: "Alert notifications",
+    icon: BellRing,
   },
   files: {
     tabLabel: "Files",

@@ -71,7 +71,7 @@ export function DashboardLayout({
             }))}
           />
         }
-        content={content}
+        content={<div className="sentinel-dashboard-main">{content}</div>}
         navigationWidth={280}
         toolsHide={!showTools}
         tools={showTools ? <ToolsContent /> : undefined}

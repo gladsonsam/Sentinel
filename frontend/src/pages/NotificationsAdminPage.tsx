@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import ContentLayout from "@cloudscape-design/components/content-layout";
 import Header from "@cloudscape-design/components/header";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Table from "@cloudscape-design/components/table";
 import Button from "@cloudscape-design/components/button";
+import ButtonDropdown from "@cloudscape-design/components/button-dropdown";
+import type { ButtonDropdownProps } from "@cloudscape-design/components/button-dropdown";
 import Modal from "@cloudscape-design/components/modal";
 import FormField from "@cloudscape-design/components/form-field";
 import Input from "@cloudscape-design/components/input";
@@ -12,7 +14,10 @@ import Checkbox from "@cloudscape-design/components/checkbox";
 import Box from "@cloudscape-design/components/box";
 import Alert from "@cloudscape-design/components/alert";
 import Tabs from "@cloudscape-design/components/tabs";
+import SegmentedControl from "@cloudscape-design/components/segmented-control";
+import ColumnLayout from "@cloudscape-design/components/column-layout";
 import { api } from "../lib/api";
+import { useMediaQuery } from "../hooks/useMediaQuery";
 import type {
   Agent,
   AgentGroup,
@@ -84,7 +89,11 @@ const SCOPE_KIND_OPTIONS = [
   { label: "Single agent", value: "agent" },
 ];
 
+type MainTabId = "groups" | "rules";
+
 export function NotificationsAdminPage() {
+  const isNarrow = useMediaQuery("(max-width: 768px)");
+  const [mainTab, setMainTab] = useState<MainTabId>("groups");
   const [groups, setGroups] = useState<AgentGroup[] | null>(null);
   const [rules, setRules] = useState<AlertRule[] | null>(null);
   const [agentsList, setAgentsList] = useState<Agent[]>([]);
@@ -364,89 +373,205 @@ export function NotificationsAdminPage() {
     return agentOptions.filter((o) => !set.has(o.value));
   }, [membersModal, agentOptions]);
 
-  const groupsTab = (
+  const groupRowActions = (): ButtonDropdownProps.ItemOrGroup[] => [
+    { id: "members", text: "Members" },
+    { id: "rename", text: "Rename" },
+    { id: "delete", text: "Delete" },
+  ];
+
+  const ruleRowActions = (): ButtonDropdownProps.ItemOrGroup[] => [
+    { id: "edit", text: "Edit" },
+    { id: "delete", text: "Delete" },
+  ];
+
+  const onGroupAction = (g: AgentGroup, id: string) => {
+    if (id === "members") void openMembers(g);
+    else if (id === "rename") openEditGroup(g);
+    else if (id === "delete") setDeleteGroup(g);
+  };
+
+  const onRuleAction = (r: AlertRule, id: string) => {
+    if (id === "edit") openEditRule(r);
+    else if (id === "delete") setDeleteRule(r);
+  };
+
+  const groupItems = groups ?? [];
+  const ruleItems = rules ?? [];
+
+  const headerActions = (
+    <Button iconName="refresh" onClick={() => void load()} loading={loading}>
+      Refresh
+    </Button>
+  );
+
+  const mobileToolbar = (
+    <div className="sentinel-users-toolbar-mobile">
+      {headerActions}
+      {mainTab === "groups" ? (
+        <Button onClick={openCreateGroup}>Create group</Button>
+      ) : (
+        <Button variant="primary" onClick={openCreateRule}>
+          Create alert rule
+        </Button>
+      )}
+    </div>
+  );
+
+  const groupsPanel = (
     <SpaceBetween size="l">
       <Box variant="p" color="text-body-secondary">
         Create groups of agents, then attach alert rules to <b>all agents</b>, a <b>group</b>, or a{" "}
-        <b>single agent</b> in the Alert rules tab. Matches surface in the dashboard when telemetry arrives.
+        <b>single agent</b> under Alert rules. Matches surface in the dashboard when telemetry arrives.
       </Box>
-      <Button onClick={openCreateGroup}>Create group</Button>
-      <Table
-        columnDefinitions={[
-          { id: "name", header: "Name", cell: (g) => g.name },
-          { id: "desc", header: "Description", cell: (g) => g.description || "—" },
-          { id: "n", header: "Members", cell: (g) => String(g.member_count) },
-          {
-            id: "act",
-            header: "Actions",
-            cell: (g) => (
-              <SpaceBetween direction="horizontal" size="xs">
-                <Button variant="link" onClick={() => void openMembers(g)}>
-                  Members
-                </Button>
-                <Button variant="link" onClick={() => openEditGroup(g)}>
-                  Rename
-                </Button>
-                <Button variant="link" onClick={() => setDeleteGroup(g)}>
-                  Delete
-                </Button>
-              </SpaceBetween>
-            ),
-          },
-        ]}
-        items={groups ?? []}
-        loading={loading}
-        loadingText="Loading groups"
-        empty={<Box color="text-body-secondary">No groups yet.</Box>}
-        variant="embedded"
-      />
+      {!isNarrow && <Button onClick={openCreateGroup}>Create group</Button>}
+      {isNarrow ? (
+        loading && groupItems.length === 0 ? (
+          <Box color="text-body-secondary">Loading groups…</Box>
+        ) : groupItems.length === 0 ? (
+          <Box color="text-body-secondary">No groups yet.</Box>
+        ) : (
+          <SpaceBetween size="m">
+            {groupItems.map((g) => (
+              <Box key={g.id} variant="div" className="sentinel-users-mobile-card">
+                <SpaceBetween size="s">
+                  <Box variant="h3" tagOverride="div" fontSize="heading-m">
+                    {g.name}
+                  </Box>
+                  <Box color="text-body-secondary">{g.description || "—"}</Box>
+                  <Box color="text-body-secondary" fontSize="body-s">
+                    {g.member_count} member{g.member_count === 1 ? "" : "s"}
+                  </Box>
+                  <div className="sentinel-users-manage-slot">
+                    <ButtonDropdown
+                      variant="primary"
+                      items={groupRowActions()}
+                      expandToViewport
+                      onItemClick={({ detail }) => onGroupAction(g, detail.id)}
+                    >
+                      Manage
+                    </ButtonDropdown>
+                  </div>
+                </SpaceBetween>
+              </Box>
+            ))}
+          </SpaceBetween>
+        )
+      ) : (
+        <Table
+          columnDefinitions={[
+            { id: "name", header: "Name", cell: (g) => g.name },
+            { id: "desc", header: "Description", cell: (g) => g.description || "—" },
+            { id: "n", header: "Members", cell: (g) => String(g.member_count) },
+            {
+              id: "act",
+              header: "",
+              cell: (g) => (
+                <ButtonDropdown
+                  variant="normal"
+                  items={groupRowActions()}
+                  expandToViewport
+                  onItemClick={({ detail }) => onGroupAction(g, detail.id)}
+                >
+                  Manage
+                </ButtonDropdown>
+              ),
+            },
+          ]}
+          items={groupItems}
+          loading={loading}
+          loadingText="Loading groups"
+          empty={<Box color="text-body-secondary">No groups yet.</Box>}
+          variant="embedded"
+        />
+      )}
     </SpaceBetween>
   );
 
-  const rulesTab = (
+  const rulesPanel = (
     <SpaceBetween size="l">
       <Box variant="p" color="text-body-secondary">
         Rules use substring or regex against the active <b>URL</b> or batched <b>keystroke</b> text. Use{" "}
         <b>cooldown</b> to avoid spamming the same match. Scopes can be combined (e.g. all agents + one extra
         group).
       </Box>
-      <Button variant="primary" onClick={openCreateRule}>
-        Create alert rule
-      </Button>
-      <Table
-        columnDefinitions={[
-          { id: "name", header: "Name", cell: (r) => r.name || `Rule #${r.id}` },
-          { id: "ch", header: "Channel", cell: (r) => r.channel },
-          { id: "pat", header: "Pattern", cell: (r) => <Box className="sentinel-wrap-anywhere">{r.pattern}</Box> },
-          { id: "mode", header: "Match", cell: (r) => r.match_mode },
-          { id: "cd", header: "Cooldown (s)", cell: (r) => String(r.cooldown_secs) },
-          { id: "en", header: "On", cell: (r) => (r.enabled ? "Yes" : "No") },
-          {
-            id: "scopes",
-            header: "Scopes",
-            cell: (r) => formatScopesLabel(r.scopes, groups ?? [], agentsById),
-          },
-          {
-            id: "act",
-            header: "Actions",
-            cell: (r) => (
-              <SpaceBetween direction="horizontal" size="xs">
-                <Button variant="link" onClick={() => openEditRule(r)}>
-                  Edit
-                </Button>
-                <Button variant="link" onClick={() => setDeleteRule(r)}>
-                  Delete
-                </Button>
-              </SpaceBetween>
-            ),
-          },
-        ]}
-        items={rules ?? []}
-        loading={loading}
-        loadingText="Loading rules"
-        empty={<Box color="text-body-secondary">No alert rules yet.</Box>}
-        variant="embedded"
-      />
+      {!isNarrow && (
+        <Button variant="primary" onClick={openCreateRule}>
+          Create alert rule
+        </Button>
+      )}
+      {isNarrow ? (
+        loading && ruleItems.length === 0 ? (
+          <Box color="text-body-secondary">Loading rules…</Box>
+        ) : ruleItems.length === 0 ? (
+          <Box color="text-body-secondary">No alert rules yet.</Box>
+        ) : (
+          <SpaceBetween size="m">
+            {ruleItems.map((r) => (
+              <Box key={r.id} variant="div" className="sentinel-users-mobile-card">
+                <SpaceBetween size="s">
+                  <Box variant="h3" tagOverride="div" fontSize="heading-m">
+                    {r.name || `Rule #${r.id}`}
+                  </Box>
+                  <Box color="text-body-secondary">
+                    {r.channel} · {r.match_mode} · cooldown {r.cooldown_secs}s · {r.enabled ? "On" : "Off"}
+                  </Box>
+                  <Box fontSize="body-s" className="sentinel-wrap-anywhere">
+                    {r.pattern}
+                  </Box>
+                  <Box color="text-body-secondary" fontSize="body-s">
+                    {formatScopesLabel(r.scopes, groups ?? [], agentsById)}
+                  </Box>
+                  <div className="sentinel-users-manage-slot">
+                    <ButtonDropdown
+                      variant="primary"
+                      items={ruleRowActions()}
+                      expandToViewport
+                      onItemClick={({ detail }) => onRuleAction(r, detail.id)}
+                    >
+                      Manage
+                    </ButtonDropdown>
+                  </div>
+                </SpaceBetween>
+              </Box>
+            ))}
+          </SpaceBetween>
+        )
+      ) : (
+        <Table
+          columnDefinitions={[
+            { id: "name", header: "Name", cell: (r) => r.name || `Rule #${r.id}` },
+            { id: "ch", header: "Channel", cell: (r) => r.channel },
+            { id: "pat", header: "Pattern", cell: (r) => <Box className="sentinel-wrap-anywhere">{r.pattern}</Box> },
+            { id: "mode", header: "Match", cell: (r) => r.match_mode },
+            { id: "cd", header: "Cooldown (s)", cell: (r) => String(r.cooldown_secs) },
+            { id: "en", header: "On", cell: (r) => (r.enabled ? "Yes" : "No") },
+            {
+              id: "scopes",
+              header: "Scopes",
+              cell: (r) => formatScopesLabel(r.scopes, groups ?? [], agentsById),
+            },
+            {
+              id: "act",
+              header: "",
+              cell: (r) => (
+                <ButtonDropdown
+                  variant="normal"
+                  items={ruleRowActions()}
+                  expandToViewport
+                  onItemClick={({ detail }) => onRuleAction(r, detail.id)}
+                >
+                  Manage
+                </ButtonDropdown>
+              ),
+            },
+          ]}
+          items={ruleItems}
+          loading={loading}
+          loadingText="Loading rules"
+          empty={<Box color="text-body-secondary">No alert rules yet.</Box>}
+          variant="embedded"
+        />
+      )}
     </SpaceBetween>
   );
 
@@ -456,30 +581,47 @@ export function NotificationsAdminPage() {
         <Header
           variant="h1"
           description="Admin: URL and keystroke patterns that trigger in-dashboard notifications. Scoped globally, by agent group, or per agent."
-          actions={
-            <Button iconName="refresh" onClick={() => void load()} loading={loading}>
-              Refresh
-            </Button>
-          }
+          actions={isNarrow ? undefined : headerActions}
         >
           Notifications
         </Header>
       }
     >
-      <SpaceBetween size="l">
-        {error && (
-          <Alert type="error" dismissible onDismiss={() => setError(null)}>
-            {error}
-          </Alert>
-        )}
+      <div className="sentinel-notify-page">
+        <SpaceBetween size="l">
+          {error && (
+            <Alert type="error" dismissible onDismiss={() => setError(null)}>
+              {error}
+            </Alert>
+          )}
 
-        <Tabs
-          tabs={[
-            { label: "Agent groups", id: "groups", content: groupsTab },
-            { label: "Alert rules", id: "rules", content: rulesTab },
-          ]}
-        />
-      </SpaceBetween>
+          {isNarrow && mobileToolbar}
+
+          {isNarrow ? (
+            <SpaceBetween size="m">
+              <SegmentedControl
+                className="sentinel-notify-view-toggle"
+                label="View"
+                selectedId={mainTab}
+                options={[
+                  { id: "groups", text: "Agent groups" },
+                  { id: "rules", text: "Alert rules" },
+                ]}
+                onChange={({ detail }) => setMainTab(detail.selectedId as MainTabId)}
+              />
+              {mainTab === "groups" ? groupsPanel : rulesPanel}
+            </SpaceBetween>
+          ) : (
+            <Tabs
+              activeTabId={mainTab}
+              onChange={({ detail }) => setMainTab(detail.activeTabId as MainTabId)}
+              tabs={[
+                { label: "Agent groups", id: "groups", content: groupsPanel },
+                { label: "Alert rules", id: "rules", content: rulesPanel },
+              ]}
+            />
+          )}
+        </SpaceBetween>
 
       <Modal
         visible={Boolean(groupModal)}
@@ -526,7 +668,8 @@ export function NotificationsAdminPage() {
       >
         <SpaceBetween size="m">
           <FormField label="Add agent">
-            <SpaceBetween direction="horizontal" size="xs">
+            <div className="sentinel-notify-members-add">
+              <SpaceBetween direction="horizontal" size="xs">
               <Select
                 selectedOption={
                   addAgentId ? addableAgents.find((o) => o.value === addAgentId) ?? null : null
@@ -543,29 +686,49 @@ export function NotificationsAdminPage() {
               <Button disabled={!addAgentId} onClick={() => void addMember()}>
                 Add
               </Button>
-            </SpaceBetween>
+              </SpaceBetween>
+            </div>
           </FormField>
-          <Table
-            columnDefinitions={[
-              {
-                id: "name",
-                header: "Agent",
-                cell: (id: string) => agentsById[id]?.name ?? id,
-              },
-              {
-                id: "rm",
-                header: "",
-                cell: (id: string) => (
-                  <Button variant="link" onClick={() => void removeMember(id)}>
-                    Remove
-                  </Button>
-                ),
-              },
-            ]}
-            items={membersModal?.memberIds ?? []}
-            empty={<Box color="text-body-secondary">No members in this group.</Box>}
-            variant="embedded"
-          />
+          {isNarrow ? (
+            (membersModal?.memberIds.length ?? 0) === 0 ? (
+              <Box color="text-body-secondary">No members in this group.</Box>
+            ) : (
+              <SpaceBetween size="m">
+                {(membersModal?.memberIds ?? []).map((id) => (
+                  <Box key={id} variant="div" className="sentinel-users-mobile-card">
+                    <SpaceBetween size="s">
+                      <Box fontSize="heading-s" fontWeight="bold">
+                        {agentsById[id]?.name ?? id}
+                      </Box>
+                      <Button onClick={() => void removeMember(id)}>Remove from group</Button>
+                    </SpaceBetween>
+                  </Box>
+                ))}
+              </SpaceBetween>
+            )
+          ) : (
+            <Table
+              columnDefinitions={[
+                {
+                  id: "name",
+                  header: "Agent",
+                  cell: (id: string) => agentsById[id]?.name ?? id,
+                },
+                {
+                  id: "rm",
+                  header: "",
+                  cell: (id: string) => (
+                    <Button variant="link" onClick={() => void removeMember(id)}>
+                      Remove
+                    </Button>
+                  ),
+                },
+              ]}
+              items={membersModal?.memberIds ?? []}
+              empty={<Box color="text-body-secondary">No members in this group.</Box>}
+              variant="embedded"
+            />
+          )}
         </SpaceBetween>
       </Modal>
 
@@ -591,7 +754,7 @@ export function NotificationsAdminPage() {
           <FormField label="Display name">
             <Input value={ruleForm.name} onChange={({ detail }) => setRuleForm((p) => ({ ...p, name: detail.value }))} />
           </FormField>
-          <ColumnFieldsRow>
+          <ColumnLayout columns={isNarrow ? 1 : 2}>
             <FormField label="Channel">
               <Select
                 selectedOption={CHANNEL_OPTIONS.find((o) => o.value === ruleForm.channel)!}
@@ -612,27 +775,29 @@ export function NotificationsAdminPage() {
                 options={MATCH_OPTIONS}
               />
             </FormField>
-          </ColumnFieldsRow>
+          </ColumnLayout>
           <FormField
             label="Pattern"
             description={ruleForm.match_mode === "regex" ? "Rust regex; case sensitivity follows the checkbox below." : "Substring match."}
           >
             <Input value={ruleForm.pattern} onChange={({ detail }) => setRuleForm((p) => ({ ...p, pattern: detail.value }))} />
           </FormField>
-          <SpaceBetween direction="horizontal" size="l">
-            <Checkbox
-              checked={ruleForm.case_insensitive}
-              onChange={({ detail }) => setRuleForm((p) => ({ ...p, case_insensitive: detail.checked }))}
-            >
-              Case-insensitive
-            </Checkbox>
-            <Checkbox
-              checked={ruleForm.enabled}
-              onChange={({ detail }) => setRuleForm((p) => ({ ...p, enabled: detail.checked }))}
-            >
-              Enabled
-            </Checkbox>
-          </SpaceBetween>
+          <div className="sentinel-notify-check-row">
+            <SpaceBetween direction="horizontal" size="l">
+              <Checkbox
+                checked={ruleForm.case_insensitive}
+                onChange={({ detail }) => setRuleForm((p) => ({ ...p, case_insensitive: detail.checked }))}
+              >
+                Case-insensitive
+              </Checkbox>
+              <Checkbox
+                checked={ruleForm.enabled}
+                onChange={({ detail }) => setRuleForm((p) => ({ ...p, enabled: detail.checked }))}
+              >
+                Enabled
+              </Checkbox>
+            </SpaceBetween>
+          </div>
           <FormField label="Cooldown (seconds)" description="0 = fire every matching event (can be noisy).">
             <Input
               type="number"
@@ -687,7 +852,7 @@ export function NotificationsAdminPage() {
                       />
                     </FormField>
                   )}
-                  <div style={{ marginTop: 28 }}>
+                  <div className="sentinel-notify-scope-remove">
                     <Button
                       disabled={ruleForm.scopes.length <= 1}
                       variant="icon"
@@ -744,11 +909,7 @@ export function NotificationsAdminPage() {
         Delete rule #{deleteRule?.id}
         {deleteRule?.name ? ` (${deleteRule.name})` : ""}?
       </Modal>
+      </div>
     </ContentLayout>
   );
-}
-
-/** Two columns on wide screens; stacks on narrow. */
-function ColumnFieldsRow({ children }: { children: ReactNode }) {
-  return <div className="sentinel-notify-form-columns">{children}</div>;
 }

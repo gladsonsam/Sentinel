@@ -21,6 +21,7 @@ import { ScreenTab } from "../components/tabs/ScreenTab";
 import { KeysTab } from "../components/tabs/KeysTab";
 import { WindowsTab } from "../components/tabs/WindowsTab";
 import { UrlsTab } from "../components/tabs/UrlsTab";
+import { AlertsTab } from "../components/tabs/AlertsTab";
 import { FilesTab } from "../components/tabs/FilesTab";
 import { AuditTab } from "../components/tabs/AuditTab";
 import { SoftwareTab } from "../components/tabs/SoftwareTab";
@@ -265,6 +266,8 @@ export function AgentDetailPage({
         return <WindowsTab agentId={agent.id} />;
       case "urls":
         return <UrlsTab agentId={agent.id} />;
+      case "alerts":
+        return <AlertsTab agentId={agent.id} />;
       case "files":
         return <FilesTab agentId={agent.id} sendWsMessage={sendWsMessage} />;
       case "audit":

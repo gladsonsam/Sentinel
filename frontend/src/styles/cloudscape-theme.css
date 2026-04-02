@@ -3,6 +3,96 @@
 /* Import Cloudscape global styles */
 @import "@cloudscape-design/global-styles/index.css";
 
+/* ── App shell: stop flex/grid from crushing controls on narrow viewports ───────
+   Without min-width: 0 on nested flex chains, children can get near-zero width and
+   Cloudscape horizontal SpaceBetween + word-break will stack one character per line. */
+#root {
+  min-width: 0;
+  width: 100%;
+}
+
+/* All authenticated pages render inside this wrapper (see DashboardLayout). */
+.sentinel-dashboard-main {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* Stacked Flashbar “N notifications” pill: upstream sets word-break: break-word on the
+   bar, which breaks button/status text vertically on phones. Keep phrases on one line. */
+[class*="awsui_stack_"] > [class*="awsui_notification-bar_"] {
+  word-break: normal !important;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  flex-wrap: nowrap;
+  justify-content: center;
+  column-gap: var(--space-m-dsumyt, 16px);
+}
+
+[class*="awsui_stack_"] > [class*="awsui_notification-bar_"] [class*="awsui_status_"],
+[class*="awsui_stack_"] > [class*="awsui_notification-bar_"] [class*="awsui_button_"] {
+  word-break: normal;
+  white-space: nowrap;
+}
+
+/* Inline flash rows: message may wrap; action + dismiss stay single-line */
+[class*="awsui_flash-body_"] [class*="awsui_action-button-wrapper_"],
+[class*="awsui_flash-body_"] [class*="awsui_dismiss-button-wrapper_"] {
+  flex-shrink: 0;
+}
+
+/* Page headers (e.g. Notifications + Refresh): actions stay readable */
+.sentinel-dashboard-main [class*="awsui_root_"][class*="awsui_root-variant-h1_"] [class*="awsui_actions_"],
+.sentinel-dashboard-main [class*="awsui_root_"][class*="awsui_root-variant-h2_"] [class*="awsui_actions_"] {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.sentinel-dashboard-main [class*="awsui_actions_"] button,
+.sentinel-dashboard-main [class*="awsui_actions_"] [class*="awsui_button"] {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+/* Table cells: horizontal button groups must not shrink below label width */
+.sentinel-dashboard-main td [class*="awsui_horizontal_"] > * {
+  flex-shrink: 0;
+}
+
+.sentinel-dashboard-main td [class*="awsui_horizontal_"] button,
+.sentinel-dashboard-main td [class*="awsui_horizontal_"] [class*="awsui_button"] {
+  white-space: nowrap;
+}
+
+/* Notifications admin: scope editor + add-member row stack cleanly on small screens */
+@media (max-width: 688px) {
+  .sentinel-notify-members-add [class*="awsui_horizontal_"] {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .sentinel-notify-scope-row [class*="awsui_horizontal_"] {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .sentinel-notify-check-row [class*="awsui_horizontal_"] {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+.sentinel-notify-scope-remove {
+  flex: 0 0 auto;
+  align-self: flex-start;
+}
+
+@media (min-width: 689px) {
+  .sentinel-notify-scope-remove {
+    margin-top: 28px;
+  }
+}
+
 /* Custom theme variables for Sentinel */
 :root {
   /* Brand colors */
@@ -483,8 +573,16 @@
 
 /* ── Users page (narrow viewports) ───────────────────────────────────────── */
 
-.sentinel-users-page {
+.sentinel-users-page,
+.sentinel-notify-page {
   min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* Full-width view switcher (matches mobile-friendly admin patterns) */
+.sentinel-notify-view-toggle {
+  width: 100%;
   max-width: 100%;
   box-sizing: border-box;
 }

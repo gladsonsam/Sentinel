@@ -45,6 +45,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/agents/:id/info", get(agent_info))
         .route("/agents/:id/windows", get(agent_windows))
         .route("/agents/:id/keys", get(agent_keys))
+        .route("/agents/:id/alert-rule-events", get(agent_alert_rule_events))
         .route("/agents/:id/urls", get(agent_urls))
         .route("/agents/:id/activity", get(agent_activity))
         .route("/agents/:id/top-urls", get(agent_top_urls))
@@ -647,6 +648,37 @@ async fn agent_urls(
                 user.username.as_str(),
                 Some(id),
                 "view_urls",
+                "ok",
+                &serde_json::json!({ "limit": p.limit, "offset": p.offset }),
+                10,
+                ip.as_deref(),
+            )
+            .await;
+            Json(serde_json::json!({ "rows": rows })).into_response()
+        }
+        Err(e) => err500(e),
+    }
+}
+
+async fn agent_alert_rule_events(
+    Path(id): Path<Uuid>,
+    Query(p): Query<PageParams>,
+    State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> Response {
+    if let Err(msg) = validate_page_params(&p) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+    }
+    let ip = audit_ip(&headers, addr);
+    match db::alert_rule_events_list_for_agent(&s.db, id, p.limit, p.offset).await {
+        Ok(rows) => {
+            let _ = db::insert_audit_log_dedup(
+                &s.db,
+                user.username.as_str(),
+                Some(id),
+                "view_alert_rule_events",
                 "ok",
                 &serde_json::json!({ "limit": p.limit, "offset": p.offset }),
                 10,

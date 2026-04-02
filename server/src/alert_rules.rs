@@ -100,6 +100,18 @@ pub async fn on_url_or_keys_event(
         }
 
         let snippet = truncate_snippet(&haystack, channel);
+        if let Err(e) = db::alert_rule_event_insert(
+            &state.db,
+            agent_id,
+            rule.id,
+            rule.name.as_str(),
+            channel,
+            snippet.as_str(),
+        )
+        .await
+        {
+            tracing::warn!(error = %e, "alert_rule_event_insert failed");
+        }
         state.broadcast(
             serde_json::json!({
                 "event": "alert_rule_match",

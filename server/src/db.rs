@@ -1801,6 +1801,76 @@ pub async fn alert_rule_delete(pool: &PgPool, rule_id: i64) -> Result<bool> {
     Ok(r.rows_affected() > 0)
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct AlertRuleEventRow {
+    pub id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rule_id: Option<i64>,
+    pub rule_name: String,
+    pub channel: String,
+    pub snippet: String,
+    pub created_at: DateTime<Utc>,
+}
+
+pub async fn alert_rule_event_insert(
+    pool: &PgPool,
+    agent_id: Uuid,
+    rule_id: i64,
+    rule_name: &str,
+    channel: &str,
+    snippet: &str,
+) -> Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO alert_rule_events (agent_id, rule_id, rule_name, channel, snippet)
+        VALUES ($1, $2, $3, $4, $5)
+        "#,
+    )
+    .bind(agent_id)
+    .bind(rule_id)
+    .bind(rule_name)
+    .bind(channel)
+    .bind(snippet)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn alert_rule_events_list_for_agent(
+    pool: &PgPool,
+    agent_id: Uuid,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<AlertRuleEventRow>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT id, rule_id, rule_name, channel, snippet, created_at
+        FROM alert_rule_events
+        WHERE agent_id = $1
+        ORDER BY created_at DESC
+        LIMIT $2 OFFSET $3
+        "#,
+    )
+    .bind(agent_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        out.push(AlertRuleEventRow {
+            id: r.try_get("id")?,
+            rule_id: r.try_get("rule_id")?,
+            rule_name: r.try_get("rule_name")?,
+            channel: r.try_get("channel")?,
+            snippet: r.try_get("snippet")?,
+            created_at: r.try_get("created_at")?,
+        });
+    }
+    Ok(out)
+}
+
 // ─── Utility ──────────────────────────────────────────────────────────────────
 
 fn unix_to_dt(ts: Option<i64>) -> DateTime<Utc> {

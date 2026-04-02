@@ -33,7 +33,7 @@ const NAV_ITEMS: SideNavigationProps.Item[] = [
     text: "Captured data",
     href: "#keys",
     defaultExpanded: false,
-    items: [navLink("keys"), navLink("windows"), navLink("urls"), navLink("audit")],
+    items: [navLink("keys"), navLink("windows"), navLink("urls"), navLink("alerts"), navLink("audit")],
   },
   { type: "divider" },
   navLink("settings"),

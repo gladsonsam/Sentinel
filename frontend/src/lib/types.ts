@@ -248,6 +248,7 @@ export type TabKey =
   | "keys"
   | "windows"
   | "urls"
+  | "alerts"
   | "files"
   | "audit"
   | "settings";
