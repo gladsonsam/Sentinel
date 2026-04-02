@@ -50,17 +50,6 @@ export function TopNav({
                 },
               ]
             : []),
-          ...(onOpenActivityLog
-            ? [
-                {
-                  type: "button" as const,
-                  iconName: "file-open" as const,
-                  title: "Activity log",
-                  ariaLabel: "Activity log",
-                  onClick: onOpenActivityLog,
-                },
-              ]
-            : []),
           {
             type: "menu-dropdown" as const,
             iconName: "user-profile" as const,
@@ -74,12 +63,16 @@ export function TopNav({
               ...(onOpenNotifications
                 ? [{ id: "notifications", text: "Notifications" }]
                 : []),
+              ...(onOpenActivityLog
+                ? [{ id: "activity_log", text: "Activity log" }]
+                : []),
               { id: "settings", text: "Settings" },
               { id: "logout", text: "Logout" },
             ],
             onItemClick: ({ detail }) => {
               if (detail.id === "users") onOpenUsers?.();
               else if (detail.id === "notifications") onOpenNotifications?.();
+              else if (detail.id === "activity_log") onOpenActivityLog?.();
               else if (detail.id === "settings") onShowPreferences();
               else if (detail.id === "logout") onLogout();
             },
