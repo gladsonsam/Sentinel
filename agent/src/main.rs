@@ -334,7 +334,11 @@ async fn run_agent_loop(
                         &status,
                         AgentStatus::Error("Refusing to connect: server URL must be wss:// (HTTPS required)".into()),
                     );
-                    warn!("Refusing to connect due to non-TLS WebSocket URL: {ws_url}");
+                    // Do not log secrets embedded in the URL query string.
+                    warn!(
+                        "Refusing to connect due to non-TLS WebSocket URL: {}",
+                        redact_secret_from_ws_url(&ws_url)
+                    );
                     tokio::select! {
                         _ = tokio::time::sleep(Duration::from_secs(RECONNECT_DELAY_SECS)) => {}
                         _ = config_rx.changed() => { info!("Config changed – applying new settings immediately."); }

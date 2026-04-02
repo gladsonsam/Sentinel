@@ -48,6 +48,58 @@ interface AggregateSessionsOptions {
   gapThresholdSeconds?: number;
 }
 
+function normalizeSpace(s: string | undefined | null): string {
+  return (s ?? "").replace(/\s+/g, " ").trim();
+}
+
+function isGenericWindowsOsName(name: string): boolean {
+  const n = normalizeSpace(name).toLowerCase();
+  return (
+    n === "microsoft windows operating system" ||
+    n === "microsoft® windows® operating system" ||
+    n.includes("windows operating system")
+  );
+}
+
+function lastTitleSegment(title: string): string {
+  // Common pattern: "something - AppName"
+  const t = normalizeSpace(title);
+  const idx = t.lastIndexOf(" - ");
+  if (idx >= 0) return t.slice(idx + 3).trim();
+  return t;
+}
+
+function deriveAppDisplayName(window: WindowEvent): string {
+  const exe = normalizeSpace(window.exe_name).toLowerCase();
+  const title = normalizeSpace(window.window_title);
+  const titleTail = lastTitleSegment(title);
+  const meta = normalizeSpace(window.app_display);
+
+  // UWP/packaged apps often run under a host process like ApplicationFrameHost.
+  // In that case the window title is the "real" app name (e.g. "Calculator").
+  if (exe === "applicationframehost.exe") {
+    if (titleTail) return titleTail;
+    if (title) return title;
+  }
+
+  // Explorer's version metadata is frequently generic; the UI should call it File Explorer.
+  if (exe === "explorer.exe") {
+    if (titleTail.toLowerCase() === "file explorer") return "File Explorer";
+    if (title.toLowerCase().includes("file explorer")) return "File Explorer";
+    if (meta && !isGenericWindowsOsName(meta)) return meta;
+    return "File Explorer";
+  }
+
+  // If metadata is a generic OS name, prefer the (often meaningful) window title.
+  if (meta && isGenericWindowsOsName(meta)) {
+    if (titleTail) return titleTail;
+    if (title) return title;
+    return window.exe_name;
+  }
+
+  return meta || window.exe_name;
+}
+
 /**
  * Known browser executable names (lower-case).
  * URLs captured by the agent should only ever be attributed to one of these.
@@ -153,12 +205,19 @@ export function aggregateSessions({
 
   for (const window of sortedWindows) {
     const windowTime = new Date(window.timestamp);
+    const prevEndMs = currentSession?.endTime.getTime();
+
+    // The *previous* foreground state lasts until this window event occurs.
+    // Without this, durations collapse to ~0s because events are instantaneous.
+    if (currentSession) {
+      currentSession.endTime = windowTime;
+    }
 
     const shouldStartNew =
       !currentSession ||
       currentSession.appName !== window.exe_name ||
-      (windowTime.getTime() - currentSession.endTime.getTime()) / 1000 >
-        gapThresholdSeconds;
+      (typeof prevEndMs === "number" &&
+        (windowTime.getTime() - prevEndMs) / 1000 > gapThresholdSeconds);
 
     if (shouldStartNew) {
       if (currentSession) {
@@ -168,7 +227,7 @@ export function aggregateSessions({
       currentSession = {
         id: `session-${window.id}-${windowTime.getTime()}`,
         appName: window.exe_name,
-        appDisplayName: window.app_display ?? window.exe_name,
+        appDisplayName: deriveAppDisplayName(window),
         windowTitle: window.window_title,
         startTime: windowTime,
         endTime: windowTime,
@@ -181,8 +240,10 @@ export function aggregateSessions({
         hasUrls: false,
       };
     } else if (currentSession) {
-      currentSession.endTime = windowTime;
       currentSession.windowTitle = window.window_title;
+      // Some executables host multiple "real" apps (e.g. ApplicationFrameHost.exe).
+      // Keep the display name aligned with the most recent foreground title.
+      currentSession.appDisplayName = deriveAppDisplayName(window);
       currentSession.windows.push(window);
     }
   }
@@ -192,6 +253,24 @@ export function aggregateSessions({
   }
 
   const gapMs = gapThresholdSeconds * 1000;
+
+  // Extend the last session so the timeline is continuous up to "now"
+  // when the data appears to be from the current/ongoing recording.
+  const last = sessions[sessions.length - 1];
+  if (last) {
+    const maxEventMs = Math.max(
+      ...sortedWindows.map((w) => new Date(w.timestamp).getTime()),
+      ...(urls.length ? urls.map((u) => new Date(u.timestamp).getTime()) : [0]),
+      ...(keystrokes.length
+        ? keystrokes.map((k) => new Date(k.timestamp).getTime())
+        : [0])
+    );
+    const nowMs = Date.now();
+    const endMs = nowMs - maxEventMs <= gapMs ? nowMs : maxEventMs;
+    if (endMs > last.endTime.getTime()) {
+      last.endTime = new Date(endMs);
+    }
+  }
 
   for (const session of sessions) {
     const startMs = session.startTime.getTime();
@@ -212,8 +291,9 @@ export function aggregateSessions({
       0
     );
 
-    session.duration = Math.floor(
-      (session.endTime.getTime() - session.startTime.getTime()) / 1000
+    session.duration = Math.max(
+      0,
+      Math.floor((session.endTime.getTime() - session.startTime.getTime()) / 1000)
     );
 
     session.hasKeystrokes = session.keystrokes.length > 0;

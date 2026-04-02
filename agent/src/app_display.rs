@@ -157,17 +157,22 @@ fn app_display_from_full_path_uncached(full_path: &str) -> String {
             .unwrap_or_else(|| vec![(0x0409u16, 0x04B0u16)]); // en-US fallback
 
         // Try a few likely metadata fields, in order.
+        //
+        // Important: `ProductName` is often the OS name for Windows components
+        // (e.g. `ApplicationFrameHost.exe`, `explorer.exe`) which makes the UI
+        // misleading. Prefer `FileDescription` first; it usually contains the
+        // actual component/app name users expect.
         for (lang, codepage) in translations {
-            let product_q = format!(r"\StringFileInfo\{:04x}{:04x}\ProductName", lang, codepage);
-            if let Some(v) = query_string_from_version_block(&buf, &product_q) {
+            let desc_q = format!(r"\StringFileInfo\{:04x}{:04x}\FileDescription", lang, codepage);
+            if let Some(v) = query_string_from_version_block(&buf, &desc_q) {
                 let v = normalize_display_name(v);
                 if !v.is_empty() {
                     return v;
                 }
             }
 
-            let desc_q = format!(r"\StringFileInfo\{:04x}{:04x}\FileDescription", lang, codepage);
-            if let Some(v) = query_string_from_version_block(&buf, &desc_q) {
+            let product_q = format!(r"\StringFileInfo\{:04x}{:04x}\ProductName", lang, codepage);
+            if let Some(v) = query_string_from_version_block(&buf, &product_q) {
                 let v = normalize_display_name(v);
                 if !v.is_empty() {
                     return v;
