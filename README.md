@@ -15,15 +15,10 @@ A lightweight, self-hosted monitoring system built with Rust and React. A Window
 
 ## Features
 
-- **Agents overview** — See online/offline status, last-seen, and quick summaries.
 - **Activity timeline** — A browsable history of foreground apps/windows with durations.
-- **Live screen viewer** — Demand-driven MJPEG screen streaming; capture stops when no one is watching.
+- **Live screen viewer** — Demand-driven MJPEG screen streaming
 - **Remote control** — Send mouse and keyboard commands from the dashboard to the agent.
-- **Telemetry capture** — Window focus, URLs, AFK/active transitions, plus optional keystroke capture.
-- **MJPEG screen streaming** — Demand-driven screen capture; the agent stops capturing when no viewers are watching.
-- **Agent and UI auth** — Shared secret for agents; password-protected dashboard sessions.
-- **PostgreSQL persistence** — Historical record of keys, windows, URLs, and activity.
-- **Single-container deploy** — The Rust server embeds the compiled React frontend; no separate web server needed.
+- **Telemetry capture** — Window focus, URLs, AFK/active transitions and keystroke capture.
 
 ## Tech stack
 
@@ -36,14 +31,6 @@ A lightweight, self-hosted monitoring system built with Rust and React. A Window
 ## Documentation
 
 **Deploy, configure, use the dashboard and agent, and develop:** see the **[GitHub wiki](https://github.com/gladsonsam/Sentinel/wiki)**.
-
-## Health check
-
-```bash
-curl http://127.0.0.1:9000/healthz
-```
-
-Expect `200 OK`.
 
 ## License
 
