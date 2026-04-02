@@ -33,6 +33,7 @@
 
 use std::cell::Cell;
 use std::sync::OnceLock;
+use std::sync::Mutex;
 use tokio::sync::mpsc::UnboundedSender;
 use windows::core::PWSTR;
 use windows::Win32::Foundation::{CloseHandle, LPARAM, LRESULT, WPARAM};
@@ -88,6 +89,40 @@ pub enum InputEvent {
 /// Sends decoded keystrokes from the hook callback to the decoder thread.
 /// `OnceLock` so it is safe to access from the `extern "system"` callback.
 static HOOK_TX: OnceLock<std::sync::mpsc::SyncSender<String>> = OnceLock::new();
+
+#[derive(Clone, Default)]
+struct ForegroundContext {
+    app: String,
+    app_display: String,
+    window: String,
+}
+
+static FOREGROUND_CTX: OnceLock<Mutex<ForegroundContext>> = OnceLock::new();
+
+fn foreground_ctx() -> &'static Mutex<ForegroundContext> {
+    FOREGROUND_CTX.get_or_init(|| Mutex::new(ForegroundContext::default()))
+}
+
+/// Update the foreground window context used by the key decoder thread.
+///
+/// This avoids expensive per-keystroke Win32 queries (OpenProcess + QueryFullProcessImageNameW)
+/// by letting the main session loop publish the latest context when it already has it.
+pub fn set_foreground_context(app: String, app_display: String, window: String) {
+    if let Ok(mut g) = foreground_ctx().lock() {
+        g.app = app;
+        g.app_display = app_display;
+        g.window = window;
+    }
+}
+
+fn cached_foreground_window_info() -> (String, String, String) {
+    if let Ok(g) = foreground_ctx().lock() {
+        if !g.app.is_empty() || !g.window.is_empty() {
+            return (g.app.clone(), g.app_display.clone(), g.window.clone());
+        }
+    }
+    foreground_window_info()
+}
 
 thread_local! {
     /// Same thread as [`SetWindowsHookExW`] / hook callback; [`HHOOK`] is not `Sync` for a `static`.
@@ -240,7 +275,7 @@ fn run_decoder(raw_rx: std::sync::mpsc::Receiver<String>, out_tx: UnboundedSende
         match raw_rx.recv_timeout(timeout) {
             Ok(ch) => {
                 last_key = Instant::now();
-                let (app, app_display, win) = foreground_window_info();
+                let (app, app_display, win) = cached_foreground_window_info();
 
                 // Window context changed → flush previous buffer first.
                 if !buf.is_empty() && (app != cur_app || win != cur_win) {

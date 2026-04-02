@@ -140,8 +140,10 @@ function isTaskSwitchingNoiseEvent(win: WindowEvent): boolean {
   return (
     title === "task switching" ||
     title === "task view" ||
+    title === "snap assist" ||
     title.includes("task switching") ||
-    title.includes("task view")
+    title.includes("task view") ||
+    title.includes("snap assist")
   );
 }
 

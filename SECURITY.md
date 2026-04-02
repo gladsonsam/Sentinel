@@ -1,0 +1,43 @@
+# Security Policy
+
+Sentinel is a lightweight, self-hosted monitoring system. It includes sensitive capabilities (screen streaming, activity/window/URL tracking, remote control, and related telemetry). Please treat potential security issues seriously and report them responsibly.
+
+> Note: This project is primarily for experimentation/testing and is not a hardened or supported product (see `README.md`). Reports are still welcome, but response/patch timelines are best-effort.
+
+## Supported Versions
+
+Only the latest commit on the `main` branch is supported.
+
+- If you found an issue on an older commit, please reproduce it on the latest `main` if possible.
+
+## Reporting a Vulnerability
+
+Please **do not** open a public GitHub issue for security vulnerabilities.
+
+Instead, report privately:
+
+- **Preferred**: Open a **private security advisory** on GitHub (Security → Advisories → “Report a vulnerability”) for this repository.
+- **If you can’t use advisories**: Contact the repository owner/maintainers via a private channel listed on the project’s GitHub profile.
+
+Include as much of the following as you can:
+
+- A clear description of the vulnerability and its impact
+- Reproduction steps and any proof-of-concept code
+- Affected component(s): `sentinel-agent`, `sentinel-server`, `sentinel-dashboard`
+- Environment details (Windows version, browser, server OS, configuration)
+- Whether the issue is remotely exploitable and what authentication is required
+- Any relevant logs (please redact secrets and personal data)
+
+## What to Expect
+
+- You should receive an acknowledgment when the report is received.
+- Fixes, releases, and disclosure timing are coordinated on a best-effort basis.
+
+## Safe Harbor
+
+If you act in good faith and follow this policy (no data destruction, no service disruption, no privacy violations beyond what is necessary to demonstrate the issue), we will consider your research authorized for the purpose of reporting.
+
+## Sensitive Data
+
+Please **do not** include real screen captures, keystrokes, credentials, tokens, or other personal data in your report. If such data is required to demonstrate the issue, use synthetic/test accounts and redact wherever possible.
+

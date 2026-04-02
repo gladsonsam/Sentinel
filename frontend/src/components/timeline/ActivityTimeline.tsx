@@ -6,6 +6,7 @@ import {
   ChevronRight,
   ExternalLink,
   Layout,
+  Moon,
 } from "lucide-react";
 import Container from "@cloudscape-design/components/container";
 import Header from "@cloudscape-design/components/header";
@@ -82,8 +83,11 @@ function dedupeWindowsByTimestampAndTitle(windows: Session["windows"]) {
 function SessionItem({ session, isLast }: { session: Session; isLast: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const canExpand = session.windows.length > 0 || session.hasKeystrokes || session.hasUrls;
+  const isIdle = session.appName === "__idle__";
 
-  const accent = session.hasKeystrokes
+  const accent = isIdle
+    ? "var(--vtl-border)"
+    : session.hasKeystrokes
     ? session.hasUrls
       ? "var(--vtl-accent)"
       : "var(--vtl-success)"
@@ -101,7 +105,14 @@ function SessionItem({ session, isLast }: { session: Session; isLast: boolean })
 
       {/* Center: dot + line */}
       <div className="vtl-spine">
-        <div className="vtl-dot" style={{ borderColor: accent, boxShadow: `0 0 0 3px ${accent}22` }} />
+        <div
+          className="vtl-dot"
+          style={{
+            borderColor: accent,
+            boxShadow: `0 0 0 3px ${accent}22`,
+            opacity: isIdle ? 0.55 : 1,
+          }}
+        />
         {!isLast && <div className="vtl-rail" />}
       </div>
 
@@ -114,12 +125,22 @@ function SessionItem({ session, isLast }: { session: Session; isLast: boolean })
           aria-expanded={expanded}
         >
           <div className="vtl-card-main">
-            <div className="vtl-card-title">{session.appDisplayName || session.appName}</div>
-            <div style={{ fontSize: "12px", opacity: 0.8 }} className="sentinel-monospace">
-              {session.appName}
+            <div className="vtl-card-title" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              {isIdle && <Moon size={14} />}
+              <span>{isIdle ? "Idle / Away" : (session.appDisplayName || session.appName)}</span>
             </div>
-            {session.windowTitle && session.windowTitle !== session.appName && (
+            {!isIdle && (
+              <div style={{ fontSize: "12px", opacity: 0.8 }} className="sentinel-monospace">
+                {session.appName}
+              </div>
+            )}
+            {!isIdle && session.windowTitle && session.windowTitle !== session.appName && (
               <div className="vtl-card-subtitle">{session.windowTitle}</div>
+            )}
+            {isIdle && (
+              <div className="vtl-card-subtitle" style={{ opacity: 0.75 }}>
+                No activity detected
+              </div>
             )}
             <div className="vtl-card-meta">
               <span className="vtl-meta-time">{formatTimeRange(session.startTime, session.endTime)}</span>

