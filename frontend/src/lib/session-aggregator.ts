@@ -235,8 +235,8 @@ export function formatDuration(seconds: number): string {
 }
 
 export function getSessionColor(session: Session): string {
-  if (session.hasKeystrokes && session.hasUrls) return "#0972d3";
-  if (session.hasKeystrokes) return "#037f0c";
-  if (session.hasUrls) return "#f89256";
-  return "#5f6b7a";
+  if (session.hasKeystrokes && session.hasUrls) return "var(--sentinel-primary)";
+  if (session.hasKeystrokes) return "var(--sentinel-success)";
+  if (session.hasUrls) return "var(--sentinel-warning)";
+  return "var(--awsui-color-text-body-secondary)";
 }

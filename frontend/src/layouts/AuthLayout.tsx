@@ -16,10 +16,12 @@ export function AuthLayout({ children }: AuthLayoutProps) {
               alt="Sentinel"
               className="sentinel-auth-logo"
             />
-            <Box variant="h1" fontSize="heading-xl" fontWeight="bold">
+            <Box className="sentinel-auth-title" variant="h1" fontSize="heading-xl" fontWeight="bold">
               Sentinel
             </Box>
-            <Box color="text-body-secondary">Sign in to continue</Box>
+            <Box className="sentinel-auth-subtitle" color="text-body-secondary">
+              Sign in to continue
+            </Box>
           </Box>
 
           {children}

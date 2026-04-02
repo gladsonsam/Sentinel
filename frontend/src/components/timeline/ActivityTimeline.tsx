@@ -83,13 +83,13 @@ function SessionItem({ session, isLast }: { session: Session; isLast: boolean })
   const [expanded, setExpanded] = useState(false);
   const canExpand = session.windows.length > 0 || session.hasKeystrokes || session.hasUrls;
 
-  const accent = session.hasKeystrokes && session.hasUrls
-    ? "#5b8def"
+  const accent = session.hasKeystrokes
+    ? session.hasUrls
+      ? "var(--vtl-accent)"
+      : "var(--vtl-success)"
     : session.hasUrls
-    ? "#5b8def"
-    : session.hasKeystrokes
-    ? "#4caf78"
-    : "#3a3d4d";
+      ? "var(--vtl-accent)"
+      : "var(--vtl-border)";
 
   return (
     <div className="vtl-item">

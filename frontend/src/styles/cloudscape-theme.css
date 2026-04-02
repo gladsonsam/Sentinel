@@ -110,6 +110,49 @@
   /* Custom spacing */
   --sentinel-card-padding: 1rem;
   --sentinel-section-gap: 1.5rem;
+
+  /* Auth + Timeline shared vars (light defaults) */
+  /* Light mode: keep a soft, bright radial gradient (not flat white). */
+  --sentinel-auth-bg:
+    radial-gradient(1200px 760px at 35% 26%, rgba(9, 114, 211, 0.22), rgba(9, 114, 211, 0) 60%),
+    radial-gradient(980px 660px at 72% 66%, rgba(91, 141, 239, 0.18), rgba(91, 141, 239, 0) 64%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--awsui-color-background-layout-main) 78%, var(--sentinel-primary)) 0%,
+      var(--awsui-color-background-layout-main) 62%,
+      var(--awsui-color-background-layout-main) 100%
+    );
+  --sentinel-auth-card-bg: color-mix(in srgb, var(--awsui-color-background-container-content) 94%, var(--sentinel-primary));
+  --sentinel-auth-card-shadow: 0 18px 60px rgba(15, 23, 42, 0.14);
+
+  --vtl-text: var(--awsui-color-text-body-default);
+  --vtl-text-muted: var(--awsui-color-text-body-secondary);
+  --vtl-border: var(--awsui-color-border-divider-default);
+  --vtl-border-strong: var(--awsui-color-border-container-top);
+  /* Timeline cards live inside a white Container; use a slightly shaded surface so cards are still "boxed". */
+  --vtl-surface: var(--awsui-color-background-container-content);
+  --vtl-card-shadow: 0 1px 0 rgba(0, 0, 0, 0.02), 0 8px 18px rgba(15, 23, 42, 0.08);
+  --vtl-surface-hover: var(--awsui-color-background-dropdown-item-hover);
+  --vtl-rail: var(--awsui-color-border-divider-default);
+  --vtl-dot-bg: var(--awsui-color-background-container-content);
+  --vtl-link: var(--awsui-color-text-link-default);
+  --vtl-accent: var(--sentinel-primary);
+  --vtl-success: var(--sentinel-success);
+}
+
+/* Dark-mode overrides for our custom vars */
+.awsui-dark-mode {
+  --sentinel-auth-bg:
+    radial-gradient(1100px 700px at 35% 30%, rgba(9, 114, 211, 0.18), rgba(9, 114, 211, 0) 55%),
+    radial-gradient(900px 600px at 70% 65%, rgba(91, 141, 239, 0.14), rgba(91, 141, 239, 0) 60%),
+    linear-gradient(180deg, #0b1930 0%, #0a1324 55%, #090f1c 100%);
+  --sentinel-auth-card-bg: #0f1b2e;
+  --sentinel-auth-card-shadow: 0 24px 70px rgba(0, 0, 0, 0.25);
+
+  --vtl-surface-hover: rgba(255, 255, 255, 0.025);
+  --vtl-card-shadow: 0 2px 12px rgba(0, 0, 0, 0.28);
+  --vtl-accent: #5b8def;
+  --vtl-success: #4caf78;
 }
 
 /* Audit log status: warning tier (rejected / rate limited) — yellow band */
@@ -478,11 +521,10 @@
   padding-right: max(16px, env(safe-area-inset-right, 0px));
   padding-top: max(12px, env(safe-area-inset-top, 0px));
   padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
-  /* Force Sentinel dark-blue scheme (Cloudscape token was near-black here). */
-  background:
-    radial-gradient(1100px 700px at 35% 30%, rgba(9, 114, 211, 0.18), rgba(9, 114, 211, 0) 55%),
-    radial-gradient(900px 600px at 70% 65%, rgba(91, 141, 239, 0.14), rgba(91, 141, 239, 0) 60%),
-    linear-gradient(180deg, #0b1930 0%, #0a1324 55%, #090f1c 100%);
+  /* fallback + gradient */
+  background-color: var(--awsui-color-background-layout-main);
+  background-image: var(--sentinel-auth-bg);
+  background-attachment: fixed;
   overflow: auto;
 }
 
@@ -497,14 +539,14 @@
   max-height: calc(100dvh - 32px);
   border-radius: 16px;
   border: 1px solid var(--awsui-color-border-container-top);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.25);
+  box-shadow: var(--sentinel-auth-card-shadow);
   padding: 0;
   display: flex;
   align-items: stretch;
   justify-content: center;
   overflow: hidden;
-  /* Solid card surface: avoid translucent Cloudscape tokens bleeding the page gradient. */
-  background: #0f1b2e !important;
+  /* Solid card surface: avoid translucent tokens bleeding the page gradient. */
+  background: var(--sentinel-auth-card-bg) !important;
   background-image: none !important;
   backdrop-filter: none !important;
   color: var(--awsui-color-text-body-default);
@@ -531,6 +573,22 @@
   align-items: center;
   gap: 0.35rem;
   text-align: center;
+  padding: 14px 14px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--awsui-color-border-divider-default) 70%, transparent);
+  background: color-mix(in srgb, var(--awsui-color-background-container-content) 92%, var(--sentinel-primary));
+}
+
+.sentinel-auth-title {
+  color: var(--awsui-color-text-body-default);
+}
+.sentinel-auth-subtitle {
+  color: var(--awsui-color-text-body-secondary);
+}
+
+.awsui-dark-mode .sentinel-auth-card-brand {
+  border-color: color-mix(in srgb, var(--awsui-color-border-divider-default) 70%, transparent);
+  background: color-mix(in srgb, var(--sentinel-auth-card-bg) 88%, #000);
 }
 
 .sentinel-auth-form-wrap {
@@ -665,7 +723,7 @@
   justify-content: center;
   gap: 12px;
   min-height: 200px;
-  color: #6b7090;
+  color: var(--vtl-text-muted);
   font-size: 14px;
   font-family: Inter, "Segoe UI", Roboto, sans-serif;
 }
@@ -673,8 +731,8 @@
 .vtl-spinner {
   width: 28px;
   height: 28px;
-  border: 2px solid #2a2d3a;
-  border-top-color: #5b8def;
+  border: 2px solid var(--vtl-border);
+  border-top-color: var(--vtl-accent);
   border-radius: 50%;
   animation: vtl-spin 0.75s linear infinite;
 }
@@ -699,8 +757,8 @@
   flex-wrap: wrap;
   gap: 12px;
   padding: 14px 16px;
-  background: #1a1d27;
-  border: 1px solid #2a2d3a;
+  background: var(--vtl-surface);
+  border: 1px solid var(--vtl-border);
   border-radius: 10px;
   margin-bottom: 20px;
 }
@@ -709,7 +767,7 @@
   margin: 0;
   font-size: 14px;
   font-weight: 600;
-  color: #d4d8f0;
+  color: var(--vtl-text);
   letter-spacing: -0.01em;
   font-family: Inter, "Segoe UI", Roboto, sans-serif;
 }
@@ -717,7 +775,7 @@
 .vtl-header-sub {
   margin: 2px 0 0;
   font-size: 12px;
-  color: #6b7090;
+  color: var(--vtl-text-muted);
   font-family: Inter, "Segoe UI", Roboto, sans-serif;
 }
 
@@ -740,21 +798,22 @@
 }
 
 .vtl-hbadge-keys {
-  background: rgba(76, 175, 120, 0.12);
-  color: #4caf78;
-  border: 1px solid rgba(76, 175, 120, 0.2);
+  background: color-mix(in srgb, var(--vtl-success) 12%, transparent);
+  color: var(--vtl-success);
+  border: 1px solid color-mix(in srgb, var(--vtl-success) 22%, transparent);
 }
 
 .vtl-hbadge-urls {
-  background: rgba(91, 141, 239, 0.12);
-  color: #5b8def;
-  border: 1px solid rgba(91, 141, 239, 0.2);
+  background: color-mix(in srgb, var(--vtl-accent) 12%, transparent);
+  color: var(--vtl-accent);
+  border: 1px solid color-mix(in srgb, var(--vtl-accent) 22%, transparent);
 }
 
 /* ── Timeline list ── */
 .vtl-list {
   display: flex;
   flex-direction: column;
+  gap: 10px;
 }
 
 /* ── Single timeline item ── */
@@ -779,7 +838,7 @@
 .vtl-time {
   font-size: 11px;
   font-weight: 600;
-  color: #8891b0;
+  color: var(--vtl-text-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   font-family: Inter, "Segoe UI", Roboto, sans-serif;
@@ -787,7 +846,7 @@
 
 .vtl-dur {
   font-size: 10px;
-  color: #555870;
+  color: var(--vtl-text-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   font-family: Inter, "Segoe UI", Roboto, sans-serif;
@@ -805,8 +864,8 @@
   width: 12px;
   height: 12px;
   border-radius: 50%;
-  border: 2px solid #5b8def;
-  background: #12141e;
+  border: 2px solid var(--vtl-accent);
+  background: var(--vtl-dot-bg);
   flex-shrink: 0;
   margin-top: 12px;
   position: relative;
@@ -817,24 +876,26 @@
 .vtl-rail {
   width: 2px;
   flex: 1;
-  background: #2a2d3a;
+  background: var(--vtl-rail);
   min-height: 24px;
 }
 
 /* Right column: the card */
 .vtl-card {
   margin-left: 10px;
-  margin-bottom: 12px;
-  background: #1a1d27;
-  border: 1px solid #2a2d3a;
+  margin-bottom: 0;
+  background: var(--vtl-surface);
+  border: 1px solid var(--vtl-border-strong);
   border-radius: 8px;
   overflow: hidden;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  box-shadow: var(--vtl-card-shadow);
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
 }
 
 .vtl-card:hover {
-  border-color: #3a3d50;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+  border-color: color-mix(in srgb, var(--vtl-border-strong) 55%, var(--vtl-accent));
+  box-shadow: var(--awsui-shadow-panel-hover);
+  transform: translateY(-1px);
 }
 
 .vtl-card-header {
@@ -851,7 +912,7 @@
 }
 
 .vtl-card-header:hover {
-  background: rgba(255, 255, 255, 0.025);
+  background: var(--vtl-surface-hover);
 }
 
 .vtl-card-main {
@@ -865,7 +926,7 @@
 .vtl-card-title {
   font-size: 13px;
   font-weight: 600;
-  color: #d4d8f0;
+  color: var(--vtl-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -874,7 +935,7 @@
 
 .vtl-card-subtitle {
   font-size: 11px;
-  color: #6b7090;
+  color: var(--vtl-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -891,7 +952,7 @@
 
 .vtl-meta-time {
   font-size: 10px;
-  color: #555870;
+  color: var(--vtl-text-muted);
   font-variant-numeric: tabular-nums;
   font-family: Inter, "Segoe UI", Roboto, sans-serif;
 }
@@ -908,17 +969,17 @@
 }
 
 .vtl-pill-keys {
-  background: rgba(76, 175, 120, 0.1);
-  color: #4caf78;
+  background: color-mix(in srgb, var(--vtl-success) 10%, transparent);
+  color: var(--vtl-success);
 }
 
 .vtl-pill-urls {
-  background: rgba(91, 141, 239, 0.1);
-  color: #5b8def;
+  background: color-mix(in srgb, var(--vtl-accent) 10%, transparent);
+  color: var(--vtl-accent);
 }
 
 .vtl-chevron {
-  color: #555870;
+  color: var(--vtl-text-muted);
   flex-shrink: 0;
   margin-top: 2px;
 }
@@ -929,7 +990,7 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
-  border-top: 1px solid #2a2d3a;
+  border-top: 1px solid var(--vtl-border);
   padding-top: 10px;
 }
 
@@ -944,7 +1005,7 @@
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: #555870;
+  color: var(--vtl-text-muted);
   font-weight: 600;
   font-family: Inter, "Segoe UI", Roboto, sans-serif;
 }
@@ -961,7 +1022,7 @@
   align-items: center;
   gap: 5px;
   text-decoration: none;
-  color: #5b8def;
+  color: var(--vtl-link);
   font-size: 11px;
   font-family: Inter, "Segoe UI", Roboto, sans-serif;
   transition: opacity 0.15s;
@@ -985,7 +1046,7 @@
 
 .vtl-url-browser {
   font-size: 10px;
-  color: #555870;
+  color: var(--vtl-text-muted);
   flex-shrink: 0;
   margin-left: 2px;
 }
@@ -999,20 +1060,20 @@
 
 .vtl-key-block {
   display: block;
-  background: rgba(76, 175, 120, 0.07);
-  border: 1px solid rgba(76, 175, 120, 0.15);
+  background: color-mix(in srgb, var(--vtl-success) 9%, transparent);
+  border: 1px solid color-mix(in srgb, var(--vtl-success) 18%, transparent);
   border-radius: 4px;
   padding: 4px 8px;
   font-size: 11px;
   font-family: 'Monaco', 'Menlo', 'Consolas', monospace !important;
-  color: #c0c8e0;
+  color: var(--vtl-text);
   word-break: break-all;
 }
 
 .vtl-more {
   margin: 2px 0 0;
   font-size: 10px;
-  color: #555870;
+  color: var(--vtl-text-muted);
   font-family: Inter, "Segoe UI", Roboto, sans-serif;
 }
 
@@ -1029,17 +1090,17 @@
   align-items: center;
   gap: 6px;
   font-size: 11px;
-  color: #c0c8e0;
+  color: var(--vtl-text);
   min-width: 0;
 }
 
 .vtl-window-icon {
-  color: #8891b0;
+  color: var(--vtl-text-muted);
   opacity: 0.8;
 }
 
 .vtl-window-time {
-  color: #8891b0;
+  color: var(--vtl-text-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }

@@ -165,7 +165,7 @@ export function ScreenTab({ agentId, sendWsMessage }: ScreenTabProps) {
         <div
           ref={containerRef}
           className={`sentinel-screen-viewer${fullscreen ? " sentinel-screen-viewer-fullscreen" : ""}`}
-          style={{ position: "relative", background: "#000" }}
+          style={{ position: "relative" }}
         >
           <div className="sentinel-screen-frame">
             <img

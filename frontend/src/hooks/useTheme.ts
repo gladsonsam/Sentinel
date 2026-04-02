@@ -3,7 +3,8 @@ import { applyMode, Mode } from "@cloudscape-design/global-styles";
 
 export type ThemeMode = "light" | "dark" | "system";
 
-const THEME_STORAGE_KEY = "sentinel-theme";
+// Single source of truth for theme across the app (matches `index.html` bootstrap).
+const THEME_STORAGE_KEY = "theme";
 
 function getSystemTheme(): Mode {
   if (typeof window === "undefined") return Mode.Light;
@@ -28,11 +29,17 @@ export function useTheme() {
   });
 
   useEffect(() => {
+    const setDomDarkClass = (mode: Mode) => {
+      // Used by some Tailwind-authored bits; keep in sync with Cloudscape mode.
+      document.documentElement.classList.toggle("dark", mode === Mode.Dark);
+    };
+
     if (themeMode === "system") {
       const updateSystemTheme = () => {
         const systemMode = getSystemTheme();
         setEffectiveMode(systemMode);
         applyMode(systemMode);
+        setDomDarkClass(systemMode);
       };
 
       updateSystemTheme();
@@ -44,6 +51,7 @@ export function useTheme() {
       const mode = themeMode === "dark" ? Mode.Dark : Mode.Light;
       setEffectiveMode(mode);
       applyMode(mode);
+      setDomDarkClass(mode);
     }
   }, [themeMode]);
 

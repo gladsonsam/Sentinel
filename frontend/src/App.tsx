@@ -41,7 +41,7 @@ function LoadShell({ label = "Loading…" }: { label?: string }) {
         justifyContent: "center",
         fontFamily: 'system-ui, "Segoe UI", sans-serif',
         fontSize: 15,
-        color: "#5f6b7a",
+        color: "var(--awsui-color-text-body-secondary)",
       }}
     >
       {label}
