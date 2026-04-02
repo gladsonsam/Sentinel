@@ -543,6 +543,20 @@
   box-sizing: border-box;
 }
 
+/* Notifications admin (alert rules) */
+.sentinel-notify-form-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.sentinel-notify-scope-row {
+  border: 1px solid var(--awsui-color-border-divider-default);
+  border-radius: 8px;
+  background: var(--awsui-color-background-container-content);
+}
+
 /* ── Custom Vertical Timeline (vtl) ──────────────────────────────────────── */
 
 /* Loading / empty states */

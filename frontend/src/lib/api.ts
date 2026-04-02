@@ -15,6 +15,8 @@ import type {
   DashboardUser,
   DashboardIdentity,
   DashboardRole,
+  AgentGroup,
+  AlertRule,
 } from "./types";
 import { buildApiUrl } from "./serverSettings";
 
@@ -333,4 +335,66 @@ export const api = {
 
   identityUnlink: (identityId: number): Promise<{ ok: boolean }> =>
     postEmpty(`/identities/${identityId}/unlink`),
+
+  // ── Admin: agent groups & alert rules (URL / keystroke notifications) ───────
+
+  agentGroupsList: (): Promise<{ groups: AgentGroup[] }> => get("/agent-groups"),
+
+  agentGroupsCreate: (body: {
+    name: string;
+    description?: string;
+  }): Promise<{ id: string }> => postJsonRes("/agent-groups", body),
+
+  agentGroupsUpdate: (
+    id: string,
+    body: { name: string; description?: string },
+  ): Promise<{ ok: boolean }> => putJson(`/agent-groups/${id}`, body),
+
+  agentGroupsDelete: (id: string): Promise<{ ok: boolean }> =>
+    delJson(`/agent-groups/${id}`),
+
+  agentGroupMembers: (groupId: string): Promise<{ agent_ids: string[] }> =>
+    get(`/agent-groups/${groupId}/members`),
+
+  agentGroupMembersAdd: (
+    groupId: string,
+    body: { agent_ids: string[] },
+  ): Promise<{ added: number }> =>
+    postJsonRes(`/agent-groups/${groupId}/members`, body),
+
+  agentGroupMemberRemove: (
+    groupId: string,
+    agentId: string,
+  ): Promise<{ ok: boolean }> =>
+    delJson(`/agent-groups/${groupId}/members/${agentId}`),
+
+  alertRulesList: (): Promise<{ rules: AlertRule[] }> => get("/alert-rules"),
+
+  alertRulesCreate: (body: {
+    name: string;
+    channel: string;
+    pattern: string;
+    match_mode: string;
+    case_insensitive: boolean;
+    cooldown_secs: number;
+    enabled: boolean;
+    scopes: { kind: string; group_id?: string; agent_id?: string }[];
+  }): Promise<{ id: number }> => postJsonRes("/alert-rules", body),
+
+  alertRulesUpdate: (
+    id: number,
+    body: {
+      name: string;
+      channel: string;
+      pattern: string;
+      match_mode: string;
+      case_insensitive: boolean;
+      cooldown_secs: number;
+      enabled: boolean;
+      scopes: { kind: string; group_id?: string; agent_id?: string }[];
+    },
+  ): Promise<{ ok: boolean }> => putJson(`/alert-rules/${id}`, body),
+
+  alertRulesDelete: (id: number): Promise<{ ok: boolean }> =>
+    delJson(`/alert-rules/${id}`),
 };

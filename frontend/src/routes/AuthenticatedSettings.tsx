@@ -11,6 +11,7 @@ interface Props {
   onShowPreferences: () => void;
   onOpenActivityLog: () => void;
   onOpenUsers: () => void;
+  onOpenNotifications?: () => void;
   onGoHome: () => void;
   currentUser?: { username: string; role: "admin" | "operator" | "viewer" } | null;
   notifications: NotificationItem[];
@@ -27,6 +28,7 @@ export function AuthenticatedSettings({
   onShowPreferences,
   onOpenActivityLog,
   onOpenUsers,
+  onOpenNotifications,
   onGoHome,
   currentUser = null,
   notifications,
@@ -41,6 +43,7 @@ export function AuthenticatedSettings({
       onShowPreferences={onShowPreferences}
       onOpenActivityLog={onOpenActivityLog}
       onOpenUsers={onOpenUsers}
+      onOpenNotifications={onOpenNotifications}
       onGoHome={onGoHome}
       contentType="default"
       currentUser={currentUser}

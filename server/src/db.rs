@@ -7,6 +7,7 @@
 use anyhow::Result;
 use chrono::{DateTime, TimeZone, Utc};
 use serde::Serialize;
+use std::ops::DerefMut;
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
@@ -1445,6 +1446,359 @@ pub async fn latest_software_capture_time(
     .fetch_one(pool)
     .await?;
     Ok(v)
+}
+
+// ─── Agent groups ─────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentGroupRow {
+    pub id: Uuid,
+    pub name: String,
+    pub description: String,
+    pub created_at: DateTime<Utc>,
+    pub member_count: i64,
+}
+
+pub async fn agent_groups_list(pool: &PgPool) -> Result<Vec<AgentGroupRow>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT g.id, g.name, g.description, g.created_at,
+               COALESCE(COUNT(m.agent_id), 0)::BIGINT AS member_count
+        FROM agent_groups g
+        LEFT JOIN agent_group_members m ON m.group_id = g.id
+        GROUP BY g.id, g.name, g.description, g.created_at
+        ORDER BY lower(g.name)
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        out.push(AgentGroupRow {
+            id: r.try_get("id")?,
+            name: r.try_get("name")?,
+            description: r.try_get("description")?,
+            created_at: r.try_get("created_at")?,
+            member_count: r.try_get("member_count")?,
+        });
+    }
+    Ok(out)
+}
+
+pub async fn agent_group_create(pool: &PgPool, name: &str, description: &str) -> Result<Uuid> {
+    let id: Uuid = sqlx::query_scalar(
+        r#"
+        INSERT INTO agent_groups (name, description)
+        VALUES ($1, $2)
+        RETURNING id
+        "#,
+    )
+    .bind(name.trim())
+    .bind(description)
+    .fetch_one(pool)
+    .await?;
+    Ok(id)
+}
+
+pub async fn agent_group_delete(pool: &PgPool, id: Uuid) -> Result<bool> {
+    let r = sqlx::query("DELETE FROM agent_groups WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(r.rows_affected() > 0)
+}
+
+pub async fn agent_group_rename(
+    pool: &PgPool,
+    id: Uuid,
+    name: &str,
+    description: &str,
+) -> Result<bool> {
+    let r = sqlx::query(
+        "UPDATE agent_groups SET name = $2, description = $3 WHERE id = $1",
+    )
+    .bind(id)
+    .bind(name.trim())
+    .bind(description)
+    .execute(pool)
+    .await?;
+    Ok(r.rows_affected() > 0)
+}
+
+pub async fn agent_group_add_members(
+    pool: &PgPool,
+    group_id: Uuid,
+    agent_ids: &[Uuid],
+) -> Result<u64> {
+    let mut n = 0u64;
+    for aid in agent_ids {
+        let r = sqlx::query(
+            "INSERT INTO agent_group_members (group_id, agent_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+        )
+        .bind(group_id)
+        .bind(aid)
+        .execute(pool)
+        .await?;
+        n += r.rows_affected();
+    }
+    Ok(n)
+}
+
+pub async fn agent_group_remove_member(pool: &PgPool, group_id: Uuid, agent_id: Uuid) -> Result<bool> {
+    let r = sqlx::query(
+        "DELETE FROM agent_group_members WHERE group_id = $1 AND agent_id = $2",
+    )
+    .bind(group_id)
+    .bind(agent_id)
+    .execute(pool)
+    .await?;
+    Ok(r.rows_affected() > 0)
+}
+
+pub async fn agent_group_members(pool: &PgPool, group_id: Uuid) -> Result<Vec<Uuid>> {
+    let rows: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT agent_id FROM agent_group_members WHERE group_id = $1 ORDER BY agent_id",
+    )
+    .bind(group_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
+
+// ─── Alert rules ──────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone)]
+pub struct AlertRuleRow {
+    pub id: i64,
+    pub name: String,
+    pub pattern: String,
+    pub match_mode: String,
+    pub case_insensitive: bool,
+    pub cooldown_secs: i32,
+}
+
+/// Rules that apply to this agent (global + group memberships + direct agent scope).
+pub async fn alert_rules_effective_for_agent(
+    pool: &PgPool,
+    agent_id: Uuid,
+    channel: &str,
+) -> Result<Vec<AlertRuleRow>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT DISTINCT r.id, r.name, r.pattern, r.match_mode,
+               r.case_insensitive, r.cooldown_secs
+        FROM alert_rules r
+        INNER JOIN alert_rule_scopes s ON s.rule_id = r.id
+        WHERE r.enabled
+          AND r.channel = $2
+          AND (
+            s.scope_kind = 'all'
+            OR (s.scope_kind = 'agent' AND s.agent_id = $1)
+            OR (
+                s.scope_kind = 'group'
+                AND s.group_id IN (
+                    SELECT group_id FROM agent_group_members WHERE agent_id = $1
+                )
+            )
+          )
+        ORDER BY r.id
+        "#,
+    )
+    .bind(agent_id)
+    .bind(channel)
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        out.push(AlertRuleRow {
+            id: r.try_get("id")?,
+            name: r.try_get("name")?,
+            pattern: r.try_get("pattern")?,
+            match_mode: r.try_get("match_mode")?,
+            case_insensitive: r.try_get("case_insensitive")?,
+            cooldown_secs: r.try_get("cooldown_secs")?,
+        });
+    }
+    Ok(out)
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AlertRuleScopeJson {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AlertRuleListItem {
+    pub id: i64,
+    pub name: String,
+    pub channel: String,
+    pub pattern: String,
+    pub match_mode: String,
+    pub case_insensitive: bool,
+    pub cooldown_secs: i32,
+    pub enabled: bool,
+    pub scopes: Vec<AlertRuleScopeJson>,
+}
+
+pub async fn alert_rules_list_all(pool: &PgPool) -> Result<Vec<AlertRuleListItem>> {
+    let rules = sqlx::query(
+        r#"
+        SELECT id, name, channel, pattern, match_mode, case_insensitive, cooldown_secs, enabled
+        FROM alert_rules
+        ORDER BY id
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = Vec::with_capacity(rules.len());
+    for r in rules {
+        let id: i64 = r.try_get("id")?;
+        let scopes_rows = sqlx::query(
+            "SELECT scope_kind, group_id, agent_id FROM alert_rule_scopes WHERE rule_id = $1 ORDER BY id",
+        )
+        .bind(id)
+        .fetch_all(pool)
+        .await?;
+
+        let mut scopes = Vec::with_capacity(scopes_rows.len());
+        for s in scopes_rows {
+            let kind: String = s.try_get("scope_kind")?;
+            scopes.push(AlertRuleScopeJson {
+                kind,
+                group_id: s.try_get::<Option<Uuid>, _>("group_id")?,
+                agent_id: s.try_get::<Option<Uuid>, _>("agent_id")?,
+            });
+        }
+
+        out.push(AlertRuleListItem {
+            id,
+            name: r.try_get("name")?,
+            channel: r.try_get("channel")?,
+            pattern: r.try_get("pattern")?,
+            match_mode: r.try_get("match_mode")?,
+            case_insensitive: r.try_get("case_insensitive")?,
+            cooldown_secs: r.try_get("cooldown_secs")?,
+            enabled: r.try_get("enabled")?,
+            scopes,
+        });
+    }
+    Ok(out)
+}
+
+async fn alert_rule_scopes_write_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    rule_id: i64,
+    scopes: &[(String, Option<Uuid>, Option<Uuid>)],
+) -> Result<()> {
+    let conn = tx.deref_mut();
+    sqlx::query("DELETE FROM alert_rule_scopes WHERE rule_id = $1")
+        .bind(rule_id)
+        .execute(&mut *conn)
+        .await?;
+
+    for (kind, group_id, agent_id) in scopes {
+        sqlx::query(
+            r#"
+            INSERT INTO alert_rule_scopes (rule_id, scope_kind, group_id, agent_id)
+            VALUES ($1, $2, $3, $4)
+            "#,
+        )
+        .bind(rule_id)
+        .bind(kind.as_str())
+        .bind(group_id)
+        .bind(agent_id)
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(())
+}
+
+pub async fn alert_rule_create_with_scopes(
+    pool: &PgPool,
+    name: &str,
+    channel: &str,
+    pattern: &str,
+    match_mode: &str,
+    case_insensitive: bool,
+    cooldown_secs: i32,
+    enabled: bool,
+    scopes: &[(String, Option<Uuid>, Option<Uuid>)],
+) -> Result<i64> {
+    let mut tx = pool.begin().await?;
+    let id: i64 = sqlx::query_scalar(
+        r#"
+        INSERT INTO alert_rules (name, channel, pattern, match_mode, case_insensitive, cooldown_secs, enabled)
+        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        RETURNING id
+        "#,
+    )
+    .bind(name)
+    .bind(channel)
+    .bind(pattern)
+    .bind(match_mode)
+    .bind(case_insensitive)
+    .bind(cooldown_secs)
+    .bind(enabled)
+    .fetch_one(tx.deref_mut())
+    .await?;
+    alert_rule_scopes_write_tx(&mut tx, id, scopes).await?;
+    tx.commit().await?;
+    Ok(id)
+}
+
+pub async fn alert_rule_update_with_scopes(
+    pool: &PgPool,
+    rule_id: i64,
+    name: &str,
+    channel: &str,
+    pattern: &str,
+    match_mode: &str,
+    case_insensitive: bool,
+    cooldown_secs: i32,
+    enabled: bool,
+    scopes: &[(String, Option<Uuid>, Option<Uuid>)],
+) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    let r = sqlx::query(
+        r#"
+        UPDATE alert_rules
+        SET name = $2, channel = $3, pattern = $4, match_mode = $5,
+            case_insensitive = $6, cooldown_secs = $7, enabled = $8, updated_at = NOW()
+        WHERE id = $1
+        "#,
+    )
+    .bind(rule_id)
+    .bind(name)
+    .bind(channel)
+    .bind(pattern)
+    .bind(match_mode)
+    .bind(case_insensitive)
+    .bind(cooldown_secs)
+    .bind(enabled)
+    .execute(tx.deref_mut())
+    .await?;
+    if r.rows_affected() == 0 {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+    alert_rule_scopes_write_tx(&mut tx, rule_id, scopes).await?;
+    tx.commit().await?;
+    Ok(true)
+}
+
+pub async fn alert_rule_delete(pool: &PgPool, rule_id: i64) -> Result<bool> {
+    let r = sqlx::query("DELETE FROM alert_rules WHERE id = $1")
+        .bind(rule_id)
+        .execute(pool)
+        .await?;
+    Ok(r.rows_affected() > 0)
 }
 
 // ─── Utility ──────────────────────────────────────────────────────────────────

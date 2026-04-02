@@ -1,11 +1,11 @@
 import { DashboardLayout } from "../layouts/DashboardLayout";
-import { LogsPage } from "../pages/LogsPage";
+import { NotificationsAdminPage } from "../pages/NotificationsAdminPage";
 import type { NotificationItem } from "../hooks/useNotifications";
 
 interface Props {
-  onBack: () => void;
   onLogout: () => void;
   onShowPreferences: () => void;
+  onOpenActivityLog: () => void;
   onOpenUsers: () => void;
   onOpenNotifications?: () => void;
   onGoHome: () => void;
@@ -16,10 +16,10 @@ interface Props {
   onToolsChange: (open: boolean) => void;
 }
 
-export function AuthenticatedLogs({
-  onBack,
+export function AuthenticatedNotifications({
   onLogout,
   onShowPreferences,
+  onOpenActivityLog,
   onOpenUsers,
   onOpenNotifications,
   onGoHome,
@@ -31,13 +31,13 @@ export function AuthenticatedLogs({
 }: Props) {
   return (
     <DashboardLayout
-      content={<LogsPage />}
+      content={<NotificationsAdminPage />}
       onLogout={onLogout}
       onShowPreferences={onShowPreferences}
+      onOpenActivityLog={onOpenActivityLog}
       onOpenUsers={onOpenUsers}
       onOpenNotifications={onOpenNotifications}
       onGoHome={onGoHome}
-      onBackToOverview={onBack}
       contentType="default"
       currentUser={currentUser}
       notifications={notifications}

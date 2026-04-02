@@ -44,6 +44,8 @@ pub struct AppState {
     pub allow_remote_script: bool,
     pub script_waiters: Mutex<HashMap<Uuid, oneshot::Sender<serde_json::Value>>>,
     pub(crate) login_failures: Mutex<HashMap<String, Vec<Instant>>>,
+    /// Per (rule_id, agent_id) last fire time for alert cooldowns.
+    pub alert_match_cooldowns: Mutex<HashMap<(i64, Uuid), Instant>>,
 }
 
 /// Cached JPEG with a monotonic `seq` for MJPEG change detection.
@@ -78,6 +80,7 @@ impl AppState {
             allow_remote_script,
             script_waiters: Mutex::new(HashMap::new()),
             login_failures: Mutex::new(HashMap::new()),
+            alert_match_cooldowns: Mutex::new(HashMap::new()),
         }
     }
 

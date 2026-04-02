@@ -26,6 +26,9 @@ const AuthenticatedLogs = lazy(() =>
   import("./routes/AuthenticatedLogs").then((m) => ({ default: m.AuthenticatedLogs })),
 );
 const UsersPage = lazy(() => import("./pages/UsersPage").then((m) => ({ default: m.UsersPage })));
+const AuthenticatedNotifications = lazy(() =>
+  import("./routes/AuthenticatedNotifications").then((m) => ({ default: m.AuthenticatedNotifications })),
+);
 
 /** Minimal first paint (no Cloudscape) while auth or route chunks load. */
 function LoadShell({ label = "Loading…" }: { label?: string }) {
@@ -82,6 +85,7 @@ function OverviewRoute({
   onSelectAgent,
   onOpenScreen,
   onOpenUsers,
+  onOpenNotifications,
   currentUser,
   checkAuth,
   runBatchWake,
@@ -102,6 +106,7 @@ function OverviewRoute({
   onSelectAgent: (agentId: string) => void;
   onOpenScreen: (agentId: string) => void;
   onOpenUsers: () => void;
+  onOpenNotifications?: () => void;
   currentUser: { id: string; username: string; role: "admin" | "operator" | "viewer" } | null;
   checkAuth: () => void;
   runBatchWake: (ids: string[]) => Promise<void>;
@@ -136,6 +141,7 @@ function OverviewRoute({
         onShowPreferences={openSettings}
         onOpenActivityLog={openLogs}
         onOpenUsers={onOpenUsers}
+        onOpenNotifications={onOpenNotifications}
         onGoHome={() => {}}
         notifications={notifications}
         onDismissNotification={removeNotification}
@@ -159,6 +165,7 @@ function AgentDetailRoute({
   openSettings,
   openLogs,
   onOpenUsers,
+  onOpenNotifications,
   currentUser,
   notifications,
   removeNotification,
@@ -176,6 +183,7 @@ function AgentDetailRoute({
   openSettings: () => void;
   openLogs: () => void;
   onOpenUsers: () => void;
+  onOpenNotifications?: () => void;
   currentUser: { id: string; username: string; role: "admin" | "operator" | "viewer" } | null;
   notifications: NotificationItem[];
   removeNotification: (id: string) => void;
@@ -223,6 +231,7 @@ function AgentDetailRoute({
         onShowPreferences={openSettings}
         onOpenActivityLog={openLogs}
         onOpenUsers={onOpenUsers}
+        onOpenNotifications={onOpenNotifications}
         onGoHome={() => navigate("/")}
         notifications={notifications}
         onDismissNotification={removeNotification}
@@ -241,6 +250,7 @@ function SettingsRoute({
   openSettings,
   openLogs,
   onOpenUsers,
+  onOpenNotifications,
   currentUser,
   notifications,
   removeNotification,
@@ -253,6 +263,7 @@ function SettingsRoute({
   openSettings: () => void;
   openLogs: () => void;
   onOpenUsers: () => void;
+  onOpenNotifications?: () => void;
   currentUser: { id: string; username: string; role: "admin" | "operator" | "viewer" } | null;
   notifications: NotificationItem[];
   removeNotification: (id: string) => void;
@@ -271,6 +282,7 @@ function SettingsRoute({
         onShowPreferences={openSettings}
         onOpenActivityLog={openLogs}
         onOpenUsers={onOpenUsers}
+        onOpenNotifications={onOpenNotifications}
         onGoHome={() => navigate("/")}
         notifications={notifications}
         onDismissNotification={removeNotification}
@@ -290,6 +302,7 @@ function LogsRoute({
   toolsOpen,
   setToolsOpen,
   onOpenUsers,
+  onOpenNotifications,
   currentUser,
 }: {
   handleLogout: () => Promise<void>;
@@ -299,6 +312,7 @@ function LogsRoute({
   toolsOpen: boolean;
   setToolsOpen: (open: boolean) => void;
   onOpenUsers: () => void;
+  onOpenNotifications?: () => void;
   currentUser: { id: string; username: string; role: "admin" | "operator" | "viewer" } | null;
 }) {
   const back = useReturnTo();
@@ -310,6 +324,53 @@ function LogsRoute({
         onLogout={() => void handleLogout()}
         onShowPreferences={openSettings}
         onOpenUsers={onOpenUsers}
+        onOpenNotifications={onOpenNotifications}
+        onGoHome={() => navigate("/")}
+        notifications={notifications}
+        onDismissNotification={removeNotification}
+        toolsOpen={toolsOpen}
+        onToolsChange={setToolsOpen}
+        currentUser={currentUser ? { username: currentUser.username, role: currentUser.role } : null}
+      />
+    </Suspense>
+  );
+}
+
+function NotificationsRoute({
+  handleLogout,
+  openSettings,
+  openLogs,
+  onOpenUsers,
+  onOpenNotifications,
+  currentUser,
+  notifications,
+  removeNotification,
+  toolsOpen,
+  setToolsOpen,
+}: {
+  handleLogout: () => Promise<void>;
+  openSettings: () => void;
+  openLogs: () => void;
+  onOpenUsers: () => void;
+  onOpenNotifications?: () => void;
+  currentUser: { id: string; username: string; role: "admin" | "operator" | "viewer" } | null;
+  notifications: NotificationItem[];
+  removeNotification: (id: string) => void;
+  toolsOpen: boolean;
+  setToolsOpen: (open: boolean) => void;
+}) {
+  const navigate = useNavigate();
+  if (currentUser?.role !== "admin") {
+    return <Navigate to="/" replace />;
+  }
+  return (
+    <Suspense fallback={<LoadShell label="Loading notifications…" />}>
+      <AuthenticatedNotifications
+        onLogout={() => void handleLogout()}
+        onShowPreferences={openSettings}
+        onOpenActivityLog={openLogs}
+        onOpenUsers={onOpenUsers}
+        onOpenNotifications={onOpenNotifications}
         onGoHome={() => navigate("/")}
         notifications={notifications}
         onDismissNotification={removeNotification}
@@ -328,6 +389,8 @@ export function App() {
   const [me, setMe] = useState<{ id: string; username: string; role: "admin" | "operator" | "viewer" } | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
+  const openNotificationsAdmin = useCallback(() => navigate("/notifications"), [navigate]);
+  const adminNotificationsNav = me?.role === "admin" ? openNotificationsAdmin : undefined;
 
   const {
     agents,
@@ -479,6 +542,16 @@ export function App() {
             updateAgentInfo(event.agent_id, event.data);
           }
           break;
+
+        case "alert_rule_match": {
+          const aid = event.agent_id as string | undefined;
+          const agentLabel =
+            (aid && agents[aid]?.name) || (event.agent_name as string) || aid || "Agent";
+          const ruleLabel = (event.rule_name as string) || `Rule #${event.rule_id ?? "?"}`;
+          const snippet = (event.snippet as string) ? ` — ${event.snippet}` : "";
+          warning("Alert rule matched", `${ruleLabel} · ${agentLabel}${snippet}`);
+          break;
+        }
       }
     },
     onStatusChange: (status) => {
@@ -635,6 +708,7 @@ export function App() {
             onSelectAgent={handleSelectAgent}
             onOpenScreen={handleOpenScreen}
             onOpenUsers={() => navigate("/users")}
+            onOpenNotifications={adminNotificationsNav}
             currentUser={me}
             checkAuth={checkAuth}
             runBatchWake={runBatchWake}
@@ -664,6 +738,7 @@ export function App() {
             openSettings={handleOpenSettings}
             openLogs={handleOpenLogs}
             onOpenUsers={() => navigate("/users")}
+            onOpenNotifications={adminNotificationsNav}
             currentUser={me}
             notifications={notifications}
             removeNotification={removeNotification}
@@ -682,6 +757,7 @@ export function App() {
             openSettings={handleOpenSettings}
             openLogs={handleOpenLogs}
             onOpenUsers={() => navigate("/users")}
+            onOpenNotifications={adminNotificationsNav}
             currentUser={me}
             notifications={notifications}
             removeNotification={removeNotification}
@@ -701,7 +777,25 @@ export function App() {
             toolsOpen={toolsOpen}
             setToolsOpen={setToolsOpen}
             onOpenUsers={() => navigate("/users")}
+            onOpenNotifications={adminNotificationsNav}
             currentUser={me}
+          />
+        }
+      />
+      <Route
+        path="/notifications"
+        element={
+          <NotificationsRoute
+            handleLogout={handleLogout}
+            openSettings={handleOpenSettings}
+            openLogs={handleOpenLogs}
+            onOpenUsers={() => navigate("/users")}
+            onOpenNotifications={adminNotificationsNav}
+            currentUser={me}
+            notifications={notifications}
+            removeNotification={removeNotification}
+            toolsOpen={toolsOpen}
+            setToolsOpen={setToolsOpen}
           />
         }
       />
@@ -714,6 +808,7 @@ export function App() {
               onLogout={() => void handleLogout()}
               onShowPreferences={handleOpenSettings}
               onOpenActivityLog={handleOpenLogs}
+              onOpenNotifications={adminNotificationsNav}
               onGoHome={() => navigate("/")}
               contentType="default"
               notifications={notifications}

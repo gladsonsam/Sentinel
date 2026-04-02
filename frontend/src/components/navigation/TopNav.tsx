@@ -6,6 +6,8 @@ interface TopNavProps {
   /** Opens the central activity / audit log page. */
   onOpenActivityLog?: () => void;
   onOpenUsers?: () => void;
+  /** Admin: alert rules / notification patterns. */
+  onOpenNotifications?: () => void;
   onBackToOverview?: () => void;
   /** Clicking the Sentinel logo/title returns here (usually agent overview). */
   onGoHome: () => void;
@@ -17,6 +19,7 @@ export function TopNav({
   onShowPreferences,
   onOpenActivityLog,
   onOpenUsers,
+  onOpenNotifications,
   onBackToOverview,
   onGoHome,
   currentUser = null,
@@ -68,11 +71,15 @@ export function TopNav({
               ...(onOpenUsers
                 ? [{ id: "users", text: "Users" }]
                 : []),
+              ...(onOpenNotifications
+                ? [{ id: "notifications", text: "Notifications" }]
+                : []),
               { id: "settings", text: "Settings" },
               { id: "logout", text: "Logout" },
             ],
             onItemClick: ({ detail }) => {
               if (detail.id === "users") onOpenUsers?.();
+              else if (detail.id === "notifications") onOpenNotifications?.();
               else if (detail.id === "settings") onShowPreferences();
               else if (detail.id === "logout") onLogout();
             },

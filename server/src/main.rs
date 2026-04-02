@@ -2,6 +2,7 @@
 //!
 //! Configuration is via environment variables; see `env.example` in the repository root.
 
+mod alert_rules;
 mod api;
 mod auth;
 mod db;

@@ -57,3 +57,6 @@ urlencoding = "2.1"
 
 # ── Agent local UI password (SHA-256, match Windows agent config.rs) ─────────
 sha2 = "0.10"
+
+# ── Alert rules (URL / keystroke pattern matching) ───────────────────────────
+regex = "1"

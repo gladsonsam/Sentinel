@@ -204,6 +204,39 @@ export interface DashboardIdentity {
   created_at: string;
 }
 
+// ── Alert rules & agent groups (admin) ───────────────────────────────────────
+
+export interface AgentGroup {
+  id: string;
+  name: string;
+  description: string;
+  created_at: string;
+  member_count: number;
+}
+
+export type AlertRuleScopeKind = "all" | "group" | "agent";
+
+export interface AlertRuleScope {
+  kind: AlertRuleScopeKind;
+  group_id?: string;
+  agent_id?: string;
+}
+
+export type AlertRuleChannel = "url" | "keys";
+export type AlertRuleMatchMode = "substring" | "regex";
+
+export interface AlertRule {
+  id: number;
+  name: string;
+  channel: AlertRuleChannel;
+  pattern: string;
+  match_mode: AlertRuleMatchMode;
+  case_insensitive: boolean;
+  cooldown_secs: number;
+  enabled: boolean;
+  scopes: AlertRuleScope[];
+}
+
 // ── UI ────────────────────────────────────────────────────────────────────────
 
 export type TabKey =

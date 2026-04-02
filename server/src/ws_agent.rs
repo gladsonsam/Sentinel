@@ -25,7 +25,7 @@ use serde::Deserialize;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-use crate::{db, state::{AppState, Frame}};
+use crate::{alert_rules, db, state::{AppState, Frame}};
 
 // Conservative bounds to mitigate memory/DB-flood DoS.
 // These can be tuned later (or moved to env/config).
@@ -310,6 +310,10 @@ async fn dispatch_text(text: &str, agent_id: uuid::Uuid, name: &str, state: &Arc
     if let Err(e) = result {
         error!("DB error ({kind} / {agent_id}): {e}");
         return;
+    }
+
+    if kind == "keys" || kind == "url" {
+        alert_rules::on_url_or_keys_event(state, agent_id, name, kind, &val).await;
     }
 
     // Fan-out to all connected dashboard viewers.

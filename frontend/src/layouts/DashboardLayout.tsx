@@ -13,6 +13,8 @@ interface DashboardLayoutProps {
   onShowPreferences: () => void;
   onOpenActivityLog?: () => void;
   onOpenUsers?: () => void;
+  /** Admin: URL / keystroke alert rules UI. */
+  onOpenNotifications?: () => void;
   onBackToOverview?: () => void;
   onGoHome: () => void;
   currentUser?: { username: string; role: "admin" | "operator" | "viewer" } | null;
@@ -31,6 +33,7 @@ export function DashboardLayout({
   onShowPreferences,
   onOpenActivityLog,
   onOpenUsers,
+  onOpenNotifications,
   onBackToOverview,
   onGoHome,
   currentUser = null,
@@ -50,6 +53,7 @@ export function DashboardLayout({
         onShowPreferences={onShowPreferences}
         onOpenActivityLog={onOpenActivityLog}
         onOpenUsers={onOpenUsers}
+        onOpenNotifications={onOpenNotifications}
         onBackToOverview={onBackToOverview}
         onGoHome={onGoHome}
         currentUser={currentUser}
