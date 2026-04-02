@@ -728,11 +728,65 @@ fn handle_server_command(
             }
         }
         "ListDir" => {
-            let path = val["path"].as_str().unwrap_or("C:\\").to_string();
+            const MAX_DIR_PATH_CHARS: usize = 1024;
+            const MAX_DIR_ENTRIES: usize = 5_000;
+            const DRIVES_SENTINEL_PATH: &str = "__this_pc__";
+            fn default_dir_path() -> String {
+                // Prefer a real "Documents" folder; fall back safely.
+                if let Some(p) = dirs::document_dir() {
+                    return p.to_string_lossy().to_string();
+                }
+                if let Ok(up) = std::env::var("USERPROFILE") {
+                    let up = up.trim();
+                    if !up.is_empty() {
+                        return format!("{up}\\Documents");
+                    }
+                }
+                "C:\\".to_string()
+            }
+
+            let path_in = val["path"].as_str().unwrap_or("").trim();
+            // Empty path => initial landing (Documents). Special sentinel => list drives.
+            let is_drives = path_in.eq_ignore_ascii_case(DRIVES_SENTINEL_PATH);
+            let path = if is_drives {
+                DRIVES_SENTINEL_PATH.to_string()
+            } else if path_in.is_empty() {
+                default_dir_path()
+            } else {
+                path_in.chars().take(MAX_DIR_PATH_CHARS).collect::<String>()
+            };
+            let out = out_tx.clone();
             tokio::spawn(async move {
                 let mut items = Vec::new();
-                if let Ok(mut entries) = tokio::fs::read_dir(&path).await {
+                if is_drives {
+                    #[cfg(target_os = "windows")]
+                    {
+                        use windows::Win32::Storage::FileSystem::GetLogicalDrives;
+                        let mask = unsafe { GetLogicalDrives() };
+                        // Bits 0..25 correspond to A..Z.
+                        for i in 0..26u32 {
+                            if (mask & (1u32 << i)) != 0 {
+                                let letter = (b'A' + (i as u8)) as char;
+                                let name = format!("{letter}:\\");
+                                items.push(serde_json::json!({
+                                    "name": name,
+                                    "is_dir": true,
+                                    "size": 0
+                                }));
+                            }
+                        }
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        // Non-Windows builds aren't expected for this agent.
+                    }
+                } else if let Ok(mut entries) = tokio::fs::read_dir(&path).await {
+                    let mut n = 0usize;
                     while let Ok(Some(entry)) = entries.next_entry().await {
+                        n += 1;
+                        if n > MAX_DIR_ENTRIES {
+                            break;
+                        }
                         let name = entry.file_name().to_string_lossy().to_string();
                         let meta = entry.metadata().await.ok();
                         let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
@@ -758,7 +812,7 @@ fn handle_server_command(
                     "path": path,
                     "items": items
                 }).to_string();
-                let _ = out_tx.send(Message::Text(payload)).await;
+                let _ = out.send(Message::Text(payload)).await;
             });
         }
         "CollectSoftware" => {
@@ -798,39 +852,23 @@ fn handle_server_command(
             });
         }
         "ReadFile" => {
-            let path = val["path"].as_str().unwrap_or("").to_string();
+            const MAX_FILE_PATH_CHARS: usize = 2048;
+            const CHUNK_SIZE: usize = 1024 * 1024 * 3; // 3MB chunks
+            const MAX_FILE_BYTES: u64 = 1024 * 1024 * 100; // 100MB cap
+            let path = val["path"]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .chars()
+                .take(MAX_FILE_PATH_CHARS)
+                .collect::<String>();
+            let out = out_tx.clone();
             tokio::spawn(async move {
                 use base64::{Engine as _, engine::general_purpose};
-                match tokio::fs::read(&path).await {
-                    Ok(bytes) => {
-                        let chunk_size = 1024 * 1024 * 3; // 3MB chunks
-                        let total_chunks = if bytes.is_empty() { 1 } else { (bytes.len() + chunk_size - 1) / chunk_size };
-                        if bytes.is_empty() {
-                            let payload = serde_json::json!({
-                                "type": "file_chunk",
-                                "path": path,
-                                "data": "",
-                                "chunk_index": 0,
-                                "total_chunks": 1,
-                                "is_error": false
-                            }).to_string();
-                            let _ = out_tx.send(Message::Text(payload)).await;
-                        } else {
-                            for (i, chunk) in bytes.chunks(chunk_size).enumerate() {
-                                let data = general_purpose::STANDARD.encode(chunk);
-                                let payload = serde_json::json!({
-                                    "type": "file_chunk",
-                                    "path": path,
-                                    "data": data,
-                                    "chunk_index": i,
-                                    "total_chunks": total_chunks,
-                                    "is_error": false
-                                }).to_string();
-                                let _ = out_tx.send(Message::Text(payload)).await;
-                                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                            }
-                        }
-                    }
+                use tokio::io::AsyncReadExt;
+
+                let meta = match tokio::fs::metadata(&path).await {
+                    Ok(m) => m,
                     Err(e) => {
                         let payload = serde_json::json!({
                             "type": "file_chunk",
@@ -840,8 +878,90 @@ fn handle_server_command(
                             "total_chunks": 1,
                             "is_error": true
                         }).to_string();
-                        let _ = out_tx.send(Message::Text(payload)).await;
+                        let _ = out.send(Message::Text(payload)).await;
+                        return;
                     }
+                };
+                let file_len = meta.len();
+                if file_len > MAX_FILE_BYTES {
+                    let payload = serde_json::json!({
+                        "type": "file_chunk",
+                        "path": path,
+                        "data": format!("file too large ({} bytes; max {} bytes)", file_len, MAX_FILE_BYTES),
+                        "chunk_index": 0,
+                        "total_chunks": 1,
+                        "is_error": true
+                    }).to_string();
+                    let _ = out.send(Message::Text(payload)).await;
+                    return;
+                }
+
+                let mut f = match tokio::fs::File::open(&path).await {
+                    Ok(f) => f,
+                    Err(e) => {
+                        let payload = serde_json::json!({
+                            "type": "file_chunk",
+                            "path": path,
+                            "data": e.to_string(),
+                            "chunk_index": 0,
+                            "total_chunks": 1,
+                            "is_error": true
+                        }).to_string();
+                        let _ = out.send(Message::Text(payload)).await;
+                        return;
+                    }
+                };
+
+                let total_chunks = if file_len == 0 {
+                    1usize
+                } else {
+                    ((file_len as usize) + CHUNK_SIZE - 1) / CHUNK_SIZE
+                };
+
+                if file_len == 0 {
+                    let payload = serde_json::json!({
+                        "type": "file_chunk",
+                        "path": path,
+                        "data": "",
+                        "chunk_index": 0,
+                        "total_chunks": 1,
+                        "is_error": false
+                    }).to_string();
+                    let _ = out.send(Message::Text(payload)).await;
+                    return;
+                }
+
+                let mut idx: usize = 0;
+                let mut buf = vec![0u8; CHUNK_SIZE];
+                loop {
+                    let n = match f.read(&mut buf).await {
+                        Ok(0) => break,
+                        Ok(n) => n,
+                        Err(e) => {
+                            let payload = serde_json::json!({
+                                "type": "file_chunk",
+                                "path": path,
+                                "data": e.to_string(),
+                                "chunk_index": idx,
+                                "total_chunks": total_chunks,
+                                "is_error": true
+                            }).to_string();
+                            let _ = out.send(Message::Text(payload)).await;
+                            return;
+                        }
+                    };
+                    let data = general_purpose::STANDARD.encode(&buf[..n]);
+                    let payload = serde_json::json!({
+                        "type": "file_chunk",
+                        "path": path,
+                        "data": data,
+                        "chunk_index": idx,
+                        "total_chunks": total_chunks,
+                        "is_error": false
+                    }).to_string();
+                    let _ = out.send(Message::Text(payload)).await;
+                    idx += 1;
+                    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
                 }
             });
         }
@@ -863,21 +983,49 @@ fn build_ws_url(cfg: &Config) -> String {
     let base = cfg.server_url.trim_end_matches('/');
     let mut url = base.to_string();
 
-    // Note: we intentionally do minimal encoding here because the UI expects a
-    // copy/paste-friendly value. Use URL-safe secrets (base64/hex) in prod.
+    // Percent-encode query values so `name`/`secret` cannot inject additional
+    // parameters (e.g. via `&x=y`) and so auth secrets are transmitted verbatim.
+    // This also avoids accidental breakage when values contain spaces or `+`.
+    fn enc(v: &str) -> String {
+        use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
+        // Encode everything except a conservative unreserved set.
+        const SAFE: &AsciiSet = &CONTROLS
+            .add(b' ')
+            .add(b'"')
+            .add(b'#')
+            .add(b'%')
+            .add(b'&')
+            .add(b'+')
+            .add(b',')
+            .add(b'/')
+            .add(b':')
+            .add(b';')
+            .add(b'<')
+            .add(b'=')
+            .add(b'>')
+            .add(b'?')
+            .add(b'@')
+            .add(b'\\')
+            .add(b'|')
+            .add(b'[')
+            .add(b']')
+            .add(b'{')
+            .add(b'}');
+        utf8_percent_encode(v, SAFE).to_string()
+    }
     let mut first_param = !url.contains('?');
 
     if !cfg.agent_name.is_empty() {
         url.push(if first_param { '?' } else { '&' });
         first_param = false;
         url.push_str("name=");
-        url.push_str(cfg.agent_name.trim());
+        url.push_str(&enc(cfg.agent_name.trim()));
     }
 
     if !cfg.agent_password.is_empty() {
         url.push(if first_param { '?' } else { '&' });
         url.push_str("secret=");
-        url.push_str(cfg.agent_password.trim());
+        url.push_str(&enc(cfg.agent_password.trim()));
     }
 
     url

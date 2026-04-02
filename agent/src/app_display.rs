@@ -71,10 +71,13 @@ unsafe fn query_string_from_version_block(version_block: &[u8], sub_block: &str)
         return None;
     }
 
-    // `out_len` semantics differ across sub-block types; for strings we just
-    // treat it as an upper bound and stop on NUL.
-    let max_chars = out_len as usize;
-    let max_chars = max_chars.max(1).min(2048);
+    // For `VerQueryValueW` string sub-blocks, `out_len` is typically the length
+    // in UTF-16 characters (often including the trailing NUL). Other queries
+    // (like Translation) use byte lengths, but those are handled elsewhere.
+    //
+    // Treat `out_len` as an upper bound in u16s, clamp aggressively, and stop
+    // on NUL to avoid over-reading even if a platform/driver misreports.
+    let max_chars = (out_len as usize).max(1).min(2048);
 
     let pw = lp_buffer as *const u16;
     let mut end = 0usize;

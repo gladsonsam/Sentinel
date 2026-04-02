@@ -20,7 +20,9 @@ interface FilesTabProps {
 }
 
 export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
-  const [currentPath, setCurrentPath] = useState("C:\\");
+  const DRIVES_PATH = "__this_pc__";
+  // Empty path means "agent default" (usually user's Documents).
+  const [currentPath, setCurrentPath] = useState("");
   const [items, setItems] = useState<FileItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState<string | null>(null);
@@ -36,7 +38,7 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
     sendWsMessage({
       type: "control",
       agent_id: agentId,
-      cmd: { type: "ListDir", path },
+      cmd: path ? { type: "ListDir", path } : { type: "ListDir" },
     });
   }, [agentId, sendWsMessage]);
 
@@ -47,7 +49,16 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
       if (!data || data.agent_id !== agentId) return;
 
       if (data.event === "dir_list") {
-        if (typeof data?.data?.path === "string" && data.data.path.toLowerCase() === currentPath.toLowerCase()) {
+        const path = typeof data?.data?.path === "string" ? data.data.path : "";
+        // When `currentPath` is empty we asked the agent to pick a sensible default
+        // (usually Documents). Accept the first reply and lock onto that path.
+        if (!currentPath) {
+          if (path) setCurrentPath(path);
+          setItems(data.data.items || []);
+          setLoading(false);
+          return;
+        }
+        if (path && path.toLowerCase() === currentPath.toLowerCase()) {
           setItems(data.data.items || []);
           setLoading(false);
         }
@@ -93,7 +104,7 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
   }, [agentId, currentPath]);
 
   useEffect(() => {
-    setCurrentPath("C:\\");
+    setCurrentPath("");
     setItems([]);
     setLoading(false);
     setDownloading(null);
@@ -107,6 +118,10 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
 
   const handleFileClick = (item: FileItem) => {
     if (item.is_dir) {
+      if (currentPath === DRIVES_PATH) {
+        navigateTo(item.name);
+        return;
+      }
       const newPath = currentPath.endsWith("\\")
         ? currentPath + item.name
         : currentPath + "\\" + item.name;
@@ -130,6 +145,8 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
   };
 
   const getBreadcrumbs = () => {
+    if (!currentPath || currentPath === DRIVES_PATH) return [{ text: "Root", href: "#" }];
+
     const parts = currentPath.split("\\").filter((p) => p);
     const breadcrumbs = [{ text: "Root", href: "#" }];
     
@@ -158,7 +175,8 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
           e.preventDefault();
           const href = e.detail.href;
           if (href === "#") {
-            navigateTo("C:\\");
+            // "Root" means "This PC" (drive list), not the agent's default folder.
+            navigateTo(DRIVES_PATH);
           } else {
             navigateTo(href.substring(1));
           }

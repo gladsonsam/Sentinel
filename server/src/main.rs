@@ -176,16 +176,25 @@ async fn main() -> anyhow::Result<()> {
         .nest("/api", api::router())
         .route_layer(from_fn_with_state(state.clone(), auth::require_auth));
 
+    // SPA deep-link support: explicitly serve `index.html` for client-routed pages.
+    // (Even with a general fallback, reverse proxies / static hosting quirks can
+    // surface 404s on deep links like `/agents/<id>`.)
+    let index_path = format!("{static_dir}/index.html");
+
     let app = Router::new()
         .route("/ws/agent", get(ws_agent::handler))
         .merge(health_routes)
         .merge(auth_routes)
         .merge(protected)
+        .route_service("/agents", ServeFile::new(index_path.clone()))
+        .route_service("/agents/*path", ServeFile::new(index_path.clone()))
+        .route_service("/settings", ServeFile::new(index_path.clone()))
+        .route_service("/settings/*path", ServeFile::new(index_path.clone()))
         // SPA routing: serve `index.html` for unknown paths so reload/back/forward work.
         .fallback_service(
             ServeDir::new(&static_dir)
                 .append_index_html_on_directories(true)
-                .not_found_service(ServeFile::new(format!("{static_dir}/index.html"))),
+                .not_found_service(ServeFile::new(index_path)),
         )
         .layer(cors_layer_from_env())
         .layer(from_fn_with_state(

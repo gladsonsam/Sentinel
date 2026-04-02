@@ -204,7 +204,9 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>, user: &AuthUser) {
                 .unwrap_or(false);
             title_ok && msg_ok
         }
-        "ListDir" => val["cmd"]["path"].as_str().is_some(),
+        // `ListDir` supports an omitted/empty path, which the agent treats as
+        // "start at a sensible default" (typically the user's Documents folder).
+        "ListDir" => true,
         "ReadFile" => val["cmd"]["path"].as_str().is_some(),
         "RequestInfo" | "RestartHost" | "ShutdownHost" | "CollectSoftware" => true,
         _ => false,

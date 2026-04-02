@@ -66,6 +66,7 @@ xml-rs = "0.8"
 serde      = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64     = "0.22"
+percent-encoding = "2"
 
 # Windows DPAPI: encrypt `config.dat` at rest (tied to this user + machine).
 windows-dpapi = "0.2"

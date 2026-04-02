@@ -4193,6 +4193,7 @@ dependencies = [
  "image",
  "ipconfig",
  "native-tls",
+ "percent-encoding",
  "serde",
  "serde_json",
  "sha2",
