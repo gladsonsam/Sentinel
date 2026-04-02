@@ -208,12 +208,12 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
     };
   }, [agentId]);
 
-  const saveAgentIcon = () => {
+  const saveAgentIcon = (next: AgentIconKey) => {
     setIconErr(null);
     setIconOk(null);
     setIconSave(true);
     api
-      .agentIconPut(agentId, agentIcon)
+      .agentIconPut(agentId, next)
       .then((r) => {
         setAgentIcon(isAgentIconKey(r.icon) ? r.icon : "monitor");
         setIconOk("Saved.");
@@ -223,7 +223,6 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
   };
 
   const resetAgentIcon = () => {
-    setAgentIcon("monitor");
     setIconErr(null);
     setIconOk(null);
     setIconSave(true);
@@ -231,7 +230,10 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
       .agentIconPut(agentId, "monitor")
       .then(() => setIconOk("Reset to default."))
       .catch((e) => setIconErr(String(e)))
-      .finally(() => setIconSave(false));
+      .finally(() => {
+        setAgentIcon("monitor");
+        setIconSave(false);
+      });
   };
 
   const saveOverrides = () => {
@@ -413,14 +415,6 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
           </FormField>
 
           <SpaceBetween direction="horizontal" size="xs">
-            <Button
-              variant="primary"
-              loading={iconSave}
-              disabled={iconLoad || iconSave}
-              onClick={saveAgentIcon}
-            >
-              Save icon
-            </Button>
             <Button disabled={iconLoad || iconSave} onClick={resetAgentIcon}>
               Reset to default
             </Button>
@@ -447,6 +441,7 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
                 onClick={() => {
                   setAgentIcon(key);
                   setIconPickerOpen(false);
+                  saveAgentIcon(key);
                 }}
                 aria-label={key}
                 aria-pressed={selected}

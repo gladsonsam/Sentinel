@@ -46,6 +46,11 @@ interface AggregateSessionsOptions {
   urls: URLEvent[];
   keystrokes: KeystrokeEvent[];
   gapThresholdSeconds?: number;
+  /**
+   * If the time between consecutive foreground window events exceeds this,
+   * insert an explicit "Idle / Away" segment to keep the timeline continuous.
+   */
+  idleThresholdSeconds?: number;
 }
 
 function normalizeSpace(s: string | undefined | null): string {
@@ -126,6 +131,20 @@ function isBrowser(appName: string): boolean {
   return BROWSER_EXES.has(appName.toLowerCase());
 }
 
+function isTaskSwitchingNoiseEvent(win: WindowEvent): boolean {
+  const exe = normalizeSpace(win.exe_name).toLowerCase();
+  const title = normalizeSpace(win.window_title).toLowerCase();
+  if (exe !== "explorer.exe") return false;
+  // The OS task switcher/task view surfaces as an Explorer foreground window.
+  // Treat it as UI noise; users generally don't want it as an activity.
+  return (
+    title === "task switching" ||
+    title === "task view" ||
+    title.includes("task switching") ||
+    title.includes("task view")
+  );
+}
+
 /**
  * Redistribute all URLs so they only appear in browser sessions.
  *
@@ -193,31 +212,27 @@ export function aggregateSessions({
   urls,
   keystrokes,
   gapThresholdSeconds = 300,
+  idleThresholdSeconds = 30,
 }: AggregateSessionsOptions): Session[] {
   if (windows.length === 0) return [];
 
   const sessions: Session[] = [];
   let currentSession: Session | null = null;
 
-  const sortedWindows = [...windows].sort(
+  const sortedWindows = [...windows]
+    .filter((w) => !isTaskSwitchingNoiseEvent(w))
+    .sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   );
 
   for (const window of sortedWindows) {
     const windowTime = new Date(window.timestamp);
-    const prevEndMs = currentSession?.endTime.getTime();
-
-    // The *previous* foreground state lasts until this window event occurs.
-    // Without this, durations collapse to ~0s because events are instantaneous.
-    if (currentSession) {
-      currentSession.endTime = windowTime;
-    }
 
     const shouldStartNew =
       !currentSession ||
       currentSession.appName !== window.exe_name ||
-      (typeof prevEndMs === "number" &&
-        (windowTime.getTime() - prevEndMs) / 1000 > gapThresholdSeconds);
+      (windowTime.getTime() - currentSession.endTime.getTime()) / 1000 >
+        gapThresholdSeconds;
 
     if (shouldStartNew) {
       if (currentSession) {
@@ -240,6 +255,7 @@ export function aggregateSessions({
         hasUrls: false,
       };
     } else if (currentSession) {
+      currentSession.endTime = windowTime;
       currentSession.windowTitle = window.window_title;
       // Some executables host multiple "real" apps (e.g. ApplicationFrameHost.exe).
       // Keep the display name aligned with the most recent foreground title.
@@ -253,26 +269,92 @@ export function aggregateSessions({
   }
 
   const gapMs = gapThresholdSeconds * 1000;
+  const idleMs = idleThresholdSeconds * 1000;
 
-  // Extend the last session so the timeline is continuous up to "now"
-  // when the data appears to be from the current/ongoing recording.
-  const last = sessions[sessions.length - 1];
+  // Build a continuous timeline:
+  // - If the next window event comes soon, extend the current session to it.
+  // - If there's a long gap, insert an explicit Idle segment.
+  const timeline: Session[] = [];
+  for (let i = 0; i < sessions.length; i++) {
+    const s = sessions[i];
+    const next = sessions[i + 1];
+    if (!next) {
+      timeline.push(s);
+      break;
+    }
+
+    const gap = next.startTime.getTime() - s.endTime.getTime();
+    if (gap > 0 && gap <= idleMs) {
+      // "Continuous" foreground: stretch to the next event.
+      s.endTime = new Date(next.startTime);
+      timeline.push(s);
+      continue;
+    }
+
+    if (gap > idleMs) {
+      // Large gap: keep session end at its last observed event,
+      // and insert an explicit idle segment for the gap.
+      timeline.push(s);
+      timeline.push({
+        id: `idle-${s.endTime.getTime()}-${next.startTime.getTime()}`,
+        appName: "__idle__",
+        appDisplayName: "Idle / Away",
+        windowTitle: "No foreground window events",
+        startTime: new Date(s.endTime),
+        endTime: new Date(next.startTime),
+        duration: 0,
+        keystrokeCount: 0,
+        urls: [],
+        keystrokes: [],
+        windows: [],
+        hasKeystrokes: false,
+        hasUrls: false,
+      });
+      continue;
+    }
+
+    // Overlapping/duplicate timestamps: just push.
+    timeline.push(s);
+  }
+
+  // Extend the tail to "now" (or insert idle if we've gone quiet).
+  const last = timeline[timeline.length - 1];
   if (last) {
     const maxEventMs = Math.max(
       ...sortedWindows.map((w) => new Date(w.timestamp).getTime()),
       ...(urls.length ? urls.map((u) => new Date(u.timestamp).getTime()) : [0]),
       ...(keystrokes.length
         ? keystrokes.map((k) => new Date(k.timestamp).getTime())
-        : [0])
+        : [0]),
     );
     const nowMs = Date.now();
-    const endMs = nowMs - maxEventMs <= gapMs ? nowMs : maxEventMs;
-    if (endMs > last.endTime.getTime()) {
-      last.endTime = new Date(endMs);
+    const tailGap = nowMs - Math.max(last.endTime.getTime(), maxEventMs);
+    if (tailGap > idleMs) {
+      // Add an explicit idle segment up to now.
+      timeline.push({
+        id: `idle-${Math.max(last.endTime.getTime(), maxEventMs)}-${nowMs}`,
+        appName: "__idle__",
+        appDisplayName: "Idle / Away",
+        windowTitle: "No foreground window events",
+        startTime: new Date(Math.max(last.endTime.getTime(), maxEventMs)),
+        endTime: new Date(nowMs),
+        duration: 0,
+        keystrokeCount: 0,
+        urls: [],
+        keystrokes: [],
+        windows: [],
+        hasKeystrokes: false,
+        hasUrls: false,
+      });
+    } else {
+      // Still “current”: stretch last segment to now.
+      if (nowMs > last.endTime.getTime()) {
+        last.endTime = new Date(nowMs);
+      }
     }
   }
 
-  for (const session of sessions) {
+  for (const session of timeline) {
     const startMs = session.startTime.getTime();
     const endMs = session.endTime.getTime();
 
@@ -300,9 +382,9 @@ export function aggregateSessions({
   }
 
   // Redistribute URLs to browser sessions only.
-  redistributeUrlsToBrowserSessions(sessions, urls, gapMs);
+  redistributeUrlsToBrowserSessions(timeline, urls, gapMs);
 
-  return sessions;
+  return timeline;
 }
 
 export function formatDuration(seconds: number): string {
