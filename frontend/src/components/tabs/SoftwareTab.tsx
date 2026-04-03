@@ -95,14 +95,14 @@ export function SoftwareTab({ agentId }: SoftwareTabProps) {
         variant="h2"
         description="Installed programs from the agent’s Windows registry (Uninstall keys). Refreshed daily while online, or on demand below."
         actions={
-          <SpaceBetween direction="horizontal" size="xs">
-            <Button onClick={() => void load()} disabled={loading}>
-              Refresh list
-            </Button>
-            <Button variant="primary" loading={collecting} onClick={() => void onCollect()}>
-              Collect now
-            </Button>
-          </SpaceBetween>
+          <Button
+            variant="primary"
+            loading={collecting}
+            disabled={loading && !collecting}
+            onClick={() => void onCollect()}
+          >
+            Refresh
+          </Button>
         }
       >
         Installed software
@@ -146,7 +146,7 @@ export function SoftwareTab({ agentId }: SoftwareTabProps) {
         empty={
           <Box textAlign="center" color="text-body-secondary" padding="l">
             No inventory yet. The agent sends a list about a minute after connecting, then once per day, or use
-            Collect now (agent must be online).
+            Refresh (agent must be online).
           </Box>
         }
       />

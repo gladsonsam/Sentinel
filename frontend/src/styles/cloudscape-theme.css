@@ -763,9 +763,9 @@
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
-  gap: 12px 16px;
-  padding: 4px 0 16px;
-  margin-bottom: 4px;
+  gap: 10px 14px;
+  padding: 4px 0 12px;
+  margin-bottom: 2px;
   border-bottom: 1px solid var(--vtl-border);
 }
 
@@ -775,8 +775,8 @@
 }
 
 .vtl-toolbar-jump {
-  flex: 0 1 220px;
-  min-width: 180px;
+  flex: 0 1 320px;
+  min-width: 220px;
 }
 
 /* Line up with search/jump controls (flex-end), not vertically centered in the label+field block */

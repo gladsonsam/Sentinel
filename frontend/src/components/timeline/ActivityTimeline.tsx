@@ -20,9 +20,9 @@ import Spinner from "@cloudscape-design/components/spinner";
 import Button from "@cloudscape-design/components/button";
 import Modal from "@cloudscape-design/components/modal";
 import Input from "@cloudscape-design/components/input";
-import Select from "@cloudscape-design/components/select";
 import Checkbox from "@cloudscape-design/components/checkbox";
 import FormField from "@cloudscape-design/components/form-field";
+import DateRangePicker, { type DateRangePickerProps } from "@cloudscape-design/components/date-range-picker";
 import { Session, type SessionAlertEvent, formatDuration } from "../../lib/session-aggregator";
 import { apiUrl } from "../../lib/api";
 import { fmtDateTimePrecise, parseTimestamp } from "../../lib/utils";
@@ -106,6 +106,122 @@ function groupSessionsByDay(sessions: Session[]): DayGroup[] {
     label: formatDayHeading(k),
     items: map.get(k)!,
   }));
+}
+
+const ACTIVITY_DATE_RELATIVE_OPTIONS: DateRangePickerProps.RelativeOption[] = [
+  { key: "last-1-day", type: "relative", amount: 1, unit: "day" },
+  { key: "last-7-days", type: "relative", amount: 7, unit: "day" },
+  { key: "last-30-days", type: "relative", amount: 30, unit: "day" },
+  { key: "last-1-week", type: "relative", amount: 1, unit: "week" },
+];
+
+const ACTIVITY_DATE_RANGE_I18N: DateRangePickerProps.I18nStrings = {
+  modeSelectionLabel: "Range mode",
+  relativeModeTitle: "Relative",
+  absoluteModeTitle: "Absolute",
+  relativeRangeSelectionHeading: "Presets",
+  relativeRangeSelectionMonthlyDescription: "",
+  cancelButtonLabel: "Cancel",
+  clearButtonLabel: "Clear",
+  applyButtonLabel: "Apply",
+  formatRelativeRange: (v) => {
+    if (v.key === "last-7-days") return "Last 7 days";
+    if (v.key === "last-30-days") return "Last 30 days";
+    if (v.key === "last-1-day") return "Today";
+    if (v.key === "last-1-week") return "Last 1 week";
+    if (v.unit === "day") return `Last ${v.amount} day${v.amount === 1 ? "" : "s"}`;
+    if (v.unit === "week") return `Last ${v.amount} week${v.amount === 1 ? "" : "s"}`;
+    if (v.unit === "month") return `Last ${v.amount} month${v.amount === 1 ? "" : "s"}`;
+    if (v.unit === "year") return `Last ${v.amount} year${v.amount === 1 ? "" : "s"}`;
+    return `${v.amount} ${v.unit}`;
+  },
+  formatUnit: (unit: DateRangePickerProps.TimeUnit, value: number) =>
+    `${value} ${unit}${value === 1 ? "" : "s"}`,
+  customRelativeRangeOptionLabel: "Custom",
+  customRelativeRangeOptionDescription: "Set a custom duration",
+  customRelativeRangeDurationLabel: "Duration",
+  customRelativeRangeDurationPlaceholder: "0",
+  customRelativeRangeUnitLabel: "Unit",
+  startDateLabel: "Start date",
+  startTimeLabel: "Start time",
+  endDateLabel: "End date",
+  endTimeLabel: "End time",
+  dateConstraintText: "Use YYYY-MM-DD",
+  monthConstraintText: "YYYY-MM",
+  isoDatePlaceholder: "YYYY-MM-DD",
+};
+
+function parseISODateToLocalDay(dateIso: string): Date {
+  const datePart = dateIso.split("T")[0] ?? dateIso;
+  const parts = datePart.split("-").map((x) => parseInt(x, 10));
+  if (parts.length < 3) return new Date(NaN);
+  const [y, m, d] = parts;
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return new Date(NaN);
+  return new Date(y, m - 1, d);
+}
+
+function resolveDateRangeToDayBounds(
+  value: DateRangePickerProps.Value | null,
+): { start: string; end: string } | null {
+  if (!value) return null;
+  if (value.type === "absolute") {
+    const s = parseISODateToLocalDay(value.startDate);
+    const e = parseISODateToLocalDay(value.endDate);
+    if (isNaN(s.getTime()) || isNaN(e.getTime())) return null;
+    const start = dayKey(s);
+    const end = dayKey(e);
+    return start <= end ? { start, end } : { start: end, end: start };
+  }
+  const now = new Date();
+  const endDay = dayKey(new Date(now.getFullYear(), now.getMonth(), now.getDate()));
+  const endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const { amount, unit } = value;
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  if (unit === "day") {
+    const startD = new Date(endDate);
+    startD.setDate(endDate.getDate() - amount + 1);
+    return { start: dayKey(startD), end: endDay };
+  }
+  if (unit === "week") {
+    const startD = new Date(endDate);
+    startD.setDate(endDate.getDate() - amount * 7 + 1);
+    return { start: dayKey(startD), end: endDay };
+  }
+  if (unit === "month") {
+    const startD = new Date(endDate);
+    startD.setMonth(startD.getMonth() - amount);
+    return { start: dayKey(startD), end: endDay };
+  }
+  if (unit === "year") {
+    const startD = new Date(endDate);
+    startD.setFullYear(startD.getFullYear() - amount);
+    return { start: dayKey(startD), end: endDay };
+  }
+  let startMs = now.getTime();
+  if (unit === "hour") startMs -= amount * 3600 * 1000;
+  else if (unit === "minute") startMs -= amount * 60 * 1000;
+  else if (unit === "second") startMs -= amount * 1000;
+  else return null;
+  const startD = new Date(startMs);
+  const startDay = dayKey(new Date(startD.getFullYear(), startD.getMonth(), startD.getDate()));
+  return { start: startDay, end: endDay };
+}
+
+function activityDateRangeIsValid(value: DateRangePickerProps.Value | null): DateRangePickerProps.ValidationResult {
+  if (value == null) return { valid: true };
+  if (value.type === "relative") {
+    if (!Number.isFinite(value.amount) || value.amount <= 0) {
+      return { valid: false, errorMessage: "Enter a positive amount" };
+    }
+    return { valid: true };
+  }
+  const a = parseISODateToLocalDay(value.startDate);
+  const b = parseISODateToLocalDay(value.endDate);
+  if (isNaN(a.getTime()) || isNaN(b.getTime())) {
+    return { valid: false, errorMessage: "Enter valid dates" };
+  }
+  if (a > b) return { valid: false, errorMessage: "Start date must be before end date" };
+  return { valid: true };
 }
 
 function formatTimeRange(start: Date, end: Date): string {
@@ -666,6 +782,7 @@ export function ActivityTimeline({ sessions, loading, onRefresh, highlightTimest
   const [screenshotModalId, setScreenshotModalId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [alertsOnly, setAlertsOnly] = useState(false);
+  const [jumpRangeValue, setJumpRangeValue] = useState<DateRangePickerProps.Value | null>(null);
   /** Explicit expand/collapse per day; omitted keys use default (newest day expanded only). */
   const [dayExpanded, setDayExpanded] = useState<Record<string, boolean>>({});
 
@@ -678,14 +795,39 @@ export function ActivityTimeline({ sessions, loading, onRefresh, highlightTimest
     [sessions],
   );
 
+  const jumpRangeBounds = useMemo(() => resolveDateRangeToDayBounds(jumpRangeValue), [jumpRangeValue]);
+
   const filteredSorted = useMemo(() => {
     let xs = sorted;
     if (alertsOnly) xs = xs.filter((s) => (s.alertEvents?.length ?? 0) > 0);
     if (searchQuery.trim()) xs = xs.filter((s) => sessionMatchesSearch(s, searchQuery));
+    if (jumpRangeBounds) {
+      xs = xs.filter((s) => {
+        const k = dayKey(s.startTime);
+        return k >= jumpRangeBounds.start && k <= jumpRangeBounds.end;
+      });
+    }
     return xs;
-  }, [sorted, alertsOnly, searchQuery]);
+  }, [sorted, alertsOnly, searchQuery, jumpRangeBounds]);
 
   const dayGroups = useMemo(() => groupSessionsByDay(filteredSorted), [filteredSorted]);
+
+  const scrollAfterDateApply = useRef(false);
+  const onJumpRangeChange = useCallback((event: { detail: DateRangePickerProps.ChangeDetail }) => {
+    setJumpRangeValue(event.detail.value);
+    if (event.detail.value) scrollAfterDateApply.current = true;
+  }, []);
+
+  useEffect(() => {
+    if (!scrollAfterDateApply.current) return;
+    scrollAfterDateApply.current = false;
+    const dk = dayGroups[0]?.dayKey;
+    if (!dk) return;
+    setDayExpanded((prev) => ({ ...prev, [dk]: true }));
+    window.setTimeout(() => {
+      document.getElementById(`vtl-day-${dk}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+  }, [jumpRangeValue, dayGroups]);
 
   const firstDayKey = dayGroups[0]?.dayKey ?? "";
 
@@ -716,33 +858,14 @@ export function ActivityTimeline({ sessions, loading, onRefresh, highlightTimest
     setDayExpanded(next);
   }, [dayGroups]);
 
-  const jumpOptions = useMemo(
-    () => [
-      { label: "Jump to day…", value: "" },
-      ...dayGroups.map((g) => ({ label: g.label, value: g.dayKey })),
-    ],
-    [dayGroups],
-  );
-
-  const [jumpSelect, setJumpSelect] = useState<{ label: string; value?: string }>({
-    label: "Jump to day…",
-    value: "",
-  });
-  const dayKeysSig = dayGroups.map((g) => g.dayKey).join("|");
-  useEffect(() => {
-    setJumpSelect({ label: "Jump to day…", value: "" });
-  }, [dayKeysSig]);
-
-  const scrollToDay = useCallback(
-    (dk: string) => {
-      if (!dk) return;
-      setDayExpanded((prev) => ({ ...prev, [dk]: true }));
-      window.setTimeout(() => {
-        document.getElementById(`vtl-day-${dk}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
-      }, 50);
-    },
-    [],
-  );
+  const anyDayExpanded = useMemo(() => {
+    if (dayGroups.length === 0) return false;
+    return dayGroups.some((g) => {
+      if (g.dayKey in dayExpanded) return dayExpanded[g.dayKey]!;
+      // Default behavior: newest day expanded only.
+      return g.dayKey === firstDayKey;
+    });
+  }, [dayGroups, dayExpanded, firstDayKey]);
 
   // Find the index of the session closest to the highlight timestamp (within filtered list)
   const highlightIndex = useMemo(() => {
@@ -800,13 +923,13 @@ export function ActivityTimeline({ sessions, loading, onRefresh, highlightTimest
     [sorted],
   );
 
-  const isFiltered = searchQuery.trim().length > 0 || alertsOnly;
+  const isFiltered = searchQuery.trim().length > 0 || alertsOnly || jumpRangeValue != null;
   const headerDesc = useMemo(() => {
     const base = isFiltered
       ? `${filteredSorted.length} of ${sorted.length} sessions`
       : `${sorted.length} sessions`;
     return `${base} tracked${highlightTimestamp ? " · scrolled to alert time" : ""}`;
-  }, [filteredSorted.length, sorted.length, isFiltered, highlightTimestamp]);
+  }, [filteredSorted.length, sorted.length, isFiltered, highlightTimestamp, jumpRangeValue]);
 
   if (loading && sessions.length === 0) {
     return (
@@ -874,31 +997,29 @@ export function ActivityTimeline({ sessions, loading, onRefresh, highlightTimest
                 />
               </div>
             </FormField>
-            <FormField label="Jump to day">
+            <FormField label="Date range">
               <div className="vtl-toolbar-jump">
-                <Select
-                  selectedOption={jumpSelect}
-                  options={jumpOptions}
-                  onChange={({ detail }) => {
-                    const opt = detail.selectedOption;
-                    setJumpSelect({ label: opt.label ?? "", value: String(opt.value ?? "") });
-                    const v = String(opt.value ?? "");
-                    if (v) scrollToDay(v);
-                    window.setTimeout(() => {
-                      setJumpSelect({ label: "Jump to day…", value: "" });
-                    }, 0);
-                  }}
+                <DateRangePicker
+                  value={jumpRangeValue}
+                  onChange={onJumpRangeChange}
+                  relativeOptions={ACTIVITY_DATE_RELATIVE_OPTIONS}
+                  isValidRange={activityDateRangeIsValid}
+                  dateOnly
+                  i18nStrings={ACTIVITY_DATE_RANGE_I18N}
+                  placeholder="All days"
+                  showClearButton
+                  expandToViewport
+                  granularity="day"
+                  ariaLabel="Filter activity by calendar date range"
                 />
               </div>
             </FormField>
-            <SpaceBetween direction="horizontal" size="xs">
-              <Button variant="link" onClick={expandAllDays}>
-                Expand all days
-              </Button>
-              <Button variant="link" onClick={collapseAllDays}>
-                Collapse all days
-              </Button>
-            </SpaceBetween>
+            <Button
+              variant="link"
+              onClick={() => (anyDayExpanded ? collapseAllDays() : expandAllDays())}
+            >
+              {anyDayExpanded ? "Collapse all days" : "Expand all days"}
+            </Button>
             <div className="vtl-toolbar-alerts">
               <Checkbox
                 checked={alertsOnly}
@@ -911,7 +1032,7 @@ export function ActivityTimeline({ sessions, loading, onRefresh, highlightTimest
 
           {filteredSorted.length === 0 ? (
             <Box padding={{ vertical: "l" }} textAlign="center" color="text-body-secondary">
-              No sessions match your filters. Clear search or turn off &quot;Alerts only&quot;.
+              No sessions match your filters. Clear search, date range, or turn off &quot;Alerts only&quot;.
             </Box>
           ) : (
             <div className="vtl-list">
