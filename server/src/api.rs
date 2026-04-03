@@ -46,6 +46,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/agents/:id/windows", get(agent_windows))
         .route("/agents/:id/keys", get(agent_keys))
         .route("/agents/:id/alert-rule-events", get(agent_alert_rule_events))
+        .route("/alert-rule-events/:id/screenshot", get(alert_rule_event_screenshot))
         .route("/agents/:id/urls", get(agent_urls))
         .route("/agents/:id/activity", get(agent_activity))
         .route("/agents/:id/top-urls", get(agent_top_urls))
@@ -92,10 +93,27 @@ pub fn router() -> Router<Arc<AppState>> {
             delete(agent_group_member_remove_h),
         )
         .route("/alert-rules", get(alert_rules_list_h).post(alert_rules_create_h))
+        .route("/alert-rules/:rule_id/events", get(alert_rule_events_for_rule_h))
         .route(
             "/alert-rules/:rule_id",
             put(alert_rules_update_h).delete(alert_rules_delete_h),
         )
+}
+
+async fn alert_rule_event_screenshot(
+    Path(id): Path<i64>,
+    State(s): State<Arc<AppState>>,
+    Extension(_user): Extension<auth::AuthUser>,
+) -> Response {
+    match db::alert_rule_event_screenshot_get(&s.db, id).await {
+        Ok(Some(bytes)) => (
+            [(header::CONTENT_TYPE, "image/jpeg"), (header::CACHE_CONTROL, "no-store")],
+            bytes,
+        )
+            .into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "No screenshot").into_response(),
+        Err(e) => err500(e),
+    }
 }
 
 async fn me(Extension(user): Extension<auth::AuthUser>) -> Response {
@@ -650,6 +668,40 @@ async fn agent_urls(
                 "view_urls",
                 "ok",
                 &serde_json::json!({ "limit": p.limit, "offset": p.offset }),
+                10,
+                ip.as_deref(),
+            )
+            .await;
+            Json(serde_json::json!({ "rows": rows })).into_response()
+        }
+        Err(e) => err500(e),
+    }
+}
+
+async fn alert_rule_events_for_rule_h(
+    Path(rule_id): Path<i64>,
+    Query(p): Query<PageParams>,
+    State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> Response {
+    if !user.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "admin only" }))).into_response();
+    }
+    if let Err(msg) = validate_page_params(&p) {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+    }
+    let ip = audit_ip(&headers, addr);
+    match db::alert_rule_events_list_for_rule(&s.db, rule_id, p.limit, p.offset).await {
+        Ok(rows) => {
+            let _ = db::insert_audit_log_dedup(
+                &s.db,
+                user.username.as_str(),
+                None,
+                "view_alert_rule_events_by_rule",
+                "ok",
+                &serde_json::json!({ "rule_id": rule_id, "limit": p.limit, "offset": p.offset }),
                 10,
                 ip.as_deref(),
             )
@@ -1758,6 +1810,8 @@ struct AlertRuleCreateBody {
     cooldown_secs: i32,
     #[serde(default = "default_true")]
     enabled: bool,
+    #[serde(default)]
+    take_screenshot: bool,
     scopes: Vec<AlertRuleScopeIn>,
 }
 
@@ -1775,6 +1829,8 @@ struct AlertRuleUpdateBody {
     cooldown_secs: i32,
     #[serde(default = "default_true")]
     enabled: bool,
+    #[serde(default)]
+    take_screenshot: bool,
     scopes: Vec<AlertRuleScopeIn>,
 }
 
@@ -2031,6 +2087,7 @@ async fn alert_rules_create_h(
         body.case_insensitive,
         body.cooldown_secs,
         body.enabled,
+        body.take_screenshot,
         &scopes,
     )
     .await
@@ -2085,6 +2142,7 @@ async fn alert_rules_update_h(
         body.case_insensitive,
         body.cooldown_secs,
         body.enabled,
+        body.take_screenshot,
         &scopes,
     )
     .await

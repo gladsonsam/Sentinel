@@ -10,8 +10,10 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-use windows::Win32::Storage::FileSystem::{GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW};
 use windows::core::PCWSTR;
+use windows::Win32::Storage::FileSystem::{
+    GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW,
+};
 
 use std::ffi::c_void;
 use std::os::windows::ffi::OsStrExt;
@@ -153,8 +155,7 @@ fn app_display_from_full_path_uncached(full_path: &str) -> String {
             return exe;
         }
 
-        let translations = query_translations(&buf)
-            .unwrap_or_else(|| vec![(0x0409u16, 0x04B0u16)]); // en-US fallback
+        let translations = query_translations(&buf).unwrap_or_else(|| vec![(0x0409u16, 0x04B0u16)]); // en-US fallback
 
         // Try a few likely metadata fields, in order.
         //
@@ -163,7 +164,10 @@ fn app_display_from_full_path_uncached(full_path: &str) -> String {
         // misleading. Prefer `FileDescription` first; it usually contains the
         // actual component/app name users expect.
         for (lang, codepage) in translations {
-            let desc_q = format!(r"\StringFileInfo\{:04x}{:04x}\FileDescription", lang, codepage);
+            let desc_q = format!(
+                r"\StringFileInfo\{:04x}{:04x}\FileDescription",
+                lang, codepage
+            );
             if let Some(v) = query_string_from_version_block(&buf, &desc_q) {
                 let v = normalize_display_name(v);
                 if !v.is_empty() {
@@ -216,4 +220,3 @@ pub fn app_display_name_from_full_path(full_path: &str) -> String {
     }
     computed
 }
-

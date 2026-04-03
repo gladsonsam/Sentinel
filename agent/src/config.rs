@@ -116,9 +116,7 @@ pub fn load_config() -> Config {
             if let Some(c) = try_load_dpapi_dat(&bytes) {
                 cfg = c;
             } else if let Some(c) = try_load_legacy_base64_dat(&bytes) {
-                warn!(
-                    "Loaded legacy base64 config.dat; it will be upgraded to DPAPI on next save"
-                );
+                warn!("Loaded legacy base64 config.dat; it will be upgraded to DPAPI on next save");
                 cfg = c;
             }
         }

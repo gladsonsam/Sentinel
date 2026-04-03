@@ -378,6 +378,7 @@ export const api = {
     case_insensitive: boolean;
     cooldown_secs: number;
     enabled: boolean;
+    take_screenshot?: boolean;
     scopes: { kind: string; group_id?: string; agent_id?: string }[];
   }): Promise<{ id: number }> => postJsonRes("/alert-rules", body),
 
@@ -391,10 +392,21 @@ export const api = {
       case_insensitive: boolean;
       cooldown_secs: number;
       enabled: boolean;
+      take_screenshot?: boolean;
       scopes: { kind: string; group_id?: string; agent_id?: string }[];
     },
   ): Promise<{ ok: boolean }> => putJson(`/alert-rules/${id}`, body),
 
   alertRulesDelete: (id: number): Promise<{ ok: boolean }> =>
     delJson(`/alert-rules/${id}`),
+
+  alertRuleEvents: (
+    ruleId: number,
+    params?: { limit?: number; offset?: number },
+  ): Promise<{ rows: Record<string, unknown>[] }> => {
+    const q = new URLSearchParams();
+    q.set("limit", String(params?.limit ?? 500));
+    q.set("offset", String(params?.offset ?? 0));
+    return get(`/alert-rules/${ruleId}/events?${q.toString()}`);
+  },
 };

@@ -20,17 +20,9 @@ use windows::{
             OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
             PROCESS_QUERY_LIMITED_INFORMATION,
         },
-        UI::Accessibility::{
-            SetWinEventHook, UnhookWinEvent, HWINEVENTHOOK,
-        },
-        UI::WindowsAndMessaging::{
-            GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId, EVENT_SYSTEM_FOREGROUND,
-        },
+        UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId},
     },
 };
-
-use std::sync::{Mutex, OnceLock};
-use tokio::sync::mpsc;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Public types
@@ -72,126 +64,45 @@ impl WindowTracker {
         Self::default()
     }
 
-    /// Return the current foreground window details (no change detection).
-    pub fn snapshot(&self) -> WindowEvent {
+    /// Returns `Some(WindowEvent)` when the foreground window or its title
+    /// has changed since the last call; `None` otherwise.
+    pub fn poll(&mut self) -> Option<WindowEvent> {
         let hwnd: HWND = unsafe { GetForegroundWindow() };
         let hwnd_raw = hwnd.0 as usize;
-        if hwnd_raw == 0 {
-            return WindowEvent {
-                title: String::new(),
-                app: String::new(),
-                app_display: String::new(),
-                hwnd: 0,
-            };
-        }
-        let title = read_window_title(hwnd);
-        let (app, app_display) = read_process_name(hwnd);
-        WindowEvent {
-            title,
-            app,
-            app_display,
-            hwnd: hwnd_raw,
-        }
-    }
 
-    /// Apply a snapshot and emit only if it changed.
-    pub fn update_if_changed(&mut self, snap: WindowEvent) -> Option<WindowEvent> {
-        if snap.hwnd == 0 {
+        // Null HWND → desktop has focus. Emit once on transition.
+        if hwnd_raw == 0 {
             if self.last_hwnd != 0 {
                 self.last_hwnd = 0;
                 self.last_title = String::new();
-                return Some(snap);
+                return Some(WindowEvent {
+                    title: String::new(),
+                    app: String::new(),
+                    app_display: String::new(),
+                    hwnd: 0,
+                });
             }
             return None;
         }
 
-        if snap.hwnd == self.last_hwnd && snap.title == self.last_title {
+        let title = read_window_title(hwnd);
+
+        if hwnd_raw == self.last_hwnd && title == self.last_title {
             return None;
         }
 
-        self.last_hwnd = snap.hwnd;
-        self.last_title = snap.title.clone();
-        Some(snap)
+        let (app, app_display) = read_process_name(hwnd);
+
+        self.last_hwnd = hwnd_raw;
+        self.last_title = title.clone();
+
+        Some(WindowEvent {
+            title,
+            app,
+            app_display,
+            hwnd: hwnd_raw,
+        })
     }
-
-    /// Returns `Some(WindowEvent)` when the foreground window or its title
-    /// has changed since the last call; `None` otherwise.
-    pub fn poll(&mut self) -> Option<WindowEvent> {
-        let snap = self.snapshot();
-        self.update_if_changed(snap)
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Event-driven foreground notifications (low CPU)
-// ─────────────────────────────────────────────────────────────────────────────
-
-static FOREGROUND_NOTIFY_TX: OnceLock<Mutex<Option<mpsc::UnboundedSender<()>>>> = OnceLock::new();
-
-fn notify_tx() -> &'static Mutex<Option<mpsc::UnboundedSender<()>>> {
-    FOREGROUND_NOTIFY_TX.get_or_init(|| Mutex::new(None))
-}
-
-unsafe extern "system" fn win_event_proc(
-    _hook: HWINEVENTHOOK,
-    event: u32,
-    _hwnd: HWND,
-    _id_object: i32,
-    _id_child: i32,
-    _event_thread: u32,
-    _event_time: u32,
-) {
-    if event != EVENT_SYSTEM_FOREGROUND {
-        return;
-    }
-    if let Ok(guard) = notify_tx().lock() {
-        if let Some(tx) = guard.as_ref() {
-            let _ = tx.send(());
-        }
-    }
-}
-
-pub struct ForegroundHookGuard {
-    hook: HWINEVENTHOOK,
-}
-
-impl Drop for ForegroundHookGuard {
-    fn drop(&mut self) {
-        unsafe {
-            let _ = UnhookWinEvent(self.hook);
-        }
-        if let Ok(mut guard) = notify_tx().lock() {
-            *guard = None;
-        }
-    }
-}
-
-/// Subscribe to foreground-window-change notifications with a WinEvent hook.
-///
-/// This avoids constant polling and significantly lowers idle CPU usage.
-pub fn subscribe_foreground_events() -> anyhow::Result<(ForegroundHookGuard, mpsc::UnboundedReceiver<()>)> {
-    let (tx, rx) = mpsc::unbounded_channel::<()>();
-    if let Ok(mut guard) = notify_tx().lock() {
-        *guard = Some(tx);
-    }
-
-    let hook = unsafe {
-        SetWinEventHook(
-            EVENT_SYSTEM_FOREGROUND,
-            EVENT_SYSTEM_FOREGROUND,
-            None,
-            Some(win_event_proc),
-            0,
-            0,
-            0, // WINEVENT_OUTOFCONTEXT
-        )
-    };
-
-    if hook.0.is_null() {
-        return Err(anyhow::anyhow!("SetWinEventHook(EVENT_SYSTEM_FOREGROUND) failed"));
-    }
-
-    Ok((ForegroundHookGuard { hook }, rx))
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

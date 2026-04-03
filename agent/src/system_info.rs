@@ -1,6 +1,6 @@
 use serde_json::json;
-use sysinfo::{Disks, System};
 use std::process::Command;
+use sysinfo::{Disks, System};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -23,7 +23,10 @@ fn parse_first_json_string(raw: &[u8], key: &str) -> Option<String> {
     } else {
         val
     };
-    obj.get(key)?.as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+    obj.get(key)?
+        .as_str()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 #[cfg(target_os = "windows")]
@@ -96,21 +99,13 @@ pub fn collect_agent_info() -> serde_json::Value {
         .map(|list| {
             list.into_iter()
                 .map(|a| {
-                    let ips: Vec<String> = a
-                        .ip_addresses()
-                        .iter()
-                        .map(|ip| ip.to_string())
-                        .collect();
-                    let gateways: Vec<String> = a
-                        .gateways()
-                        .iter()
-                        .map(|ip| ip.to_string())
-                        .collect();
-                    let dns: Vec<String> = a.dns_servers().iter().map(|ip| ip.to_string()).collect();
-                    let mac = a
-                        .physical_address()
-                        .map(format_mac)
-                        .unwrap_or_default();
+                    let ips: Vec<String> =
+                        a.ip_addresses().iter().map(|ip| ip.to_string()).collect();
+                    let gateways: Vec<String> =
+                        a.gateways().iter().map(|ip| ip.to_string()).collect();
+                    let dns: Vec<String> =
+                        a.dns_servers().iter().map(|ip| ip.to_string()).collect();
+                    let mac = a.physical_address().map(format_mac).unwrap_or_default();
 
                     json!({
                         "name": a.friendly_name(),
@@ -132,7 +127,8 @@ pub fn collect_agent_info() -> serde_json::Value {
     let install_path = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_string_lossy().to_string()));
-    let ui_password_set = !cfg.ui_password_hash.is_empty() && cfg.ui_password_hash != crate::config::hash_password("");
+    let ui_password_set = !cfg.ui_password_hash.is_empty()
+        && cfg.ui_password_hash != crate::config::hash_password("");
 
     let current_user = std::env::var("USERNAME")
         .or_else(|_| std::env::var("USER"))

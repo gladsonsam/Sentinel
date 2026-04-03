@@ -9,6 +9,7 @@ import TextFilter from "@cloudscape-design/components/text-filter";
 import { useCollection } from "@cloudscape-design/collection-hooks";
 import { apiUrl } from "../../lib/api";
 import { fmtDateTime } from "../../lib/utils";
+import { AlertRuleEventScreenshotCell } from "../AlertRuleEventScreenshotCell";
 
 interface AlertRuleEventRow {
   id: number;
@@ -16,6 +17,8 @@ interface AlertRuleEventRow {
   rule_name: string;
   channel: "url" | "keys" | string;
   snippet: string;
+  has_screenshot: boolean;
+  screenshot_requested: boolean;
   created_at: string;
 }
 
@@ -47,6 +50,8 @@ export function AlertsTab({ agentId }: AlertsTabProps) {
           rule_name: String(row.rule_name ?? ""),
           channel: String(row.channel ?? ""),
           snippet: String(row.snippet ?? ""),
+          has_screenshot: Boolean(row.has_screenshot),
+          screenshot_requested: Boolean(row.screenshot_requested),
           created_at: String(row.created_at ?? ""),
         }))
       );
@@ -133,6 +138,18 @@ export function AlertsTab({ agentId }: AlertsTabProps) {
           cell: (item) => (item.rule_id != null ? String(item.rule_id) : "—"),
           sortingField: "rule_id",
           width: 100,
+        },
+        {
+          id: "shot",
+          header: "Screenshot",
+          cell: (item) => (
+            <AlertRuleEventScreenshotCell
+              eventId={item.id}
+              hasScreenshot={item.has_screenshot}
+              screenshotRequested={item.screenshot_requested}
+            />
+          ),
+          width: 120,
         },
       ]}
       items={displayItems}

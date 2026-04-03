@@ -100,7 +100,7 @@ pub async fn on_url_or_keys_event(
         }
 
         let snippet = truncate_snippet(&haystack, channel);
-        if let Err(e) = db::alert_rule_event_insert(
+        let event_id = match db::alert_rule_event_insert(
             &state.db,
             agent_id,
             rule.id,
@@ -110,7 +110,19 @@ pub async fn on_url_or_keys_event(
         )
         .await
         {
-            tracing::warn!(error = %e, "alert_rule_event_insert failed");
+            Ok(id) => id,
+            Err(e) => {
+                tracing::warn!(error = %e, "alert_rule_event_insert failed");
+                continue;
+            }
+        };
+
+        if rule.take_screenshot {
+            // Fire-and-forget: request a one-off capture and store it against this event.
+            let state2 = state.clone();
+            tokio::spawn(async move {
+                capture_and_store_screenshot_for_event(&state2, agent_id, event_id).await;
+            });
         }
         state.broadcast(
             serde_json::json!({
@@ -126,4 +138,41 @@ pub async fn on_url_or_keys_event(
             .to_string(),
         );
     }
+}
+
+async fn capture_and_store_screenshot_for_event(state: &Arc<AppState>, agent_id: Uuid, event_id: i64) {
+    // Must have an active WS connection.
+    if !state.agent_cmds.lock().unwrap().contains_key(&agent_id) {
+        return;
+    }
+
+    let prev_seq = state.frames.lock().unwrap().get(&agent_id).map(|f| f.seq).unwrap_or(0);
+    let start = serde_json::json!({ "type": "start_capture" });
+    if !state.try_send_agent_command_json(agent_id, &start) {
+        return;
+    }
+
+    let mut jpeg: Option<bytes::Bytes> = None;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        if tokio::time::Instant::now() >= deadline {
+            break;
+        }
+        {
+            let frames = state.frames.lock().unwrap();
+            if let Some(f) = frames.get(&agent_id) {
+                if f.seq > prev_seq && !f.jpeg.is_empty() {
+                    jpeg = Some(f.jpeg.clone());
+                    break;
+                }
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+
+    let stop = serde_json::json!({ "type": "stop_capture" });
+    let _ = state.try_send_agent_command_json(agent_id, &stop);
+
+    let Some(j) = jpeg else { return; };
+    let _ = db::alert_rule_event_screenshot_upsert(&state.db, event_id, j.as_ref()).await;
 }

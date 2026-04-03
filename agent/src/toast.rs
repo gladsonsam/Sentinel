@@ -30,18 +30,12 @@ impl Toast {
     }
 
     pub fn title(mut self, content: &str) -> Self {
-        self.title = format!(
-            r#"<text id="1">{}</text>"#,
-            escape_str_attribute(content)
-        );
+        self.title = format!(r#"<text id="1">{}</text>"#, escape_str_attribute(content));
         self
     }
 
     pub fn text1(mut self, content: &str) -> Self {
-        self.line1 = format!(
-            r#"<text id="2">{}</text>"#,
-            escape_str_attribute(content)
-        );
+        self.line1 = format!(r#"<text id="2">{}</text>"#, escape_str_attribute(content));
         self
     }
 

@@ -22,7 +22,7 @@
 //! ```
 
 use anyhow::{Context, Result};
-use enigo::{Button, Coordinate, Direction, Enigo, Keyboard, Key, Mouse, Settings};
+use enigo::{Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Settings};
 use serde::Deserialize;
 use tracing::{info, warn};
 
@@ -183,7 +183,9 @@ impl InputController {
                     SpecialKey::Tab => Key::Tab,
                     SpecialKey::Escape => Key::Escape,
                 };
-                self.enigo.key(k, Direction::Click).context("key press failed")?;
+                self.enigo
+                    .key(k, Direction::Click)
+                    .context("key press failed")?;
             }
 
             ControlCommand::Notify { title, message } => {

@@ -1589,6 +1589,7 @@ pub struct AlertRuleRow {
     pub match_mode: String,
     pub case_insensitive: bool,
     pub cooldown_secs: i32,
+    pub take_screenshot: bool,
 }
 
 /// Rules that apply to this agent (global + group memberships + direct agent scope).
@@ -1600,7 +1601,7 @@ pub async fn alert_rules_effective_for_agent(
     let rows = sqlx::query(
         r#"
         SELECT DISTINCT r.id, r.name, r.pattern, r.match_mode,
-               r.case_insensitive, r.cooldown_secs
+               r.case_insensitive, r.cooldown_secs, r.take_screenshot
         FROM alert_rules r
         INNER JOIN alert_rule_scopes s ON s.rule_id = r.id
         WHERE r.enabled
@@ -1632,6 +1633,7 @@ pub async fn alert_rules_effective_for_agent(
             match_mode: r.try_get("match_mode")?,
             case_insensitive: r.try_get("case_insensitive")?,
             cooldown_secs: r.try_get("cooldown_secs")?,
+            take_screenshot: r.try_get::<bool, _>("take_screenshot").unwrap_or(false),
         });
     }
     Ok(out)
@@ -1656,6 +1658,7 @@ pub struct AlertRuleListItem {
     pub case_insensitive: bool,
     pub cooldown_secs: i32,
     pub enabled: bool,
+    pub take_screenshot: bool,
     pub scopes: Vec<AlertRuleScopeJson>,
 }
 
@@ -1699,6 +1702,7 @@ pub async fn alert_rules_list_all(pool: &PgPool) -> Result<Vec<AlertRuleListItem
             case_insensitive: r.try_get("case_insensitive")?,
             cooldown_secs: r.try_get("cooldown_secs")?,
             enabled: r.try_get("enabled")?,
+            take_screenshot: r.try_get::<bool, _>("take_screenshot").unwrap_or(false),
             scopes,
         });
     }
@@ -1742,13 +1746,14 @@ pub async fn alert_rule_create_with_scopes(
     case_insensitive: bool,
     cooldown_secs: i32,
     enabled: bool,
+    take_screenshot: bool,
     scopes: &[(String, Option<Uuid>, Option<Uuid>)],
 ) -> Result<i64> {
     let mut tx = pool.begin().await?;
     let id: i64 = sqlx::query_scalar(
         r#"
-        INSERT INTO alert_rules (name, channel, pattern, match_mode, case_insensitive, cooldown_secs, enabled)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+        INSERT INTO alert_rules (name, channel, pattern, match_mode, case_insensitive, cooldown_secs, enabled, take_screenshot)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING id
         "#,
     )
@@ -1759,6 +1764,7 @@ pub async fn alert_rule_create_with_scopes(
     .bind(case_insensitive)
     .bind(cooldown_secs)
     .bind(enabled)
+    .bind(take_screenshot)
     .fetch_one(tx.deref_mut())
     .await?;
     alert_rule_scopes_write_tx(&mut tx, id, scopes).await?;
@@ -1776,6 +1782,7 @@ pub async fn alert_rule_update_with_scopes(
     case_insensitive: bool,
     cooldown_secs: i32,
     enabled: bool,
+    take_screenshot: bool,
     scopes: &[(String, Option<Uuid>, Option<Uuid>)],
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
@@ -1783,7 +1790,7 @@ pub async fn alert_rule_update_with_scopes(
         r#"
         UPDATE alert_rules
         SET name = $2, channel = $3, pattern = $4, match_mode = $5,
-            case_insensitive = $6, cooldown_secs = $7, enabled = $8, updated_at = NOW()
+            case_insensitive = $6, cooldown_secs = $7, enabled = $8, take_screenshot = $9, updated_at = NOW()
         WHERE id = $1
         "#,
     )
@@ -1795,6 +1802,7 @@ pub async fn alert_rule_update_with_scopes(
     .bind(case_insensitive)
     .bind(cooldown_secs)
     .bind(enabled)
+    .bind(take_screenshot)
     .execute(tx.deref_mut())
     .await?;
     if r.rows_affected() == 0 {
@@ -1822,6 +1830,23 @@ pub struct AlertRuleEventRow {
     pub rule_name: String,
     pub channel: String,
     pub snippet: String,
+    pub has_screenshot: bool,
+    /// Whether the rule currently has "take screenshot" enabled (best-effort join).
+    pub screenshot_requested: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+/// One alert firing for admin "history by rule" (includes which agent triggered it).
+#[derive(Debug, Clone, Serialize)]
+pub struct AlertRuleEventTriggeredRow {
+    pub id: i64,
+    pub agent_id: Uuid,
+    pub agent_name: String,
+    pub rule_name: String,
+    pub channel: String,
+    pub snippet: String,
+    pub has_screenshot: bool,
+    pub screenshot_requested: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -1832,11 +1857,12 @@ pub async fn alert_rule_event_insert(
     rule_name: &str,
     channel: &str,
     snippet: &str,
-) -> Result<()> {
-    sqlx::query(
+) -> Result<i64> {
+    let id: i64 = sqlx::query_scalar(
         r#"
         INSERT INTO alert_rule_events (agent_id, rule_id, rule_name, channel, snippet)
         VALUES ($1, $2, $3, $4, $5)
+        RETURNING id
         "#,
     )
     .bind(agent_id)
@@ -1844,9 +1870,37 @@ pub async fn alert_rule_event_insert(
     .bind(rule_name)
     .bind(channel)
     .bind(snippet)
+    .fetch_one(pool)
+    .await?;
+    Ok(id)
+}
+
+pub async fn alert_rule_event_screenshot_upsert(pool: &PgPool, event_id: i64, jpeg: &[u8]) -> Result<()> {
+    sqlx::query(
+        r#"
+        INSERT INTO alert_rule_event_screenshots (event_id, jpeg)
+        VALUES ($1, $2)
+        ON CONFLICT (event_id) DO UPDATE SET
+            jpeg = EXCLUDED.jpeg,
+            created_at = NOW()
+        "#,
+    )
+    .bind(event_id)
+    .bind(jpeg)
     .execute(pool)
     .await?;
     Ok(())
+}
+
+pub async fn alert_rule_event_screenshot_get(pool: &PgPool, event_id: i64) -> Result<Option<Vec<u8>>> {
+    let v: Option<Vec<u8>> = sqlx::query_scalar(
+        "SELECT jpeg FROM alert_rule_event_screenshots WHERE event_id = $1",
+    )
+    .bind(event_id)
+    .fetch_optional(pool)
+    .await?
+    .flatten();
+    Ok(v)
 }
 
 pub async fn alert_rule_events_list_for_agent(
@@ -1857,10 +1911,13 @@ pub async fn alert_rule_events_list_for_agent(
 ) -> Result<Vec<AlertRuleEventRow>> {
     let rows = sqlx::query(
         r#"
-        SELECT id, rule_id, rule_name, channel, snippet, created_at
-        FROM alert_rule_events
-        WHERE agent_id = $1
-        ORDER BY created_at DESC
+        SELECT e.id, e.rule_id, e.rule_name, e.channel, e.snippet, e.created_at,
+               EXISTS (SELECT 1 FROM alert_rule_event_screenshots s WHERE s.event_id = e.id) AS has_screenshot,
+               COALESCE(r.take_screenshot, false) AS screenshot_requested
+        FROM alert_rule_events e
+        LEFT JOIN alert_rules r ON r.id = e.rule_id
+        WHERE e.agent_id = $1
+        ORDER BY e.created_at DESC
         LIMIT $2 OFFSET $3
         "#,
     )
@@ -1878,7 +1935,52 @@ pub async fn alert_rule_events_list_for_agent(
             rule_name: r.try_get("rule_name")?,
             channel: r.try_get("channel")?,
             snippet: r.try_get("snippet")?,
+            has_screenshot: r.try_get::<bool, _>("has_screenshot").unwrap_or(false),
+            screenshot_requested: r.try_get::<bool, _>("screenshot_requested").unwrap_or(false),
             created_at: r.try_get("created_at")?,
+        });
+    }
+    Ok(out)
+}
+
+pub async fn alert_rule_events_list_for_rule(
+    pool: &PgPool,
+    rule_id: i64,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<AlertRuleEventTriggeredRow>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT e.id, e.agent_id, COALESCE(a.name, '') AS agent_name, e.rule_name, e.channel, e.snippet,
+               e.created_at,
+               EXISTS (SELECT 1 FROM alert_rule_event_screenshots s WHERE s.event_id = e.id) AS has_screenshot,
+               COALESCE(r.take_screenshot, false) AS screenshot_requested
+        FROM alert_rule_events e
+        LEFT JOIN agents a ON a.id = e.agent_id
+        LEFT JOIN alert_rules r ON r.id = e.rule_id
+        WHERE e.rule_id = $1
+        ORDER BY e.created_at DESC
+        LIMIT $2 OFFSET $3
+        "#,
+    )
+    .bind(rule_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        out.push(AlertRuleEventTriggeredRow {
+            id: row.try_get("id")?,
+            agent_id: row.try_get("agent_id")?,
+            agent_name: row.try_get("agent_name")?,
+            rule_name: row.try_get("rule_name")?,
+            channel: row.try_get("channel")?,
+            snippet: row.try_get("snippet")?,
+            has_screenshot: row.try_get::<bool, _>("has_screenshot").unwrap_or(false),
+            screenshot_requested: row.try_get::<bool, _>("screenshot_requested").unwrap_or(false),
+            created_at: row.try_get("created_at")?,
         });
     }
     Ok(out)

@@ -234,6 +234,7 @@ export interface AlertRule {
   case_insensitive: boolean;
   cooldown_secs: number;
   enabled: boolean;
+  take_screenshot?: boolean;
   scopes: AlertRuleScope[];
 }
 
