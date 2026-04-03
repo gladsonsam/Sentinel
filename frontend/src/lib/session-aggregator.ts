@@ -25,6 +25,17 @@ interface KeystrokeEvent {
   timestamp: string;
 }
 
+/** Alert rule firings shown on the activity timeline (screenshots load from the API by id). */
+export interface SessionAlertEvent {
+  id: number;
+  rule_name: string;
+  channel: string;
+  snippet: string;
+  created_at: string;
+  has_screenshot: boolean;
+  screenshot_requested: boolean;
+}
+
 export interface Session {
   id: string;
   appName: string;
@@ -39,6 +50,8 @@ export interface Session {
   windows: WindowEvent[];
   hasKeystrokes: boolean;
   hasUrls: boolean;
+  /** Fires attached by timestamp to this session (chronological within the card). */
+  alertEvents?: SessionAlertEvent[];
 }
 
 interface AggregateSessionsOptions {
@@ -387,6 +400,48 @@ export function aggregateSessions({
   redistributeUrlsToBrowserSessions(timeline, urls, gapMs);
 
   return timeline;
+}
+
+/**
+ * Map each alert event to the activity session whose time range best contains `created_at`.
+ * Uses the same boundary rule as the timeline highlight: ties go to real activity over `__idle__`.
+ */
+export function attachAlertEventsToSessions(
+  sessions: Session[],
+  events: SessionAlertEvent[],
+): Session[] {
+  if (sessions.length === 0) return sessions;
+  const withAlerts = sessions.map((s) => ({ ...s, alertEvents: [] as SessionAlertEvent[] }));
+  if (events.length === 0) return withAlerts;
+
+  for (const ev of events) {
+    const targetMs = new Date(ev.created_at).getTime();
+    if (isNaN(targetMs)) continue;
+
+    let best = 0;
+    let bestDist = Infinity;
+    withAlerts.forEach((s, i) => {
+      const start = s.startTime.getTime();
+      const end = s.endTime.getTime();
+      const dist = targetMs < start ? start - targetMs : targetMs > end ? targetMs - end : 0;
+      const isIdle = s.appName === "__idle__";
+      const bestIdle = withAlerts[best].appName === "__idle__";
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = i;
+      } else if (dist === bestDist && bestIdle && !isIdle) {
+        best = i;
+      }
+    });
+    withAlerts[best].alertEvents.push(ev);
+  }
+
+  for (const s of withAlerts) {
+    s.alertEvents.sort(
+      (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+    );
+  }
+  return withAlerts;
 }
 
 export function formatDuration(seconds: number): string {

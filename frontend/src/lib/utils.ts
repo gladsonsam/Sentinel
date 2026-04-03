@@ -40,6 +40,24 @@ export function fmtDateTime(ts: string | number | undefined): string {
 }
 
 /**
+ * Date/time with milliseconds so events that share the same clock second still read in true order.
+ */
+export function fmtDateTimePrecise(ts: string | number | undefined): string {
+  const d = parseTimestamp(ts);
+  if (!d) return "—";
+  const opts: Intl.DateTimeFormatOptions & { fractionalSecondDigits?: 1 | 2 | 3 } = {
+    year: "numeric",
+    month: "numeric",
+    day: "numeric",
+    hour: "numeric",
+    minute: "numeric",
+    second: "numeric",
+    fractionalSecondDigits: 3,
+  };
+  return d.toLocaleString(undefined, opts);
+}
+
+/**
  * Windows Uninstall `InstallDate` is often REG_SZ `YYYYMMDD` or `YYYYMMDDHHmmss`.
  * Show as `YYYY-MM-DD` for the Software tab (also normalizes rows already stored raw).
  */

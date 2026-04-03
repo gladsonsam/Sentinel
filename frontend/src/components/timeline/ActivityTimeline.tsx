@@ -8,6 +8,8 @@ import {
   Layout,
   Moon,
   Bell,
+  ImageIcon,
+  Calendar,
 } from "lucide-react";
 import Container from "@cloudscape-design/components/container";
 import Header from "@cloudscape-design/components/header";
@@ -16,7 +18,14 @@ import Badge from "@cloudscape-design/components/badge";
 import Box from "@cloudscape-design/components/box";
 import Spinner from "@cloudscape-design/components/spinner";
 import Button from "@cloudscape-design/components/button";
-import { Session, formatDuration } from "../../lib/session-aggregator";
+import Modal from "@cloudscape-design/components/modal";
+import Input from "@cloudscape-design/components/input";
+import Select from "@cloudscape-design/components/select";
+import Checkbox from "@cloudscape-design/components/checkbox";
+import FormField from "@cloudscape-design/components/form-field";
+import { Session, type SessionAlertEvent, formatDuration } from "../../lib/session-aggregator";
+import { apiUrl } from "../../lib/api";
+import { fmtDateTimePrecise, parseTimestamp } from "../../lib/utils";
 
 interface ActivityTimelineProps {
   sessions: Session[];
@@ -44,6 +53,61 @@ function isSameDay(a: Date, b: Date): boolean {
   );
 }
 
+/** Local calendar day key for grouping (YYYY-MM-DD). */
+function dayKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function formatDayHeading(dayKey: string): string {
+  const [y, mo, da] = dayKey.split("-").map(Number);
+  const d = new Date(y, mo - 1, da);
+  return d.toLocaleDateString([], {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function sessionMatchesSearch(session: Session, q: string): boolean {
+  const n = q.trim().toLowerCase();
+  if (!n) return true;
+  const parts: string[] = [
+    session.appName,
+    session.appDisplayName,
+    session.windowTitle,
+    ...session.urls.map((u) => `${u.url} ${u.browser}`),
+    ...session.windows.map((w) => w.window_title),
+    ...session.keystrokes.map((k) => `${k.keys} ${k.window_title}`),
+    ...(session.alertEvents ?? []).flatMap((e) => [e.rule_name, e.snippet, e.channel]),
+  ];
+  return parts.join(" ").toLowerCase().includes(n);
+}
+
+type DayGroup = {
+  dayKey: string;
+  label: string;
+  items: { session: Session; idx: number }[];
+};
+
+function groupSessionsByDay(sessions: Session[]): DayGroup[] {
+  const map = new Map<string, { session: Session; idx: number }[]>();
+  sessions.forEach((session, idx) => {
+    const key = dayKey(session.startTime);
+    if (!map.has(key)) map.set(key, []);
+    map.get(key)!.push({ session, idx });
+  });
+  const keys = [...map.keys()].sort((a, b) => b.localeCompare(a));
+  return keys.map((k) => ({
+    dayKey: k,
+    label: formatDayHeading(k),
+    items: map.get(k)!,
+  }));
+}
+
 function formatTimeRange(start: Date, end: Date): string {
   const opts: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit", second: "2-digit" };
   const startStr = start.toLocaleTimeString([], opts);
@@ -52,6 +116,24 @@ function formatTimeRange(start: Date, end: Date): string {
     return `${fmtDate(start)} ${startStr} – ${fmtDate(end)} ${endStr}`;
   }
   return `${startStr} – ${endStr}`;
+}
+
+function mergeAlertEvents(
+  a: Session["alertEvents"] | undefined,
+  b: Session["alertEvents"] | undefined,
+): Session["alertEvents"] {
+  const aa = a ?? [];
+  const bb = b ?? [];
+  if (aa.length === 0 && bb.length === 0) return undefined;
+  const seen = new Set<number>();
+  const out: NonNullable<Session["alertEvents"]> = [];
+  for (const ev of [...aa, ...bb]) {
+    if (seen.has(ev.id)) continue;
+    seen.add(ev.id);
+    out.push(ev);
+  }
+  out.sort((x, y) => new Date(x.created_at).getTime() - new Date(y.created_at).getTime());
+  return out;
 }
 
 // ── Merge adjacent sessions of same app ──────────────────────────────────────
@@ -76,6 +158,7 @@ function mergeAdjacentByApp(sessions: Session[]): Session[] {
         keystrokeCount: last.keystrokeCount + s.keystrokeCount,
         hasKeystrokes: last.hasKeystrokes || s.hasKeystrokes,
         hasUrls: last.hasUrls || s.hasUrls,
+        alertEvents: mergeAlertEvents(last.alertEvents, s.alertEvents),
       };
     } else {
       out.push(s);
@@ -96,19 +179,236 @@ function dedupeWindowsByTimestampAndTitle(windows: Session["windows"]) {
   return out;
 }
 
-// ── Day separator ─────────────────────────────────────────────────────────────
+/** Single chronological stream: window focus, URLs, and alert rows (incl. screenshots). */
+type MergedActivityRow =
+  | { kind: "window"; time: number; window: Session["windows"][number] }
+  | { kind: "url"; time: number; url: Session["urls"][number] }
+  | { kind: "page"; time: number; window: Session["windows"][number]; url: Session["urls"][number] }
+  | { kind: "alert"; time: number; alert: SessionAlertEvent };
 
-function DaySeparator({ date }: { date: Date }) {
+function timeMsFromUnknown(ts: string | undefined): number {
+  const d = parseTimestamp(ts);
+  return d ? d.getTime() : NaN;
+}
+
+function rowStableId(row: MergedActivityRow): number {
+  if (row.kind === "window") return row.window.id;
+  if (row.kind === "url") return row.url.id;
+  if (row.kind === "page") return row.window.id * 1_000_000 + row.url.id;
+  return row.alert.id;
+}
+
+/**
+ * When window + URL share the same instant, treat as one navigation.
+ * If several window rows share that instant with one URL, pair the **last** window (closest to URL)
+ * with the URL; earlier windows stay as separate rows.
+ */
+function mergeWindowUrlAtSameInstant(rows: MergedActivityRow[]): MergedActivityRow[] {
+  const out: MergedActivityRow[] = [];
+  let i = 0;
+  while (i < rows.length) {
+    const t = rows[i].time;
+    let j = i;
+    while (j < rows.length && rows[j].time === t) j++;
+    const group = rows.slice(i, j);
+    const urls = group.filter((r): r is Extract<MergedActivityRow, { kind: "url" }> => r.kind === "url");
+    const wins = group.filter((r): r is Extract<MergedActivityRow, { kind: "window" }> => r.kind === "window");
+
+    if (urls.length === 1 && wins.length >= 1) {
+      const urlR = urls[0];
+      const lastWin = wins[wins.length - 1];
+      for (const r of group) {
+        if (r.kind === "alert") out.push(r);
+      }
+      for (const w of wins.slice(0, -1)) {
+        out.push(w);
+      }
+      out.push({
+        kind: "page",
+        time: t,
+        window: lastWin.window,
+        url: urlR.url,
+      });
+      i = j;
+      continue;
+    }
+    for (const r of group) out.push(r);
+    i = j;
+  }
+  return out;
+}
+
+/**
+ * Windows, URLs, and alerts — **newest first** (matches the activity feed). Uses `parseTimestamp`
+ * for sort keys. Same instant: alert → window → URL (inverse of bottom-up causal order), then id desc.
+ */
+function buildMergedActivityTimeline(session: Session): MergedActivityRow[] {
+  const rows: MergedActivityRow[] = [];
+  for (const w of session.windows) {
+    const t = timeMsFromUnknown(w.timestamp);
+    if (!isNaN(t)) rows.push({ kind: "window", time: t, window: w });
+  }
+  for (const u of session.urls) {
+    const t = timeMsFromUnknown(u.timestamp);
+    if (!isNaN(t)) rows.push({ kind: "url", time: t, url: u });
+  }
+  for (const ev of session.alertEvents ?? []) {
+    const t = timeMsFromUnknown(ev.created_at);
+    if (!isNaN(t)) rows.push({ kind: "alert", time: t, alert: ev });
+  }
+  rows.sort((a, b) => {
+    if (a.time !== b.time) return b.time - a.time;
+    const kindOrder: Record<MergedActivityRow["kind"], number> = {
+      alert: 0,
+      window: 1,
+      url: 2,
+      page: 1,
+    };
+    const kd = kindOrder[a.kind] - kindOrder[b.kind];
+    if (kd !== 0) return kd;
+    return rowStableId(b) - rowStableId(a);
+  });
+  return mergeWindowUrlAtSameInstant(rows);
+}
+
+function MergedActivityRowView({
+  row,
+  onOpenScreenshot,
+}: {
+  row: MergedActivityRow;
+  onOpenScreenshot: (eventId: number) => void;
+}) {
+  if (row.kind === "window") {
+    const win = row.window;
+    return (
+      <div className="vtl-merged-row vtl-merged-row--kind-window">
+        <div className="vtl-merged-head">
+          <span className="vtl-merged-time">{fmtDateTimePrecise(win.timestamp)}</span>
+          <Badge color="grey">Window</Badge>
+        </div>
+        <div className="vtl-merged-body">
+          <span className="vtl-merged-window-line">
+            <Layout size={12} className="vtl-merged-icon" />
+            <span title={win.window_title}>{win.window_title}</span>
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  if (row.kind === "page") {
+    const { window: win, url: u } = row;
+    return (
+      <div className="vtl-merged-row vtl-merged-row--kind-page">
+        <div className="vtl-merged-head">
+          <span className="vtl-merged-time">{fmtDateTimePrecise(win.timestamp)}</span>
+          <span title="Window title and URL captured at the same instant">
+            <Badge color="blue">Page</Badge>
+          </span>
+        </div>
+        <div className="vtl-merged-body">
+          <span className="vtl-merged-window-line">
+            <Layout size={12} className="vtl-merged-icon" />
+            <span title={win.window_title}>{win.window_title}</span>
+          </span>
+          <a href={u.url} target="_blank" rel="noreferrer" className="vtl-merged-url-row">
+            <ExternalLink size={10} className="vtl-url-icon" />
+            <span className="vtl-url-text">{u.url.length > 120 ? u.url.slice(0, 120) + "…" : u.url}</span>
+            {u.browser ? <span className="vtl-url-browser">{u.browser}</span> : null}
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  if (row.kind === "url") {
+    const u = row.url;
+    return (
+      <div className="vtl-merged-row vtl-merged-row--kind-url">
+        <div className="vtl-merged-head">
+          <span className="vtl-merged-time">{fmtDateTimePrecise(u.timestamp)}</span>
+          <Badge color="blue">URL</Badge>
+        </div>
+        <div className="vtl-merged-body">
+          <a href={u.url} target="_blank" rel="noreferrer" className="vtl-merged-url-row">
+            <ExternalLink size={10} className="vtl-url-icon" />
+            <span className="vtl-url-text">
+              {u.url.length > 120 ? u.url.slice(0, 120) + "…" : u.url}
+            </span>
+            {u.browser ? <span className="vtl-url-browser">{u.browser}</span> : null}
+          </a>
+        </div>
+      </div>
+    );
+  }
+
+  const ev = row.alert;
+  const ruleName = (ev.rule_name || "—").trim() || "—";
+  const triggerText = (ev.snippet || "").trim();
+  const triggerLooksLikeUrl = /^https?:\/\//i.test(triggerText);
   return (
-    <div className="vtl-day-sep">
-      <span className="vtl-day-label">
-        {date.toLocaleDateString([], {
-          weekday: "long",
-          month: "long",
-          day: "numeric",
-          year: "numeric",
-        })}
-      </span>
+    <div className="vtl-merged-row vtl-merged-row--kind-alert">
+      <div className="vtl-merged-head">
+        <span className="vtl-merged-time">{fmtDateTimePrecise(ev.created_at)}</span>
+        <Badge color="red">Alert</Badge>
+        <Badge color={ev.channel === "url" ? "blue" : "grey"}>
+          {ev.channel === "url" ? "URL" : ev.channel === "keys" ? "Keys" : ev.channel}
+        </Badge>
+      </div>
+      <div className="vtl-merged-body">
+        <div className="vtl-alert-detail">
+          <div className="vtl-alert-detail-row">
+            <div className="vtl-alert-detail-label">Rule</div>
+            <div className="vtl-alert-detail-value vtl-alert-detail-value--rule">{ruleName}</div>
+          </div>
+          <div className="vtl-alert-detail-row">
+            <div className="vtl-alert-detail-label">Trigger</div>
+            <div className="vtl-alert-detail-value">
+              {triggerText ? (
+                triggerLooksLikeUrl ? (
+                  <a
+                    className="vtl-alert-trigger-link sentinel-monospace"
+                    href={triggerText}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={triggerText}
+                  >
+                    {triggerText}
+                  </a>
+                ) : (
+                  <span className="vtl-alert-trigger-text sentinel-monospace" title={triggerText}>
+                    {triggerText}
+                  </span>
+                )
+              ) : (
+                <span className="vtl-alert-trigger-missing">—</span>
+              )}
+            </div>
+          </div>
+        </div>
+        {ev.has_screenshot ? (
+          <button
+            type="button"
+            className="vtl-alert-shot-btn"
+            onClick={() => onOpenScreenshot(ev.id)}
+            title="View full size"
+          >
+            <img
+              src={apiUrl(`/alert-rule-events/${ev.id}/screenshot`)}
+              alt=""
+              className="vtl-alert-shot-thumb"
+              loading="lazy"
+            />
+            <span className="vtl-alert-shot-hint">
+              <ImageIcon size={12} /> Full size
+            </span>
+          </button>
+        ) : ev.screenshot_requested ? (
+          <p className="vtl-alert-shot-miss">
+            Screenshot requested but not captured (may still be in progress).
+          </p>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -120,17 +420,21 @@ function SessionItem({
   isLast,
   highlighted,
   forceExpanded,
+  onOpenScreenshot,
 }: {
   session: Session;
   isLast: boolean;
   highlighted: boolean;
   forceExpanded: boolean;
+  onOpenScreenshot: (eventId: number) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [userToggled, setUserToggled] = useState(false);
   const isOpen = userToggled ? expanded : forceExpanded || expanded;
 
-  const canExpand = session.windows.length > 0 || session.hasKeystrokes || session.hasUrls;
+  const mergedTimeline = useMemo(() => buildMergedActivityTimeline(session), [session]);
+  const alertCount = session.alertEvents?.length ?? 0;
+  const canExpand = mergedTimeline.length > 0 || session.hasKeystrokes;
   const isIdle = session.appName === "__idle__";
 
   const accent = isIdle
@@ -183,7 +487,10 @@ function SessionItem({
       </div>
 
       {/* Right: card */}
-      <div className="vtl-card" style={highlightStyle}>
+      <div
+        className={`vtl-card${isIdle && !isOpen ? " vtl-card--idle-compact" : ""}`}
+        style={highlightStyle}
+      >
         <button
           className="vtl-card-header"
           onClick={() => {
@@ -240,6 +547,12 @@ function SessionItem({
                   {session.urls.length} URLs
                 </span>
               )}
+              {alertCount > 0 && (
+                <span className="vtl-pill vtl-pill-alert">
+                  <Bell size={9} />
+                  {alertCount === 1 ? "Alert" : `${alertCount} alerts`}
+                </span>
+              )}
             </div>
           </div>
           {canExpand && (
@@ -251,54 +564,25 @@ function SessionItem({
 
         {isOpen && (
           <div className="vtl-card-body">
-            {session.hasUrls && (
+            {mergedTimeline.length > 0 && (
               <div className="vtl-section">
-                <p className="vtl-section-label">URLs visited ({session.urls.length})</p>
-                <div className="vtl-url-list">
-                  {session.urls.slice(0, 6).map((u, i) => (
-                    <a
-                      key={i}
-                      href={u.url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="vtl-url-row"
-                      title={u.url}
-                    >
-                      <ExternalLink size={10} className="vtl-url-icon" />
-                      <span className="vtl-url-text">
-                        {u.url.length > 80 ? u.url.slice(0, 80) + "…" : u.url}
-                      </span>
-                      {u.browser && <span className="vtl-url-browser">{u.browser}</span>}
-                    </a>
+                <p className="vtl-section-label">Timeline ({mergedTimeline.length})</p>
+                <div className="vtl-merged-timeline">
+                  {mergedTimeline.map((row, i) => (
+                    <MergedActivityRowView
+                      key={`${row.kind}-${
+                        row.kind === "window"
+                          ? row.window.id
+                          : row.kind === "url"
+                            ? row.url.id
+                            : row.kind === "page"
+                              ? `${row.window.id}-${row.url.id}`
+                              : row.alert.id
+                      }-${i}`}
+                      row={row}
+                      onOpenScreenshot={onOpenScreenshot}
+                    />
                   ))}
-                  {session.urls.length > 6 && (
-                    <p className="vtl-more">…and {session.urls.length - 6} more</p>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {session.windows.length > 0 && (
-              <div className="vtl-section">
-                <p className="vtl-section-label">Window titles ({session.windows.length})</p>
-                <div className="vtl-window-list">
-                  {[...session.windows]
-                    .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
-                    .map((win, i) => (
-                      <div key={`${win.id}-${i}`} className="vtl-window-row">
-                        <Layout size={10} className="vtl-window-icon" />
-                        <span className="vtl-window-time">
-                          {new Date(win.timestamp).toLocaleTimeString([], {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                            second: "2-digit",
-                          })}
-                        </span>
-                        <span className="vtl-window-title" title={win.window_title}>
-                          {win.window_title}
-                        </span>
-                      </div>
-                    ))}
                 </div>
               </div>
             )}
@@ -326,45 +610,176 @@ function SessionItem({
   );
 }
 
+function TimelineScreenshotModal({
+  eventId,
+  onClose,
+}: {
+  eventId: number | null;
+  onClose: () => void;
+}) {
+  return (
+    <Modal
+      visible={eventId != null}
+      onDismiss={onClose}
+      header="Alert screenshot"
+      size="max"
+      footer={
+        <Box float="right">
+          <SpaceBetween direction="horizontal" size="xs">
+            {eventId != null && (
+              <Button
+                href={apiUrl(`/alert-rule-events/${eventId}/screenshot`)}
+                target="_blank"
+                iconName="external"
+              >
+                Open in new tab
+              </Button>
+            )}
+            <Button variant="link" onClick={onClose}>
+              Close
+            </Button>
+          </SpaceBetween>
+        </Box>
+      }
+    >
+      {eventId != null ? (
+        <div style={{ textAlign: "center" }}>
+          <img
+            src={apiUrl(`/alert-rule-events/${eventId}/screenshot`)}
+            alt=""
+            style={{
+              maxWidth: "100%",
+              maxHeight: "72vh",
+              objectFit: "contain",
+              borderRadius: 8,
+            }}
+          />
+        </div>
+      ) : null}
+    </Modal>
+  );
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function ActivityTimeline({ sessions, loading, onRefresh, highlightTimestamp }: ActivityTimelineProps) {
+  const [screenshotModalId, setScreenshotModalId] = useState<number | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [alertsOnly, setAlertsOnly] = useState(false);
+  /** Explicit expand/collapse per day; omitted keys use default (newest day expanded only). */
+  const [dayExpanded, setDayExpanded] = useState<Record<string, boolean>>({});
+
   const sorted = useMemo(
     () =>
       mergeAdjacentByApp([...sessions].reverse()).map((s) => ({
         ...s,
         windows: dedupeWindowsByTimestampAndTitle(s.windows),
       })),
-    [sessions]
+    [sessions],
   );
 
-  // Find the index of the session closest to the highlight timestamp
+  const filteredSorted = useMemo(() => {
+    let xs = sorted;
+    if (alertsOnly) xs = xs.filter((s) => (s.alertEvents?.length ?? 0) > 0);
+    if (searchQuery.trim()) xs = xs.filter((s) => sessionMatchesSearch(s, searchQuery));
+    return xs;
+  }, [sorted, alertsOnly, searchQuery]);
+
+  const dayGroups = useMemo(() => groupSessionsByDay(filteredSorted), [filteredSorted]);
+
+  const firstDayKey = dayGroups[0]?.dayKey ?? "";
+
+  const isDayExpanded = useCallback(
+    (key: string) => {
+      if (key in dayExpanded) return dayExpanded[key]!;
+      return key === firstDayKey;
+    },
+    [dayExpanded, firstDayKey],
+  );
+
+  const toggleDay = useCallback((key: string) => {
+    setDayExpanded((prev) => {
+      const current = key in prev ? prev[key]! : key === firstDayKey;
+      return { ...prev, [key]: !current };
+    });
+  }, [firstDayKey]);
+
+  const expandAllDays = useCallback(() => {
+    const next: Record<string, boolean> = {};
+    for (const g of dayGroups) next[g.dayKey] = true;
+    setDayExpanded(next);
+  }, [dayGroups]);
+
+  const collapseAllDays = useCallback(() => {
+    const next: Record<string, boolean> = {};
+    for (const g of dayGroups) next[g.dayKey] = false;
+    setDayExpanded(next);
+  }, [dayGroups]);
+
+  const jumpOptions = useMemo(
+    () => [
+      { label: "Jump to day…", value: "" },
+      ...dayGroups.map((g) => ({ label: g.label, value: g.dayKey })),
+    ],
+    [dayGroups],
+  );
+
+  const [jumpSelect, setJumpSelect] = useState<{ label: string; value?: string }>({
+    label: "Jump to day…",
+    value: "",
+  });
+  const dayKeysSig = dayGroups.map((g) => g.dayKey).join("|");
+  useEffect(() => {
+    setJumpSelect({ label: "Jump to day…", value: "" });
+  }, [dayKeysSig]);
+
+  const scrollToDay = useCallback(
+    (dk: string) => {
+      if (!dk) return;
+      setDayExpanded((prev) => ({ ...prev, [dk]: true }));
+      window.setTimeout(() => {
+        document.getElementById(`vtl-day-${dk}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 50);
+    },
+    [],
+  );
+
+  // Find the index of the session closest to the highlight timestamp (within filtered list)
   const highlightIndex = useMemo(() => {
-    if (!highlightTimestamp || sorted.length === 0) return -1;
+    if (!highlightTimestamp || filteredSorted.length === 0) return -1;
     const targetMs = new Date(highlightTimestamp).getTime();
     if (isNaN(targetMs)) return -1;
     let best = 0;
     let bestDist = Infinity;
-    sorted.forEach((s, i) => {
+    filteredSorted.forEach((s, i) => {
       const start = s.startTime.getTime();
       const end = s.endTime.getTime();
       const dist = targetMs < start ? start - targetMs : targetMs > end ? targetMs - end : 0;
+      const isIdle = s.appName === "__idle__";
+      const bestIdle = filteredSorted[best].appName === "__idle__";
       if (dist < bestDist) {
         bestDist = dist;
         best = i;
+      } else if (dist === bestDist) {
+        if (bestIdle && !isIdle) best = i;
       }
     });
     return best;
-  }, [sorted, highlightTimestamp]);
+  }, [filteredSorted, highlightTimestamp]);
 
-  // Map from index → DOM element for scrolling
+  // Open the day that contains the highlighted session (e.g. deep link from alerts)
+  useEffect(() => {
+    if (highlightIndex < 0 || !filteredSorted[highlightIndex]) return;
+    const dk = dayKey(filteredSorted[highlightIndex].startTime);
+    setDayExpanded((prev) => ({ ...prev, [dk]: true }));
+  }, [highlightIndex, highlightTimestamp, filteredSorted]);
+
   const itemDivRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const setRef = useCallback((idx: number) => (el: HTMLDivElement | null) => {
     if (el) itemDivRefs.current.set(idx, el);
     else itemDivRefs.current.delete(idx);
   }, []);
 
-  // Scroll to highlighted item when it changes
   const lastScrolledTimestamp = useRef<string | null>(null);
   useEffect(() => {
     if (highlightIndex < 0 || !highlightTimestamp) return;
@@ -373,15 +788,25 @@ export function ActivityTimeline({ sessions, loading, onRefresh, highlightTimest
 
     const timer = setTimeout(() => {
       const el = itemDivRefs.current.get(highlightIndex);
-      if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "center" });
-      }
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
     }, 200);
     return () => clearTimeout(timer);
   }, [highlightIndex, highlightTimestamp]);
 
   const keystrokeCount = sorted.filter((s) => s.hasKeystrokes).length;
   const urlCount = sorted.filter((s) => s.hasUrls).length;
+  const alertFireCount = useMemo(
+    () => sorted.reduce((n, s) => n + (s.alertEvents?.length ?? 0), 0),
+    [sorted],
+  );
+
+  const isFiltered = searchQuery.trim().length > 0 || alertsOnly;
+  const headerDesc = useMemo(() => {
+    const base = isFiltered
+      ? `${filteredSorted.length} of ${sorted.length} sessions`
+      : `${sorted.length} sessions`;
+    return `${base} tracked${highlightTimestamp ? " · scrolled to alert time" : ""}`;
+  }, [filteredSorted.length, sorted.length, isFiltered, highlightTimestamp]);
 
   if (loading && sessions.length === 0) {
     return (
@@ -406,51 +831,141 @@ export function ActivityTimeline({ sessions, loading, onRefresh, highlightTimest
   }
 
   return (
-    <Container
-      header={
-        <Header
-          variant="h2"
-          description={`${sorted.length} sessions tracked${highlightTimestamp ? " · scrolled to alert time" : ""}`}
-          actions={
-            <SpaceBetween direction="horizontal" size="xs" alignItems="center">
-              {onRefresh && (
-                <Button iconName="refresh" onClick={onRefresh} loading={loading}>
-                  Refresh
-                </Button>
-              )}
-              {keystrokeCount > 0 && (
-                <Badge color="green">{keystrokeCount} with keystrokes</Badge>
-              )}
-              {urlCount > 0 && (
-                <Badge color="blue">{urlCount} with URLs</Badge>
-              )}
-            </SpaceBetween>
-          }
-        >
-          Activity Timeline
-        </Header>
-      }
-    >
-      <div className="vtl-root">
-        <div className="vtl-list">
-          {sorted.map((session, idx) => {
-            const prevSession = sorted[idx - 1];
-            const showDaySep = !prevSession || !isSameDay(prevSession.startTime, session.startTime);
-            const isHighlighted = idx === highlightIndex && highlightTimestamp != null;
-            return (
-              <div key={session.id} ref={isHighlighted ? setRef(idx) : undefined}>
-                {showDaySep && <DaySeparator date={session.startTime} />}
-                <SessionItem
-                  session={session}
-                  isLast={idx === sorted.length - 1}
-                  highlighted={isHighlighted}
-                  forceExpanded={isHighlighted}
+    <>
+      <Container
+        header={
+          <Header
+            variant="h2"
+            description={headerDesc}
+            actions={
+              <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+                {onRefresh && (
+                  <Button iconName="refresh" onClick={onRefresh} loading={loading}>
+                    Refresh
+                  </Button>
+                )}
+                {alertFireCount > 0 && (
+                  <Badge color="red">
+                    {alertFireCount} alert{alertFireCount === 1 ? "" : "s"}
+                  </Badge>
+                )}
+                {keystrokeCount > 0 && (
+                  <Badge color="green">{keystrokeCount} with keystrokes</Badge>
+                )}
+                {urlCount > 0 && (
+                  <Badge color="blue">{urlCount} with URLs</Badge>
+                )}
+              </SpaceBetween>
+            }
+          >
+            Activity Timeline
+          </Header>
+        }
+      >
+        <div className="vtl-root">
+          <div className="vtl-toolbar">
+            <FormField label="Search activity" stretch>
+              <div className="vtl-toolbar-search">
+                <Input
+                  value={searchQuery}
+                  onChange={({ detail }) => setSearchQuery(detail.value)}
+                  placeholder="App, URL, window title, keystrokes, alert rule…"
+                  type="search"
                 />
               </div>
-            );
-          })}
+            </FormField>
+            <FormField label="Jump to day">
+              <div className="vtl-toolbar-jump">
+                <Select
+                  selectedOption={jumpSelect}
+                  options={jumpOptions}
+                  onChange={({ detail }) => {
+                    const opt = detail.selectedOption;
+                    setJumpSelect({ label: opt.label ?? "", value: String(opt.value ?? "") });
+                    const v = String(opt.value ?? "");
+                    if (v) scrollToDay(v);
+                    window.setTimeout(() => {
+                      setJumpSelect({ label: "Jump to day…", value: "" });
+                    }, 0);
+                  }}
+                />
+              </div>
+            </FormField>
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button variant="link" onClick={expandAllDays}>
+                Expand all days
+              </Button>
+              <Button variant="link" onClick={collapseAllDays}>
+                Collapse all days
+              </Button>
+            </SpaceBetween>
+            <div className="vtl-toolbar-alerts">
+              <Checkbox
+                checked={alertsOnly}
+                onChange={({ detail }) => setAlertsOnly(detail.checked)}
+              >
+                Alerts only
+              </Checkbox>
+            </div>
+          </div>
+
+          {filteredSorted.length === 0 ? (
+            <Box padding={{ vertical: "l" }} textAlign="center" color="text-body-secondary">
+              No sessions match your filters. Clear search or turn off &quot;Alerts only&quot;.
+            </Box>
+          ) : (
+            <div className="vtl-list">
+              {dayGroups.map((group) => {
+                const expanded = isDayExpanded(group.dayKey);
+                return (
+                  <div key={group.dayKey} id={`vtl-day-${group.dayKey}`} className="vtl-day-block">
+                    <button
+                      type="button"
+                      className="vtl-day-header"
+                      onClick={() => toggleDay(group.dayKey)}
+                      aria-expanded={expanded}
+                    >
+                      <ChevronRight
+                        size={16}
+                        className={`vtl-day-chevron ${expanded ? "vtl-day-chevron--open" : ""}`}
+                        aria-hidden
+                      />
+                      <Calendar size={15} style={{ opacity: 0.85 }} aria-hidden />
+                      <span className="vtl-day-header-label">{group.label}</span>
+                      <span className="vtl-day-header-cta">
+                        {group.items.length} session{group.items.length === 1 ? "" : "s"} ·{" "}
+                        {expanded ? "Hide" : "Show"}
+                      </span>
+                    </button>
+                    {expanded && (
+                      <div className="vtl-day-body">
+                        {group.items.map(({ session, idx }) => {
+                          const isHighlighted = idx === highlightIndex && highlightTimestamp != null;
+                          return (
+                            <div key={session.id} ref={isHighlighted ? setRef(idx) : undefined}>
+                              <SessionItem
+                                session={session}
+                                isLast={idx === filteredSorted.length - 1}
+                                highlighted={isHighlighted}
+                                forceExpanded={isHighlighted}
+                                onOpenScreenshot={setScreenshotModalId}
+                              />
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
-      </div>
-    </Container>
+      </Container>
+      <TimelineScreenshotModal
+        eventId={screenshotModalId}
+        onClose={() => setScreenshotModalId(null)}
+      />
+    </>
   );
 }

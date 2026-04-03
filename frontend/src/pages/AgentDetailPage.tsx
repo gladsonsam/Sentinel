@@ -27,7 +27,12 @@ import { AuditTab } from "../components/tabs/AuditTab";
 import { SoftwareTab } from "../components/tabs/SoftwareTab";
 import { ScriptsTab } from "../components/tabs/ScriptsTab";
 import { ActivityTimeline } from "../components/timeline/ActivityTimeline";
-import { aggregateSessions } from "../lib/session-aggregator";
+import {
+  aggregateSessions,
+  attachAlertEventsToSessions,
+  type Session,
+  type SessionAlertEvent,
+} from "../lib/session-aggregator";
 import { api, apiUrl } from "../lib/api";
 import type { Agent, AgentInfo } from "../lib/types";
 import { PageHeader, type AgentAction } from "../components/detail/PageHeader";
@@ -63,7 +68,7 @@ export function AgentDetailPage({
   highlightTimestamp,
   onOpenHelp,
 }: AgentDetailPageProps) {
-  const [sessions, setSessions] = useState<any[]>([]);
+  const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(false);
   const [resolvedInfo, setResolvedInfo] = useState<AgentInfo | null>(agentInfo ?? null);
   /** Timestamp set when user clicks "View in Timeline" from the Alerts tab (overrides URL param) */
@@ -107,10 +112,13 @@ export function AgentDetailPage({
     try {
       setLoading(true);
       
-      const [windowsRes, urlsRes, keysRes] = await Promise.allSettled([
+      const [windowsRes, urlsRes, keysRes, alertsRes] = await Promise.allSettled([
         fetch(apiUrl(`/agents/${agent.id}/windows?limit=500`), { credentials: "include" }),
         fetch(apiUrl(`/agents/${agent.id}/urls?limit=500`), { credentials: "include" }),
         fetch(apiUrl(`/agents/${agent.id}/keys?limit=500`), { credentials: "include" }),
+        fetch(apiUrl(`/agents/${agent.id}/alert-rule-events?limit=500&offset=0`), {
+          credentials: "include",
+        }),
       ]);
 
       const windows = windowsRes.status === "fulfilled" && windowsRes.value.ok
@@ -153,11 +161,33 @@ export function AgentDetailPage({
         }))
         .filter((row: any) => parseTimestamp(row.timestamp));
 
-      const aggregated = aggregateSessions({
-        windows: windowRows,
-        urls: urlRows,
-        keystrokes: keyRows,
-      });
+      let alertEvents: SessionAlertEvent[] = [];
+      if (alertsRes.status === "fulfilled" && alertsRes.value.ok) {
+        try {
+          const alertData = await alertsRes.value.json();
+          const alertRows = Array.isArray(alertData?.rows) ? alertData.rows : [];
+          alertEvents = alertRows.map((row: Record<string, unknown>) => ({
+            id: Number(row.id ?? 0),
+            rule_name: String(row.rule_name ?? ""),
+            channel: String(row.channel ?? ""),
+            snippet: String(row.snippet ?? ""),
+            created_at: String(row.created_at ?? ""),
+            has_screenshot: Boolean(row.has_screenshot),
+            screenshot_requested: Boolean(row.screenshot_requested),
+          }));
+        } catch {
+          alertEvents = [];
+        }
+      }
+
+      const aggregated = attachAlertEventsToSessions(
+        aggregateSessions({
+          windows: windowRows,
+          urls: urlRows,
+          keystrokes: keyRows,
+        }),
+        alertEvents,
+      );
       setSessions(aggregated);
     } catch (err) {
       console.error("Failed to load activity data:", err);
@@ -176,7 +206,8 @@ export function AgentDetailPage({
     const onWsEvent = (event: Event) => {
       const detail = (event as CustomEvent<any>).detail;
       if (!detail || detail.agent_id !== agent.id) return;
-      if (!["window_focus", "url", "keys", "afk", "active"].includes(detail.event)) return;
+      if (!["window_focus", "url", "keys", "afk", "active", "alert_rule_match"].includes(detail.event))
+        return;
       if (activeTabRef.current !== "activity") return;
 
       if (refreshDebounceRef.current) {
