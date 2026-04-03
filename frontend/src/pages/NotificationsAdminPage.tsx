@@ -671,9 +671,10 @@ export function NotificationsAdminPage() {
   const groupItems = groups ?? [];
   const ruleItems = rules ?? [];
 
-  // Navigate to agent timeline around the notification time
-  const goToTimeline = (agentId: string) => {
-    navigate(`/agents/${agentId}?tab=activity`);
+  // Navigate to agent timeline and highlight the nearest activity to the alert
+  const goToTimeline = (agentId: string, timestamp: string) => {
+    const params = new URLSearchParams({ tab: "activity", at: timestamp });
+    navigate(`/agents/${agentId}?${params.toString()}`);
   };
 
   const headerActions = (
@@ -766,7 +767,7 @@ export function NotificationsAdminPage() {
         <Button
           variant="inline-link"
           iconName="angle-right"
-          onClick={() => goToTimeline(item.agent_id)}
+          onClick={() => goToTimeline(item.agent_id, item.created_at)}
         >
           View
         </Button>

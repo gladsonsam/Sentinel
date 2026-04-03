@@ -1116,3 +1116,50 @@ button.sentinel-overview-actions-pill {
   border-radius: 9999px !important;
   padding-inline: 14px !important;
 }
+
+/* ── Timeline day separator ── */
+.vtl-day-sep {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0 8px;
+  padding-left: 96px; /* align with card column */
+}
+
+.vtl-day-sep::before,
+.vtl-day-sep::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--vtl-border);
+  opacity: 0.6;
+}
+
+.vtl-day-sep::before {
+  max-width: 12px;
+}
+
+.vtl-day-label {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--vtl-text-muted);
+  font-family: Inter, "Segoe UI", Roboto, sans-serif;
+  white-space: nowrap;
+}
+
+/* ── Alert pin (bell icon in timestamp column) ── */
+.vtl-alert-pin {
+  display: inline-flex;
+  align-items: center;
+  color: var(--vtl-accent);
+  margin-top: 2px;
+}
+
+/* ── Highlight pulse animation ── */
+@keyframes vtl-highlight-pulse {
+  0%   { box-shadow: 0 0 0 6px rgba(100, 160, 255, 0.30); }
+  50%  { box-shadow: 0 0 0 12px rgba(100, 160, 255, 0.08); }
+  100% { box-shadow: 0 0 0 6px rgba(100, 160, 255, 0.30); }
+}

@@ -200,6 +200,9 @@ function AgentDetailRoute({
     return isTabKey(tab) ? tab : "activity";
   }, [searchParams]);
 
+  // ISO timestamp for timeline highlight (from ?at=)
+  const highlightTimestamp = searchParams.get("at") ?? null;
+
   useEffect(() => {
     setSelectedAgentId(agentId ?? null);
     return () => setSelectedAgentId(null);
@@ -239,6 +242,7 @@ function AgentDetailRoute({
         toolsOpen={toolsOpen}
         onToolsChange={setToolsOpen}
         currentUser={currentUser ? { username: currentUser.username, role: currentUser.role } : null}
+        highlightTimestamp={highlightTimestamp}
       />
     </Suspense>
   );

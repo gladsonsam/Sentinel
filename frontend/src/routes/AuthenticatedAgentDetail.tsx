@@ -26,6 +26,8 @@ interface Props {
   onDismissNotification: (id: string) => void;
   toolsOpen: boolean;
   onToolsChange: (open: boolean) => void;
+  /** ISO timestamp to scroll to and highlight in the activity timeline */
+  highlightTimestamp?: string | null;
 }
 
 export function AuthenticatedAgentDetail({
@@ -50,6 +52,7 @@ export function AuthenticatedAgentDetail({
   onDismissNotification,
   toolsOpen,
   onToolsChange,
+  highlightTimestamp,
 }: Props) {
   return (
     <DashboardLayout
@@ -72,6 +75,7 @@ export function AuthenticatedAgentDetail({
           onTabChange={onTabChange}
           onBackToOverview={onBackToOverview}
           onOpenHelp={onOpenHelp}
+          highlightTimestamp={highlightTimestamp}
         />
       }
       onLogout={onLogout}

@@ -46,6 +46,8 @@ interface AgentDetailPageProps {
   onTabChange: (tab: TabKey) => void;
   onBackToOverview?: () => void;
   onOpenHelp: () => void;
+  /** ISO timestamp to scroll to + highlight in the activity timeline */
+  highlightTimestamp?: string | null;
 }
 
 export function AgentDetailPage({
@@ -58,13 +60,19 @@ export function AgentDetailPage({
   activeTab,
   onTabChange,
   onBackToOverview,
+  highlightTimestamp,
   onOpenHelp,
 }: AgentDetailPageProps) {
   const [sessions, setSessions] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [resolvedInfo, setResolvedInfo] = useState<AgentInfo | null>(agentInfo ?? null);
+  /** Timestamp set when user clicks "View in Timeline" from the Alerts tab (overrides URL param) */
+  const [timelineHighlight, setTimelineHighlight] = useState<string | null>(null);
   const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const activeTabRef = useRef(activeTab);
+
+  // Merge prop-based highlightTimestamp (from URL ?at=) with local state
+  const effectiveHighlightTimestamp = timelineHighlight ?? highlightTimestamp;
 
   useEffect(() => {
     activeTabRef.current = activeTab;
@@ -252,6 +260,7 @@ export function AgentDetailPage({
             sessions={sessions}
             loading={loading}
             onRefresh={loadActivityData}
+            highlightTimestamp={effectiveHighlightTimestamp}
           />
         );
       case "specs":
@@ -269,7 +278,15 @@ export function AgentDetailPage({
       case "urls":
         return <UrlsTab agentId={agent.id} />;
       case "alerts":
-        return <AlertsTab agentId={agent.id} onViewTimeline={() => onTabChange("activity")} />;
+        return (
+          <AlertsTab
+            agentId={agent.id}
+            onViewTimeline={(timestamp) => {
+              setTimelineHighlight(timestamp);
+              onTabChange("activity");
+            }}
+          />
+        );
       case "files":
         return <FilesTab agentId={agent.id} sendWsMessage={sendWsMessage} />;
       case "audit":

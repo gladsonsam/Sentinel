@@ -25,8 +25,8 @@ interface AlertRuleEventRow {
 
 interface AlertsTabProps {
   agentId: string;
-  /** When provided, clicking "View in Timeline" navigates to the activity tab. */
-  onViewTimeline?: () => void;
+  /** When provided, clicking "View in Timeline" navigates to the activity tab at the given timestamp. */
+  onViewTimeline?: (timestamp: string) => void;
 }
 
 function ScreenshotPreviewModal({
@@ -228,11 +228,11 @@ export function AlertsTab({ agentId, onViewTimeline }: AlertsTabProps) {
                 {
                   id: "timeline",
                   header: "Timeline",
-                  cell: (_item: AlertRuleEventRow) => (
+                  cell: (item: AlertRuleEventRow) => (
                     <Button
                       variant="inline-link"
                       iconName="angle-right"
-                      onClick={onViewTimeline}
+                      onClick={() => onViewTimeline(item.created_at)}
                     >
                       View
                     </Button>
