@@ -409,4 +409,15 @@ export const api = {
     q.set("offset", String(params?.offset ?? 0));
     return get(`/alert-rules/${ruleId}/events?${q.toString()}`);
   },
+
+  agentAlertRuleEvents: (
+    agentId: string,
+    params?: { limit?: number; offset?: number },
+  ): Promise<{ rows: Record<string, unknown>[] }> => {
+    const q = new URLSearchParams();
+    q.set("limit", String(params?.limit ?? 500));
+    q.set("offset", String(params?.offset ?? 0));
+    return get(`/agents/${agentId}/alert-rule-events?${q.toString()}`);
+  },
 };
+

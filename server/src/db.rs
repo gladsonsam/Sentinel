@@ -1665,7 +1665,7 @@ pub struct AlertRuleListItem {
 pub async fn alert_rules_list_all(pool: &PgPool) -> Result<Vec<AlertRuleListItem>> {
     let rules = sqlx::query(
         r#"
-        SELECT id, name, channel, pattern, match_mode, case_insensitive, cooldown_secs, enabled
+        SELECT id, name, channel, pattern, match_mode, case_insensitive, cooldown_secs, enabled, take_screenshot
         FROM alert_rules
         ORDER BY id
         "#,

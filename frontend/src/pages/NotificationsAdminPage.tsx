@@ -19,10 +19,10 @@ import SegmentedControl from "@cloudscape-design/components/segmented-control";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
 import Pagination from "@cloudscape-design/components/pagination";
 import TextFilter from "@cloudscape-design/components/text-filter";
+import Badge from "@cloudscape-design/components/badge";
 import { useCollection } from "@cloudscape-design/collection-hooks";
-import { api } from "../lib/api";
+import { api, apiUrl } from "../lib/api";
 import { fmtDateTime } from "../lib/utils";
-import { AlertRuleEventScreenshotCell } from "../components/AlertRuleEventScreenshotCell";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import type {
   Agent,
@@ -30,8 +30,8 @@ import type {
   AlertRule,
   AlertRuleChannel,
   AlertRuleMatchMode,
-  AlertRuleScope,
   AlertRuleScopeKind,
+  AlertRuleScope,
 } from "../lib/types";
 
 type ScopeFormRow = {
@@ -107,7 +107,105 @@ const SCOPE_KIND_OPTIONS = [
   { label: "Single agent", value: "agent" },
 ];
 
-type MainTabId = "groups" | "rules";
+type MainTabId = "groups" | "rules" | "history";
+
+// ─── Screenshot Preview Modal ─────────────────────────────────────────────────
+
+function ScreenshotPreviewModal({
+  eventId,
+  visible,
+  onClose,
+}: {
+  eventId: number | null;
+  visible: boolean;
+  onClose: () => void;
+}) {
+  return (
+    <Modal
+      visible={visible}
+      onDismiss={onClose}
+      header="Screenshot"
+      size="max"
+      footer={
+        <Box float="right">
+          <SpaceBetween direction="horizontal" size="xs">
+            {eventId != null && (
+              <Button
+                href={apiUrl(`/alert-rule-events/${eventId}/screenshot`)}
+                target="_blank"
+                iconName="external"
+              >
+                Open in new tab
+              </Button>
+            )}
+            <Button variant="link" onClick={onClose}>
+              Close
+            </Button>
+          </SpaceBetween>
+        </Box>
+      }
+    >
+      {eventId != null ? (
+        <div style={{ textAlign: "center" }}>
+          <img
+            src={apiUrl(`/alert-rule-events/${eventId}/screenshot`)}
+            alt="Alert screenshot"
+            style={{
+              maxWidth: "100%",
+              maxHeight: "70vh",
+              objectFit: "contain",
+              borderRadius: 6,
+            }}
+          />
+        </div>
+      ) : null}
+    </Modal>
+  );
+}
+
+// ─── Screenshot Cell ──────────────────────────────────────────────────────────
+
+function ScreenshotCell({
+  eventId,
+  hasScreenshot,
+  screenshotRequested,
+  onPreview,
+}: {
+  eventId: number;
+  hasScreenshot: boolean;
+  screenshotRequested: boolean;
+  onPreview: (id: number) => void;
+}) {
+  if (hasScreenshot) {
+    return (
+      <Button
+        variant="inline-link"
+        onClick={() => onPreview(eventId)}
+        iconName="zoom-to-fit"
+      >
+        View
+      </Button>
+    );
+  }
+  if (screenshotRequested) {
+    return (
+      <span title="Screenshot was requested but not captured (may have failed or still in progress).">
+        <Box color="text-body-secondary" fontSize="body-s">
+          Not captured
+        </Box>
+      </span>
+    );
+  }
+  return (
+    <span title='Enable "Take screenshot on trigger" on the alert rule to capture screenshots.'>
+      <Box color="text-body-secondary" fontSize="body-s">
+        Off
+      </Box>
+    </span>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
 
 export function NotificationsAdminPage() {
   const navigate = useNavigate();
@@ -141,9 +239,17 @@ export function NotificationsAdminPage() {
   const [deleteGroup, setDeleteGroup] = useState<AgentGroup | null>(null);
   const [deleteRule, setDeleteRule] = useState<AlertRule | null>(null);
 
+  // Per-rule history modal
   const [historyRule, setHistoryRule] = useState<AlertRule | null>(null);
   const [historyEvents, setHistoryEvents] = useState<AlertRuleHistoryEventRow[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
+
+  // Global history (all rules)
+  const [globalHistory, setGlobalHistory] = useState<AlertRuleHistoryEventRow[]>([]);
+  const [globalHistoryLoading, setGlobalHistoryLoading] = useState(false);
+
+  // Screenshot preview
+  const [previewEventId, setPreviewEventId] = useState<number | null>(null);
 
   const agentsById = useMemo(() => {
     const m: Record<string, Agent> = {};
@@ -176,6 +282,57 @@ export function NotificationsAdminPage() {
     void load();
   }, [load]);
 
+  // ── Fetch global history (all rules, all agents) ───────────────────────────
+  const fetchGlobalHistory = useCallback(async (ruleList: AlertRule[]) => {
+    if (ruleList.length === 0) {
+      setGlobalHistory([]);
+      return;
+    }
+    setGlobalHistoryLoading(true);
+    setError(null);
+    try {
+      const results = await Promise.allSettled(
+        ruleList.map((rule) =>
+          api.alertRuleEvents(rule.id, { limit: 200, offset: 0 })
+        )
+      );
+      const all: AlertRuleHistoryEventRow[] = [];
+      results.forEach((res) => {
+        if (res.status === "fulfilled") {
+          const rows = Array.isArray(res.value.rows) ? res.value.rows : [];
+          for (const row of rows) {
+            all.push({
+              id: Number(row.id ?? 0),
+              agent_id: String(row.agent_id ?? ""),
+              agent_name: String(row.agent_name ?? ""),
+              rule_name: String(row.rule_name ?? ""),
+              channel: String(row.channel ?? ""),
+              snippet: String(row.snippet ?? ""),
+              has_screenshot: Boolean(row.has_screenshot),
+              screenshot_requested: Boolean(row.screenshot_requested),
+              created_at: String(row.created_at ?? ""),
+            });
+          }
+        }
+      });
+      // Sort by date desc
+      all.sort((a, b) => (b.created_at > a.created_at ? 1 : -1));
+      setGlobalHistory(all);
+    } catch (e: unknown) {
+      setError(String((e as Error)?.message ?? e));
+      setGlobalHistory([]);
+    } finally {
+      setGlobalHistoryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (mainTab === "history" && rules !== null) {
+      void fetchGlobalHistory(rules);
+    }
+  }, [mainTab, rules, fetchGlobalHistory]);
+
+  // ── Per-rule history ───────────────────────────────────────────────────────
   const fetchRuleHistory = useCallback(async (rule: AlertRule) => {
     setHistoryLoading(true);
     setHistoryEvents([]);
@@ -227,6 +384,34 @@ export function NotificationsAdminPage() {
       },
     },
     pagination: { pageSize: 15 },
+    sorting: {
+      defaultState: {
+        sortingColumn: { sortingField: "created_at" },
+        isDescending: true,
+      },
+    },
+  });
+
+  const {
+    items: globalDisplayItems,
+    collectionProps: globalCollectionProps,
+    filterProps: globalFilterProps,
+    paginationProps: globalPaginationProps,
+  } = useCollection(globalHistory, {
+    filtering: {
+      empty: "No notifications have fired yet",
+      noMatch: "No rows match the filter",
+      filteringFunction: (item, filteringText) => {
+        const q = filteringText.toLowerCase();
+        return (
+          item.agent_name.toLowerCase().includes(q) ||
+          item.rule_name.toLowerCase().includes(q) ||
+          item.snippet.toLowerCase().includes(q) ||
+          item.channel.toLowerCase().includes(q)
+        );
+      },
+    },
+    pagination: { pageSize: 20 },
     sorting: {
       defaultState: {
         sortingColumn: { sortingField: "created_at" },
@@ -486,6 +671,11 @@ export function NotificationsAdminPage() {
   const groupItems = groups ?? [];
   const ruleItems = rules ?? [];
 
+  // Navigate to agent timeline around the notification time
+  const goToTimeline = (agentId: string) => {
+    navigate(`/agents/${agentId}?tab=activity`);
+  };
+
   const headerActions = (
     <Button iconName="refresh" onClick={() => void load()} loading={loading}>
       Refresh
@@ -497,13 +687,93 @@ export function NotificationsAdminPage() {
       {headerActions}
       {mainTab === "groups" ? (
         <Button onClick={openCreateGroup}>Create group</Button>
-      ) : (
+      ) : mainTab === "rules" ? (
         <Button variant="primary" onClick={openCreateRule}>
           Create alert rule
         </Button>
-      )}
+      ) : null}
     </div>
   );
+
+  // ── History columns shared between rule history modal and global history tab ─
+  const historyColumnDefs = (showRuleName: boolean) => [
+    {
+      id: "created_at",
+      header: "Time",
+      cell: (item: AlertRuleHistoryEventRow) => fmtDateTime(item.created_at),
+      sortingField: "created_at",
+      width: 175,
+    },
+    ...(showRuleName
+      ? [
+          {
+            id: "rule_name",
+            header: "Rule",
+            cell: (item: AlertRuleHistoryEventRow) => item.rule_name || "—",
+            sortingField: "rule_name",
+            width: 160,
+          },
+        ]
+      : []),
+    {
+      id: "agent",
+      header: "Agent",
+      cell: (item: AlertRuleHistoryEventRow) => (
+        <Button variant="inline-link" onClick={() => navigate(`/agents/${item.agent_id}`)}>
+          {item.agent_name.trim() ? item.agent_name : `${item.agent_id.slice(0, 8)}…`}
+        </Button>
+      ),
+      sortingField: "agent_name",
+      width: 150,
+    },
+    {
+      id: "channel",
+      header: "Channel",
+      cell: (item: AlertRuleHistoryEventRow) => (
+        <Badge color={item.channel === "url" ? "blue" : "grey"}>
+          {item.channel === "url" ? "URL" : item.channel === "keys" ? "Keys" : item.channel}
+        </Badge>
+      ),
+      sortingField: "channel",
+      width: 80,
+    },
+    {
+      id: "snippet",
+      header: "Matched text",
+      cell: (item: AlertRuleHistoryEventRow) => (
+        <Box className="sentinel-monospace" fontSize="body-s">
+          {item.snippet || "—"}
+        </Box>
+      ),
+    },
+    {
+      id: "shot",
+      header: "Screenshot",
+      cell: (item: AlertRuleHistoryEventRow) => (
+        <ScreenshotCell
+          eventId={item.id}
+          hasScreenshot={item.has_screenshot}
+          screenshotRequested={item.screenshot_requested}
+          onPreview={(id) => setPreviewEventId(id)}
+        />
+      ),
+      width: 110,
+    },
+    {
+      id: "timeline",
+      header: "Timeline",
+      cell: (item: AlertRuleHistoryEventRow) => (
+        <Button
+          variant="inline-link"
+          iconName="angle-right"
+          onClick={() => goToTimeline(item.agent_id)}
+        >
+          View
+        </Button>
+      ),
+      width: 90,
+    },
+  ];
 
   const groupsPanel = (
     <SpaceBetween size="l">
@@ -579,8 +849,8 @@ export function NotificationsAdminPage() {
     <SpaceBetween size="l">
       <Box variant="p" color="text-body-secondary">
         Rules use substring or regex against the active <b>URL</b> or batched <b>keystroke</b> text. Use{" "}
-        <b>cooldown</b> to avoid spamming the same match. Scopes can be combined (e.g. all agents + one extra
-        group). Click a rule name or <b>Trigger history</b> to see past firings per agent.
+        <b>cooldown</b> to avoid spamming the same match. Scopes can be combined. Click a rule name or{" "}
+        <b>Trigger history</b> to see past firings per agent.
       </Box>
       {!isNarrow && (
         <Button variant="primary" onClick={openCreateRule}>
@@ -603,7 +873,9 @@ export function NotificationsAdminPage() {
                     </Button>
                   </Box>
                   <Box color="text-body-secondary">
-                    {r.channel} · {r.match_mode} · cooldown {r.cooldown_secs}s · {r.enabled ? "On" : "Off"}
+                    {r.channel} · {r.match_mode} · cooldown {r.cooldown_secs}s ·{" "}
+                    {r.enabled ? "On" : "Off"} ·{" "}
+                    {r.take_screenshot ? "📷 Screenshot" : "No screenshot"}
                   </Box>
                   <Box fontSize="body-s" className="sentinel-wrap-anywhere">
                     {r.pattern}
@@ -645,7 +917,24 @@ export function NotificationsAdminPage() {
             { id: "pat", header: "Pattern", cell: (r) => <Box className="sentinel-wrap-anywhere">{r.pattern}</Box> },
             { id: "mode", header: "Match", cell: (r) => r.match_mode },
             { id: "cd", header: "Cooldown (s)", cell: (r) => String(r.cooldown_secs) },
-            { id: "en", header: "On", cell: (r) => (r.enabled ? "Yes" : "No") },
+            {
+              id: "en",
+              header: "Status",
+              cell: (r) => (
+                <Badge color={r.enabled ? "green" : "grey"}>
+                  {r.enabled ? "Enabled" : "Disabled"}
+                </Badge>
+              ),
+            },
+            {
+              id: "screenshot",
+              header: "Screenshot",
+              cell: (r) => (
+                <Badge color={r.take_screenshot ? "blue" : "grey"}>
+                  {r.take_screenshot ? "On" : "Off"}
+                </Badge>
+              ),
+            },
             {
               id: "scopes",
               header: "Scopes",
@@ -676,12 +965,57 @@ export function NotificationsAdminPage() {
     </SpaceBetween>
   );
 
+  const globalHistoryPanel = (
+    <Table
+      {...globalCollectionProps}
+      loading={globalHistoryLoading}
+      loadingText="Loading notification history…"
+      columnDefinitions={historyColumnDefs(true)}
+      items={globalDisplayItems}
+      variant="container"
+      stickyHeader
+      header={
+        <Header
+          counter={globalHistory.length > 0 ? `(${globalHistory.length})` : undefined}
+          description="All fired notifications across every rule and agent, newest first."
+          actions={
+            <Button
+              iconName="refresh"
+              loading={globalHistoryLoading}
+              onClick={() => rules && void fetchGlobalHistory(rules)}
+            >
+              Refresh
+            </Button>
+          }
+        >
+          Notification history
+        </Header>
+      }
+      filter={
+        <TextFilter
+          {...globalFilterProps}
+          filteringPlaceholder="Search by rule, agent, channel, or matched text"
+        />
+      }
+      pagination={<Pagination {...globalPaginationProps} />}
+      empty={
+        <Box textAlign="center" color="inherit">
+          <Box variant="p" color="text-body-secondary">
+            {globalHistoryLoading
+              ? "Loading…"
+              : "No alert rules have fired yet. Create rules under Alert rules and they will appear here."}
+          </Box>
+        </Box>
+      }
+    />
+  );
+
   return (
     <ContentLayout
       header={
         <Header
           variant="h1"
-          description="Admin: URL and keystroke patterns that trigger in-dashboard notifications. Scoped globally, by agent group, or per agent."
+          description="URL and keystroke patterns that trigger in-dashboard notifications. Scoped globally, by agent group, or per agent."
           actions={isNarrow ? undefined : headerActions}
         >
           Notifications
@@ -707,10 +1041,15 @@ export function NotificationsAdminPage() {
                 options={[
                   { id: "groups", text: "Agent groups" },
                   { id: "rules", text: "Alert rules" },
+                  { id: "history", text: "History" },
                 ]}
                 onChange={({ detail }) => setMainTab(detail.selectedId as MainTabId)}
               />
-              {mainTab === "groups" ? groupsPanel : rulesPanel}
+              {mainTab === "groups"
+                ? groupsPanel
+                : mainTab === "rules"
+                  ? rulesPanel
+                  : globalHistoryPanel}
             </SpaceBetween>
           ) : (
             <Tabs
@@ -719,11 +1058,13 @@ export function NotificationsAdminPage() {
               tabs={[
                 { label: "Agent groups", id: "groups", content: groupsPanel },
                 { label: "Alert rules", id: "rules", content: rulesPanel },
+                { label: "History", id: "history", content: globalHistoryPanel },
               ]}
             />
           )}
         </SpaceBetween>
 
+      {/* ── Group modal ───────────────────────────────────────── */}
       <Modal
         visible={Boolean(groupModal)}
         onDismiss={() => setGroupModal(null)}
@@ -754,6 +1095,7 @@ export function NotificationsAdminPage() {
         </SpaceBetween>
       </Modal>
 
+      {/* ── Members modal ─────────────────────────────────────── */}
       <Modal
         visible={Boolean(membersModal)}
         onDismiss={() => setMembersModal(null)}
@@ -833,6 +1175,7 @@ export function NotificationsAdminPage() {
         </SpaceBetween>
       </Modal>
 
+      {/* ── Rule create / edit modal ───────────────────────────── */}
       <Modal
         visible={Boolean(ruleModal)}
         onDismiss={() => setRuleModal(null)}
@@ -976,6 +1319,7 @@ export function NotificationsAdminPage() {
         </SpaceBetween>
       </Modal>
 
+      {/* ── Per-rule history modal ─────────────────────────────── */}
       <Modal
         visible={Boolean(historyRule)}
         onDismiss={() => {
@@ -987,7 +1331,7 @@ export function NotificationsAdminPage() {
             ? `Trigger history: ${historyRule.name || `Rule #${historyRule.id}`}`
             : "Trigger history"
         }
-        size="large"
+        size="max"
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
@@ -1015,53 +1359,7 @@ export function NotificationsAdminPage() {
           {...historyCollectionProps}
           loading={historyLoading}
           loadingText="Loading trigger history…"
-          columnDefinitions={[
-            {
-              id: "created_at",
-              header: "Time",
-              cell: (item) => fmtDateTime(item.created_at),
-              sortingField: "created_at",
-              width: 180,
-            },
-            {
-              id: "agent",
-              header: "Agent",
-              cell: (item) => (
-                <Button variant="inline-link" onClick={() => navigate(`/agents/${item.agent_id}`)}>
-                  {item.agent_name.trim() ? item.agent_name : `${item.agent_id.slice(0, 8)}…`}
-                </Button>
-              ),
-              sortingField: "agent_name",
-            },
-            {
-              id: "channel",
-              header: "Channel",
-              cell: (item) => (item.channel === "url" ? "URL" : item.channel === "keys" ? "Keys" : item.channel),
-              sortingField: "channel",
-              width: 90,
-            },
-            {
-              id: "snippet",
-              header: "Matched text",
-              cell: (item) => (
-                <Box className="sentinel-monospace" fontSize="body-s">
-                  {item.snippet || "—"}
-                </Box>
-              ),
-            },
-            {
-              id: "shot",
-              header: "Screenshot",
-              cell: (item) => (
-                <AlertRuleEventScreenshotCell
-                  eventId={item.id}
-                  hasScreenshot={item.has_screenshot}
-                  screenshotRequested={item.screenshot_requested}
-                />
-              ),
-              width: 120,
-            },
-          ]}
+          columnDefinitions={historyColumnDefs(false)}
           items={historyDisplayItems}
           variant="embedded"
           stickyHeader
@@ -1084,6 +1382,7 @@ export function NotificationsAdminPage() {
         />
       </Modal>
 
+      {/* ── Delete group confirm ───────────────────────────────── */}
       <Modal
         visible={Boolean(deleteGroup)}
         onDismiss={() => setDeleteGroup(null)}
@@ -1104,6 +1403,7 @@ export function NotificationsAdminPage() {
         Delete &quot;{deleteGroup?.name}&quot;? Alert rule scopes referencing this group will be removed (cascade).
       </Modal>
 
+      {/* ── Delete rule confirm ────────────────────────────────── */}
       <Modal
         visible={Boolean(deleteRule)}
         onDismiss={() => setDeleteRule(null)}
@@ -1124,6 +1424,13 @@ export function NotificationsAdminPage() {
         Delete rule #{deleteRule?.id}
         {deleteRule?.name ? ` (${deleteRule.name})` : ""}?
       </Modal>
+
+      {/* ── Screenshot preview modal ───────────────────────────── */}
+      <ScreenshotPreviewModal
+        eventId={previewEventId}
+        visible={previewEventId !== null}
+        onClose={() => setPreviewEventId(null)}
+      />
       </div>
     </ContentLayout>
   );

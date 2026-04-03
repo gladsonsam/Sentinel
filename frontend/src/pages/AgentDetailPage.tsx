@@ -269,7 +269,7 @@ export function AgentDetailPage({
       case "urls":
         return <UrlsTab agentId={agent.id} />;
       case "alerts":
-        return <AlertsTab agentId={agent.id} />;
+        return <AlertsTab agentId={agent.id} onViewTimeline={() => onTabChange("activity")} />;
       case "files":
         return <FilesTab agentId={agent.id} sendWsMessage={sendWsMessage} />;
       case "audit":
