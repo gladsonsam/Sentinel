@@ -3,7 +3,7 @@
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::sync::oneshot;
 
@@ -1518,21 +1518,80 @@ struct BulkScriptBody {
     timeout_secs: Option<u64>,
 }
 
-async fn agent_software_list(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Response {
-    match db::list_agent_software(&s.db, id).await {
-        Ok(rows) => {
-            let last = db::latest_software_capture_time(&s.db, id)
-                .await
-                .unwrap_or(None);
-            Json(serde_json::json!({
-                "rows": rows,
-                "last_captured_at": last,
-            }))
-            .into_response()
+#[derive(Deserialize, Default)]
+struct SoftwareListQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+async fn agent_software_list(
+    Path(id): Path<Uuid>,
+    Query(q): Query<SoftwareListQuery>,
+    State(s): State<Arc<AppState>>,
+) -> Response {
+    let paged = q.limit.is_some() || q.offset.is_some();
+    if paged {
+        let limit = q.limit.unwrap_or(500);
+        let offset = q.offset.unwrap_or(0);
+        if !(1..=5000).contains(&limit) {
+            return crate::error::api_json_error(
+                StatusCode::BAD_REQUEST,
+                "bad_request",
+                "limit must be between 1 and 5000",
+            );
         }
-        Err(e) => err500(e),
+        if offset < 0 || offset > 500_000 {
+            return crate::error::api_json_error(
+                StatusCode::BAD_REQUEST,
+                "bad_request",
+                "offset must be between 0 and 500000",
+            );
+        }
+        match db::list_agent_software_paged(&s.db, id, limit, offset).await {
+            Ok((rows, total)) => {
+                let last = db::latest_software_capture_time(&s.db, id)
+                    .await
+                    .unwrap_or(None);
+                Json(serde_json::json!({
+                    "rows": rows,
+                    "last_captured_at": last,
+                    "total": total,
+                    "limit": limit,
+                    "offset": offset,
+                }))
+                .into_response()
+            }
+            Err(e) => err500(e),
+        }
+    } else {
+        match db::list_agent_software(&s.db, id).await {
+            Ok(rows) => {
+                let last = db::latest_software_capture_time(&s.db, id)
+                    .await
+                    .unwrap_or(None);
+                Json(serde_json::json!({
+                    "rows": rows,
+                    "last_captured_at": last,
+                }))
+                .into_response()
+            }
+            Err(e) => err500(e),
+        }
     }
 }
+
+fn idempotency_key_from_headers(headers: &HeaderMap) -> Option<String> {
+    let raw = headers
+        .get("idempotency-key")
+        .or_else(|| headers.get("Idempotency-Key"))?;
+    let s = raw.to_str().ok()?.trim();
+    if s.is_empty() || s.len() > 128 {
+        return None;
+    }
+    Some(s.to_string())
+}
+
+const SOFTWARE_COLLECT_IDEMPOTENCY_TTL: Duration = Duration::from_secs(120);
 
 async fn agent_software_collect(
     Path(id): Path<Uuid>,
@@ -1542,14 +1601,35 @@ async fn agent_software_collect(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     if !user.is_operator() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return crate::error::api_json_error(StatusCode::FORBIDDEN, "forbidden", "Forbidden");
     }
     let ip = audit_ip(&headers, addr);
+
+    if let Some(key) = idempotency_key_from_headers(&headers) {
+        let now = Instant::now();
+        let mut map = s.software_collect_dedup.lock().unwrap();
+        map.retain(|_, t| now.duration_since(*t) < SOFTWARE_COLLECT_IDEMPOTENCY_TTL);
+        if map.contains_key(&(id, key.clone())) {
+            return Json(serde_json::json!({
+                "ok": true,
+                "idempotent_replay": true
+            }))
+            .into_response();
+        }
+        map.insert((id, key), now);
+    }
+
     let cmd = serde_json::json!({ "type": "CollectSoftware" });
     if !s.try_send_agent_command_json(id, &cmd) {
+        if let Some(key) = idempotency_key_from_headers(&headers) {
+            s.software_collect_dedup.lock().unwrap().remove(&(id, key));
+        }
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(serde_json::json!({ "error": "Agent is not connected." })),
+            Json(serde_json::json!({
+                "error": "Agent is not connected.",
+                "code": "agent_offline",
+            })),
         )
             .into_response();
     }

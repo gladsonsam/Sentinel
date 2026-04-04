@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import {
   Globe,
   Keyboard,
@@ -737,6 +737,7 @@ function TimelineScreenshotModal({
     <Modal
       visible={eventId != null}
       onDismiss={onClose}
+      closeAriaLabel="Close screenshot"
       header="Alert screenshot"
       size="max"
       footer={
@@ -797,10 +798,15 @@ export function ActivityTimeline({ sessions, loading, onRefresh, highlightTimest
 
   const jumpRangeBounds = useMemo(() => resolveDateRangeToDayBounds(jumpRangeValue), [jumpRangeValue]);
 
+  /** Deferred so typing in search does not re-filter a huge list on every keystroke. */
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+
   const filteredSorted = useMemo(() => {
     let xs = sorted;
     if (alertsOnly) xs = xs.filter((s) => (s.alertEvents?.length ?? 0) > 0);
-    if (searchQuery.trim()) xs = xs.filter((s) => sessionMatchesSearch(s, searchQuery));
+    if (deferredSearchQuery.trim()) {
+      xs = xs.filter((s) => sessionMatchesSearch(s, deferredSearchQuery));
+    }
     if (jumpRangeBounds) {
       xs = xs.filter((s) => {
         const k = dayKey(s.startTime);
@@ -808,7 +814,7 @@ export function ActivityTimeline({ sessions, loading, onRefresh, highlightTimest
       });
     }
     return xs;
-  }, [sorted, alertsOnly, searchQuery, jumpRangeBounds]);
+  }, [sorted, alertsOnly, deferredSearchQuery, jumpRangeBounds]);
 
   const dayGroups = useMemo(() => groupSessionsByDay(filteredSorted), [filteredSorted]);
 
@@ -1054,8 +1060,7 @@ export function ActivityTimeline({ sessions, loading, onRefresh, highlightTimest
                       <Calendar size={15} style={{ opacity: 0.85 }} aria-hidden />
                       <span className="vtl-day-header-label">{group.label}</span>
                       <span className="vtl-day-header-cta">
-                        {group.items.length} session{group.items.length === 1 ? "" : "s"} ·{" "}
-                        {expanded ? "Hide" : "Show"}
+                        {group.items.length} session{group.items.length === 1 ? "" : "s"}
                       </span>
                     </button>
                     {expanded && (

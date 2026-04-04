@@ -287,8 +287,20 @@ export const api = {
 
   agentSoftware: (
     id: string,
-  ): Promise<{ rows: AgentSoftwareRow[]; last_captured_at: string | null }> =>
-    get(`/agents/${id}/software`),
+    params?: { limit?: number; offset?: number },
+  ): Promise<{
+    rows: AgentSoftwareRow[];
+    last_captured_at: string | null;
+    total?: number;
+    limit?: number;
+    offset?: number;
+  }> => {
+    const qs = new URLSearchParams();
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    if (params?.offset != null) qs.set("offset", String(params.offset));
+    const q = qs.toString();
+    return get(`/agents/${id}/software${q ? `?${q}` : ""}`);
+  },
 
   collectAgentSoftware: (id: string): Promise<{ ok: boolean }> =>
     postEmpty(`/agents/${id}/software/collect`),

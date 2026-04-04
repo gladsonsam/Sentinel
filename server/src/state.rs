@@ -1,6 +1,7 @@
 //! Shared application state, threaded through Axum via `Arc<AppState>`.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -46,6 +47,12 @@ pub struct AppState {
     pub(crate) login_failures: Mutex<HashMap<String, Vec<Instant>>>,
     /// Per (rule_id, agent_id) last fire time for alert cooldowns.
     pub alert_match_cooldowns: Mutex<HashMap<(i64, Uuid), Instant>>,
+
+    /// Optional Prometheus metrics (when `METRICS_ENABLED`).
+    pub metrics: Option<Arc<crate::metrics::AppMetrics>>,
+
+    /// Idempotency for `POST .../software/collect`: (agent_id, key) → last use time.
+    pub software_collect_dedup: Mutex<HashMap<(Uuid, String), Instant>>,
 }
 
 /// Cached JPEG with a monotonic `seq` for MJPEG change detection.
@@ -63,6 +70,7 @@ impl AppState {
         allow_insecure_agent_auth: bool,
         wol_min_interval: Duration,
         allow_remote_script: bool,
+        metrics: Option<Arc<crate::metrics::AppMetrics>>,
     ) -> Self {
         let (tx, _) = broadcast::channel(4096);
         Self {
@@ -81,6 +89,8 @@ impl AppState {
             script_waiters: Mutex::new(HashMap::new()),
             login_failures: Mutex::new(HashMap::new()),
             alert_match_cooldowns: Mutex::new(HashMap::new()),
+            metrics,
+            software_collect_dedup: Mutex::new(HashMap::new()),
         }
     }
 

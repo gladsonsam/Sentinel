@@ -20,9 +20,11 @@ type SoftwareRow = AgentSoftwareRow & {
 
 interface SoftwareTabProps {
   agentId: string;
+  onNotifyInfo?: (header: string, content?: string) => void;
+  onNotifyError?: (header: string, content?: string) => void;
 }
 
-export function SoftwareTab({ agentId }: SoftwareTabProps) {
+export function SoftwareTab({ agentId, onNotifyInfo, onNotifyError }: SoftwareTabProps) {
   const [rows, setRows] = useState<SoftwareRow[]>([]);
   const [lastCaptured, setLastCaptured] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -60,10 +62,14 @@ export function SoftwareTab({ agentId }: SoftwareTabProps) {
     setErr(null);
     try {
       await api.collectAgentSoftware(agentId);
+      onNotifyInfo?.("Inventory refresh started", "Waiting for the agent to upload software data…");
       await new Promise((r) => setTimeout(r, 2500));
       await load();
+      onNotifyInfo?.("Software inventory updated", "Latest rows are shown below.");
     } catch (e) {
-      setErr(String(e));
+      const msg = String(e);
+      setErr(msg);
+      onNotifyError?.("Could not refresh software inventory", msg);
     } finally {
       setCollecting(false);
     }

@@ -299,7 +299,13 @@ export function AgentDetailPage({
       case "screen":
         return <ScreenTab agentId={agent.id} sendWsMessage={sendWsMessage} />;
       case "software":
-        return <SoftwareTab agentId={agent.id} />;
+        return (
+          <SoftwareTab
+            agentId={agent.id}
+            onNotifyInfo={onNotifyInfo}
+            onNotifyError={onNotifyError}
+          />
+        );
       case "scripts":
         return <ScriptsTab agentId={agent.id} />;
       case "keys":

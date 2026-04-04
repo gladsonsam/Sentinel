@@ -41,3 +41,13 @@ If you act in good faith and follow this policy (no data destruction, no service
 
 Please **do not** include real screen captures, keystrokes, credentials, tokens, or other personal data in your report. If such data is required to demonstrate the issue, use synthetic/test accounts and redact wherever possible.
 
+## Deployment hardening (operators)
+
+The server supports common production patterns; see `env.example` and `docs/dashboard-api.md` for details.
+
+- **TLS**: Terminate HTTPS in a reverse proxy; keep `ENFORCE_HTTPS=true` and forward `X-Forwarded-Proto: https` (or `wss` for WebSocket upgrades).
+- **Secrets**: Prefer `DATABASE_URL_FILE`, `ADMIN_PASSWORD_FILE`, `AGENT_SECRET_FILE`, etc., instead of embedding secrets in the environment.
+- **Rate limiting**: Optional `API_RATE_LIMIT_PER_SECOND` limits authenticated `/api/*` traffic per client IP (useful when the dashboard is exposed).
+- **Audit trail**: Sensitive dashboard actions are recorded in the audit log (viewable in the Activity log UI and via `/api/audit`).
+- **Observability**: `GET /metrics` (Prometheus), `GET /healthz` (liveness), `GET /readyz` (DB readiness), structured logs via `LOG_JSON=true`.
+

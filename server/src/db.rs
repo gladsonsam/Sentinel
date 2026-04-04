@@ -1258,6 +1258,49 @@ pub async fn prune_telemetry_by_retention(pool: &PgPool) -> Result<()> {
     Ok(())
 }
 
+/// Delete alert-rule events older than `days` (screenshots cascade via FK).
+pub async fn prune_alert_events_by_age(pool: &PgPool, days: i64) -> Result<u64> {
+    let r = sqlx::query(
+        "DELETE FROM alert_rule_events WHERE created_at < NOW() - ($1::bigint * INTERVAL '1 day')",
+    )
+    .bind(days)
+    .execute(pool)
+    .await?;
+    Ok(r.rows_affected())
+}
+
+/// Delete stale software inventory rows (by `captured_at`).
+pub async fn prune_agent_software_by_age(pool: &PgPool, days: i64) -> Result<u64> {
+    let r = sqlx::query(
+        "DELETE FROM agent_software WHERE captured_at < NOW() - ($1::bigint * INTERVAL '1 day')",
+    )
+    .bind(days)
+    .execute(pool)
+    .await?;
+    Ok(r.rows_affected())
+}
+
+/// Optional extra pruning (alert history + old software rows). Telemetry uses [`prune_telemetry_by_retention`].
+pub async fn prune_auxiliary_retention(
+    pool: &PgPool,
+    alert_event_days: Option<i64>,
+    software_inventory_days: Option<i64>,
+) -> Result<()> {
+    if let Some(d) = alert_event_days {
+        let n = prune_alert_events_by_age(pool, d).await?;
+        if n > 0 {
+            tracing::info!(rows = n, "pruned old alert_rule_events by retention");
+        }
+    }
+    if let Some(d) = software_inventory_days {
+        let n = prune_agent_software_by_age(pool, d).await?;
+        if n > 0 {
+            tracing::info!(rows = n, "pruned old agent_software rows by retention");
+        }
+    }
+    Ok(())
+}
+
 // ─── Agent local UI password (SHA-256 hex, matches Windows agent config.rs) ───
 
 /// SHA-256 hex digest — same algorithm as the agent `hash_password()`.
@@ -1446,6 +1489,49 @@ pub async fn list_agent_software(pool: &PgPool, agent_id: Uuid) -> Result<Vec<Ag
         });
     }
     Ok(out)
+}
+
+/// Paginated software list (`ORDER BY lower(name)`). Returns `(rows, total_count)`.
+pub async fn list_agent_software_paged(
+    pool: &PgPool,
+    agent_id: Uuid,
+    limit: i64,
+    offset: i64,
+) -> Result<(Vec<AgentSoftwareRow>, i64)> {
+    let total: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM agent_software WHERE agent_id = $1",
+    )
+    .bind(agent_id)
+    .fetch_one(pool)
+    .await?;
+
+    let rows = sqlx::query(
+        r#"
+        SELECT name, version, publisher, install_location, install_date, captured_at
+        FROM agent_software
+        WHERE agent_id = $1
+        ORDER BY lower(name) ASC
+        LIMIT $2 OFFSET $3
+        "#,
+    )
+    .bind(agent_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        out.push(AgentSoftwareRow {
+            name: r.try_get("name")?,
+            version: r.try_get("version")?,
+            publisher: r.try_get("publisher")?,
+            install_location: r.try_get("install_location")?,
+            install_date: r.try_get("install_date")?,
+            captured_at: r.try_get("captured_at")?,
+        });
+    }
+    Ok((out, total))
 }
 
 pub async fn latest_software_capture_time(
