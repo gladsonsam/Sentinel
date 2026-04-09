@@ -1,6 +1,8 @@
 // Session aggregator for timeline visualization
 // Combines windows, URLs, and keystrokes into logical sessions
 
+import { prettyAppLabel } from "./app-names";
+
 interface WindowEvent {
   id: number;
   window_title: string;
@@ -38,6 +40,8 @@ export interface SessionAlertEvent {
 
 export interface Session {
   id: string;
+  /** Optional agent id (for UI helpers like app icon URLs). */
+  agentId?: string;
   appName: string;
   appDisplayName: string;
   windowTitle: string;
@@ -92,6 +96,13 @@ function deriveAppDisplayName(window: WindowEvent): string {
   const title = normalizeSpace(window.window_title);
   const titleTail = lastTitleSegment(title);
   const meta = normalizeSpace(window.app_display);
+
+  // Microsoft Office: normalize corrupt/concatenated "Microsoft OfficeWINWORD. EXE" style labels
+  // and prefer friendly names like "Microsoft Word".
+  {
+    const officePretty = prettyAppLabel({ exeName: window.exe_name, appDisplay: window.app_display });
+    if (officePretty && officePretty !== meta && officePretty !== window.exe_name) return officePretty;
+  }
 
   // UWP/packaged apps often run under a host process like ApplicationFrameHost.
   // In that case the window title is the "real" app name (e.g. "Calculator").

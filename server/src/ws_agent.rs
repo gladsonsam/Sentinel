@@ -21,6 +21,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use base64::Engine;
 use serde::Deserialize;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
@@ -283,6 +284,28 @@ async fn dispatch_text(text: &str, agent_id: uuid::Uuid, name: &str, state: &Arc
             }
         }
         "afk" | "active" => db::insert_activity(&state.db, agent_id, &val).await,
+        "app_icon" => {
+            // Expected: { type:"app_icon", exe_name:"winword.exe", png_base64:"..." }
+            let exe_ok = val["exe_name"]
+                .as_str()
+                .map(|s| !s.trim().is_empty() && s.len() <= MAX_WINDOW_APP_CHARS)
+                .unwrap_or(false);
+            let b64 = val["png_base64"].as_str().unwrap_or("");
+            if !exe_ok || b64.is_empty() {
+                Ok(())
+            } else {
+                // Hard cap to avoid DB bloat / abuse (~200KB decoded).
+                if b64.len() > 300_000 {
+                    warn!("Dropping 'app_icon' from {agent_id}: payload too large");
+                    Ok(())
+                } else {
+                    match base64::engine::general_purpose::STANDARD.decode(b64) {
+                        Ok(bytes) => db::upsert_app_icon(&state.db, agent_id, val["exe_name"].as_str().unwrap_or(""), &bytes).await,
+                        Err(_) => Ok(()),
+                    }
+                }
+            }
+        }
         "agent_info" => db::upsert_agent_info(&state.db, agent_id, &val).await,
         "software_inventory" => {
             let items = val["items"].as_array().cloned().unwrap_or_default();

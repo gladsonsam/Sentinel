@@ -1,12 +1,13 @@
 import { DashboardLayout } from "../layouts/DashboardLayout";
 import { SideNav } from "../components/navigation/SideNav";
 import { AgentDetailPage } from "../pages/AgentDetailPage";
-import type { Agent, AgentInfo, TabKey } from "../lib/types";
+import type { Agent, AgentInfo, AgentLiveStatus, TabKey } from "../lib/types";
 import type { NotificationItem } from "../hooks/useNotifications";
 
 interface Props {
   agent: Agent;
   agentInfo: AgentInfo | null;
+  liveStatus?: AgentLiveStatus;
   sendWsMessage: (msg: unknown) => void;
   onNotifyInfo: (header: string, content?: string) => void;
   onNotifyWarning: (header: string, content?: string) => void;
@@ -33,6 +34,7 @@ interface Props {
 export function AuthenticatedAgentDetail({
   agent,
   agentInfo,
+  liveStatus,
   sendWsMessage,
   onNotifyInfo,
   onNotifyWarning,
@@ -67,6 +69,7 @@ export function AuthenticatedAgentDetail({
         <AgentDetailPage
           agent={agent}
           agentInfo={agentInfo}
+          liveStatus={liveStatus}
           sendWsMessage={sendWsMessage}
           onNotifyInfo={onNotifyInfo}
           onNotifyWarning={onNotifyWarning}

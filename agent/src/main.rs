@@ -60,6 +60,7 @@ mod system_info;
 mod toast;
 mod ui;
 mod url_scraper;
+mod win_icons;
 mod window_tracker;
 
 use std::sync::{
@@ -82,6 +83,7 @@ use tokio_tungstenite::{
 use tracing::{error, info, warn};
 use tracing_subscriber::{fmt, EnvFilter};
 use window_tracker::WindowTracker;
+use base64::Engine;
 
 use config::{AgentStatus, Config};
 
@@ -452,6 +454,7 @@ async fn run_session(
 
     // ── Window focus tracker ──────────────────────────────────────────────
     let mut win_tracker = WindowTracker::new();
+    let mut sent_app_icons: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // ── Timers ────────────────────────────────────────────────────────────
     let mut frame_ticker = interval(Duration::from_millis(FRAME_INTERVAL_MS));
@@ -586,11 +589,31 @@ async fn run_session(
             // ── Branch 5: foreground window changes ───────────────────────
             _ = window_ticker.tick() => {
                 if let Some(event) = win_tracker.poll() {
+                    // Opportunistically upload an app icon once per exe name per session.
+                    // This keeps the dashboard snappy without requiring extra round trips.
+                    let exe_key = event.app.trim().to_lowercase();
+                    if !exe_key.is_empty() && !sent_app_icons.contains(&exe_key) && !event.app_path.trim().is_empty() {
+                        if let Ok(png) = win_icons::icon_png_from_exe_path(&event.app_path, 64) {
+                            let payload = serde_json::json!({
+                                "type": "app_icon",
+                                "exe_name": exe_key,
+                                "png_base64": base64::engine::general_purpose::STANDARD.encode(png),
+                                "ts": unix_timestamp_secs(),
+                            }).to_string();
+                            // Best-effort; ignore failures (icons are optional).
+                            let _ = out_tx.send(Message::Text(payload)).await;
+                            sent_app_icons.insert(exe_key.clone());
+                        } else {
+                            // Avoid retrying constantly for executables that can't produce icons.
+                            sent_app_icons.insert(exe_key.clone());
+                        }
+                    }
                     let payload = serde_json::json!({
                         "type"  : "window_focus",
                         "title" : event.title,
                         "app"   : event.app,
                         "app_display": event.app_display,
+                        "app_path": event.app_path,
                         "hwnd"  : event.hwnd,
                         "ts"    : unix_timestamp_secs(),
                     })

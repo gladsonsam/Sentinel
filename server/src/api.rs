@@ -49,6 +49,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/alert-rule-events/:id/screenshot", get(alert_rule_event_screenshot))
         .route("/agents/:id/urls", get(agent_urls))
         .route("/agents/:id/activity", get(agent_activity))
+        .route("/agents/:id/app-icons/:exe_name", get(agent_app_icon))
         .route("/agents/:id/top-urls", get(agent_top_urls))
         .route("/agents/:id/top-windows", get(agent_top_windows))
         .route("/agents/:id/history/clear", post(clear_agent_history))
@@ -98,6 +99,37 @@ pub fn router() -> Router<Arc<AppState>> {
             "/alert-rules/:rule_id",
             put(alert_rules_update_h).delete(alert_rules_delete_h),
         )
+}
+
+async fn agent_app_icon(
+    Path((id, exe_name)): Path<(Uuid, String)>,
+    State(s): State<Arc<AppState>>,
+    Extension(_user): Extension<auth::AuthUser>,
+) -> Response {
+    // Basic input hardening: only allow a reasonable exe token.
+    let exe = exe_name.trim().to_lowercase();
+    if exe.is_empty() || exe.len() > 128 {
+        return (StatusCode::BAD_REQUEST, "invalid exe_name").into_response();
+    }
+    if !exe
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' )
+    {
+        return (StatusCode::BAD_REQUEST, "invalid exe_name").into_response();
+    }
+
+    match db::get_app_icon_png(&s.db, id, &exe).await {
+        Ok(Some(bytes)) => (
+            [
+                (header::CONTENT_TYPE, "image/png"),
+                (header::CACHE_CONTROL, "public, max-age=604800, immutable"),
+            ],
+            bytes,
+        )
+            .into_response(),
+        Ok(None) => (StatusCode::NOT_FOUND, "no icon").into_response(),
+        Err(e) => err500(e),
+    }
 }
 
 async fn alert_rule_event_screenshot(

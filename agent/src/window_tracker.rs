@@ -37,6 +37,8 @@ pub struct WindowEvent {
     /// Friendly executable name derived from file metadata.
     /// Example: `"Microsoft Edge"`.
     pub app_display: String,
+    /// Full image path (e.g. `C:\Program Files\...\chrome.exe`). Empty when unavailable.
+    pub app_path: String,
     /// Raw HWND value for server-side correlation.
     pub hwnd: usize,
 }
@@ -79,6 +81,7 @@ impl WindowTracker {
                     title: String::new(),
                     app: String::new(),
                     app_display: String::new(),
+                    app_path: String::new(),
                     hwnd: 0,
                 });
             }
@@ -91,7 +94,7 @@ impl WindowTracker {
             return None;
         }
 
-        let (app, app_display) = read_process_name(hwnd);
+        let (app, app_display, app_path) = read_process_name(hwnd);
 
         self.last_hwnd = hwnd_raw;
         self.last_title = title.clone();
@@ -100,6 +103,7 @@ impl WindowTracker {
             title,
             app,
             app_display,
+            app_path,
             hwnd: hwnd_raw,
         })
     }
@@ -130,18 +134,18 @@ fn read_window_title(hwnd: HWND) -> String {
 /// 2. `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` → handle
 /// 3. `QueryFullProcessImageNameW` → full path (e.g. `C:\...\msedge.exe`)
 /// 4. Split on `\` / `/` → just the filename
-fn read_process_name(hwnd: HWND) -> (String, String) {
+fn read_process_name(hwnd: HWND) -> (String, String, String) {
     // ── 1. PID ───────────────────────────────────────────────────────────
     let mut pid: u32 = 0;
     unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
     if pid == 0 {
-        return (String::new(), String::new());
+        return (String::new(), String::new(), String::new());
     }
 
     // ── 2. Process handle ────────────────────────────────────────────────
     let handle = match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
         Ok(h) => h,
-        Err(_) => return (String::new(), String::new()),
+        Err(_) => return (String::new(), String::new(), String::new()),
     };
 
     // ── 3. Full image path ───────────────────────────────────────────────
@@ -159,7 +163,7 @@ fn read_process_name(hwnd: HWND) -> (String, String) {
     let _ = unsafe { CloseHandle(handle) };
 
     if result.is_err() {
-        return (String::new(), String::new());
+        return (String::new(), String::new(), String::new());
     }
 
     // ── 4. Strip path → basename ─────────────────────────────────────────
@@ -171,7 +175,7 @@ fn read_process_name(hwnd: HWND) -> (String, String) {
         .to_string();
     let app_display = crate::app_display::app_display_name_from_full_path(&full_path);
 
-    (app, app_display)
+    (app, app_display, full_path)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

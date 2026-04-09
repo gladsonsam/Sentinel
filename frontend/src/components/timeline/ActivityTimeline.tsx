@@ -26,6 +26,7 @@ import DateRangePicker, { type DateRangePickerProps } from "@cloudscape-design/c
 import { Session, type SessionAlertEvent, formatDuration } from "../../lib/session-aggregator";
 import { apiUrl } from "../../lib/api";
 import { fmtDateTimePrecise, parseTimestamp } from "../../lib/utils";
+import { AppIcon } from "../common/AppIcon";
 
 interface ActivityTimelineProps {
   sessions: Session[];
@@ -621,6 +622,9 @@ function SessionItem({
           <div className="vtl-card-main">
             <div className="vtl-card-title" style={{ display: "flex", gap: 8, alignItems: "center" }}>
               {isIdle && <Moon size={14} />}
+              {!isIdle && session.agentId ? (
+                <AppIcon agentId={session.agentId} exeName={session.appName} size={16} />
+              ) : null}
               <span>{isIdle ? "Idle / Away" : session.appDisplayName || session.appName}</span>
               {highlighted && (
                 <span

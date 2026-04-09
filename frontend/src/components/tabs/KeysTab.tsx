@@ -10,6 +10,8 @@ import Button from "@cloudscape-design/components/button";
 import { useCollection } from "@cloudscape-design/collection-hooks";
 import { apiUrl } from "../../lib/api";
 import { fmtDateTime } from "../../lib/utils";
+import { prettyAppLabel } from "../../lib/app-names";
+import { AppIcon } from "../common/AppIcon";
 
 interface KeystrokeEvent {
   id: number;
@@ -124,7 +126,10 @@ export function KeysTab({ agentId }: KeysTabProps) {
           header: "Application",
           cell: (item) => (
             <div>
-              <div>{item.app_display || item.exe_name || "—"}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <AppIcon agentId={agentId} exeName={item.exe_name} size={16} />
+                <span>{prettyAppLabel({ exeName: item.exe_name, appDisplay: item.app_display })}</span>
+              </div>
               <Box className="sentinel-monospace" fontSize="body-s" color="text-body-secondary">
                 {item.exe_name}
               </Box>

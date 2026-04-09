@@ -37,7 +37,7 @@ native-tls        = "0.2"
 xcap = "0.9"
 
 # ── JPEG encoding ─────────────────────────────────────────────────────────────
-image = { version = "0.25", default-features = false, features = ["jpeg"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
 # ── Browser URL scraping ──────────────────────────────────────────────────────
 browser-url = "0.1"
@@ -53,9 +53,11 @@ enigo = "0.2"
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
     "Win32_System_Threading",
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_Storage_FileSystem",
+    "Win32_Graphics_Gdi",
     "Data_Xml_Dom",
     "UI_Notifications",
 ] }

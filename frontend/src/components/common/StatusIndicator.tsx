@@ -36,9 +36,12 @@ interface ActivityStatusProps {
 
 export function ActivityStatus({ isAfk, idleSeconds }: ActivityStatusProps) {
   if (isAfk) {
-    const idleText = idleSeconds
-      ? ` (${Math.floor(idleSeconds / 60)}m idle)`
-      : "";
+    const idleText =
+      idleSeconds == null
+        ? ""
+        : idleSeconds < 60
+          ? ` (${idleSeconds}s idle)`
+          : ` (${Math.floor(idleSeconds / 60)}m idle)`;
     return (
       <StatusIndicator type="warning">
         AFK{idleText}

@@ -19,7 +19,13 @@ export interface AgentLiveStatus {
   app?: string; // last focused app exe name
   url?: string; // last active browser URL
   activity?: "afk" | "active";
+  /** Raw idle seconds reported by the agent at last AFK update. */
   idleSecs?: number;
+  /**
+   * Client-side timestamp used to compute a continuously increasing idle duration.
+   * When present, effective idle seconds is `floor((nowMs - idleSinceMs) / 1000)`.
+   */
+  idleSinceMs?: number;
 }
 
 export interface WindowEvent {

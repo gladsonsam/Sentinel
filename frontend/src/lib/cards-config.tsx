@@ -47,6 +47,22 @@ export function createCardDefinitions(
     const extra = Math.max(0, Math.floor((nowMs - receivedAt) / 1000));
     return base + extra;
   };
+  const connectedSessionSecs = (item: AgentCardItem) => {
+    if (!item.online) return undefined;
+    if (!item.connected_at) return undefined;
+    const t = new Date(item.connected_at).getTime();
+    if (Number.isNaN(t)) return undefined;
+    return Math.max(0, Math.floor((nowMs - t) / 1000));
+  };
+  const displayUptimeSecs = (item: AgentCardItem) => liveUptimeSecs(item) ?? connectedSessionSecs(item);
+  const effectiveIdleSeconds = (status: AgentLiveStatus | undefined): number | undefined => {
+    if (!status || status.activity !== "afk") return undefined;
+    if (typeof status.idleSinceMs === "number" && Number.isFinite(status.idleSinceMs)) {
+      return Math.max(0, Math.floor((nowMs - status.idleSinceMs) / 1000));
+    }
+    if (typeof status.idleSecs === "number" && status.idleSecs >= 0) return status.idleSecs;
+    return undefined;
+  };
   return {
     header: (item) => (
       <div className="sentinel-agent-card-header">
@@ -74,7 +90,7 @@ export function createCardDefinitions(
               lastSeen={item.last_seen ? new Date(item.last_seen) : null}
             />
             {item.online && item.liveStatus?.activity === "afk" && (
-              <ActivityStatus isAfk idleSeconds={item.liveStatus?.idleSecs} />
+              <ActivityStatus isAfk idleSeconds={effectiveIdleSeconds(item.liveStatus)} />
             )}
           </SpaceBetween>
         </div>
@@ -87,7 +103,7 @@ export function createCardDefinitions(
         content: (item) => {
           const lastWindow = item.liveStatus?.window || item.fallbackLastWindow || "—";
           const lastSeen = formatTimestamp(item.last_seen);
-          const uptime = formatUptime(liveUptimeSecs(item));
+          const uptime = formatUptime(displayUptimeSecs(item));
 
           const leftLabel = item.online ? "Uptime" : "Last seen";
           const leftValue = item.online ? uptime : lastSeen;

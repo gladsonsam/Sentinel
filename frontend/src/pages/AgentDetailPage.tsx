@@ -34,7 +34,7 @@ import {
   type SessionAlertEvent,
 } from "../lib/session-aggregator";
 import { api, apiUrl } from "../lib/api";
-import type { Agent, AgentInfo } from "../lib/types";
+import type { Agent, AgentInfo, AgentLiveStatus } from "../lib/types";
 import { PageHeader, type AgentAction } from "../components/detail/PageHeader";
 import { GeneralConfig } from "../components/detail/GeneralConfig";
 import { parseTimestamp } from "../lib/utils";
@@ -43,6 +43,7 @@ import { AgentSettingsTab } from "../components/AgentSettingsTab";
 interface AgentDetailPageProps {
   agent: Agent;
   agentInfo: AgentInfo | null;
+  liveStatus?: AgentLiveStatus;
   sendWsMessage: (msg: any) => void;
   onNotifyInfo: (header: string, content?: string) => void;
   onNotifyWarning: (header: string, content?: string) => void;
@@ -58,6 +59,7 @@ interface AgentDetailPageProps {
 export function AgentDetailPage({
   agent,
   agentInfo,
+  liveStatus,
   sendWsMessage,
   onNotifyInfo,
   onNotifyWarning,
@@ -71,6 +73,7 @@ export function AgentDetailPage({
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(false);
   const [resolvedInfo, setResolvedInfo] = useState<AgentInfo | null>(agentInfo ?? null);
+  const [inferredIdleSeconds, setInferredIdleSeconds] = useState<number | null>(null);
   /** Timestamp set when user clicks "View in Timeline" from the Alerts tab (overrides URL param) */
   const [timelineHighlight, setTimelineHighlight] = useState<string | null>(null);
   const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -82,6 +85,40 @@ export function AgentDetailPage({
   useEffect(() => {
     activeTabRef.current = activeTab;
   }, [activeTab]);
+
+  // Seed AFK/idle indicator from stored activity_log (so agent header can show it even before live WS events arrive).
+  useEffect(() => {
+    let cancelled = false;
+    const loadLastActivity = async () => {
+      try {
+        const res = await fetch(apiUrl(`/agents/${agent.id}/activity?limit=1&offset=0`), {
+          credentials: "include",
+        });
+        if (!res.ok || cancelled) return;
+        const data = await res.json();
+        const row = Array.isArray(data?.rows) ? data.rows[0] : Array.isArray(data) ? data[0] : null;
+        const eventType = String(row?.event_type ?? row?.kind ?? "").toLowerCase();
+        if (eventType !== "afk") {
+          if (!cancelled) setInferredIdleSeconds(null);
+          return;
+        }
+        const idleAtTransition = Number(row?.idle_secs ?? row?.idle_seconds ?? 0);
+        const tsRaw = String(row?.ts ?? row?.timestamp ?? "");
+        const ts = parseTimestamp(tsRaw);
+        if (!ts) return;
+        const nowMs = Date.now();
+        const base = Number.isFinite(idleAtTransition) && idleAtTransition > 0 ? idleAtTransition : 0;
+        const extra = Math.max(0, Math.floor((nowMs - ts.getTime()) / 1000));
+        if (!cancelled) setInferredIdleSeconds(base + extra);
+      } catch {
+        // Ignore; header just won't show inferred idle.
+      }
+    };
+    loadLastActivity();
+    return () => {
+      cancelled = true;
+    };
+  }, [agent.id]);
 
   useEffect(() => {
     if (agentInfo) {
@@ -188,7 +225,7 @@ export function AgentDetailPage({
         }),
         alertEvents,
       );
-      setSessions(aggregated);
+      setSessions(aggregated.map((s) => ({ ...s, agentId: agent.id })));
     } catch (err) {
       console.error("Failed to load activity data:", err);
     } finally {
@@ -411,6 +448,8 @@ export function AgentDetailPage({
 
         <PageHeader
           agent={agent}
+          liveStatus={liveStatus}
+          inferredIdleSeconds={inferredIdleSeconds}
           onOpenHelp={onOpenHelp}
           onRunAction={runAgentAction}
         />

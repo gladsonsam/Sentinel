@@ -157,6 +157,7 @@ function OverviewRoute({
 function AgentDetailRoute({
   agents,
   agentInfo,
+  liveStatus,
   setSelectedAgentId,
   send,
   info,
@@ -175,6 +176,7 @@ function AgentDetailRoute({
 }: {
   agents: Record<string, Agent>;
   agentInfo: Record<string, AgentInfo | null>;
+  liveStatus: Record<string, AgentLiveStatus>;
   setSelectedAgentId: (id: string | null) => void;
   send: (msg: unknown) => void;
   info: (header: string, content?: string) => void;
@@ -217,6 +219,7 @@ function AgentDetailRoute({
       <AuthenticatedAgentDetail
         agent={agent}
         agentInfo={agentInfo[agent.id] || null}
+        liveStatus={liveStatus[agent.id]}
         sendWsMessage={send}
         onNotifyInfo={info}
         onNotifyWarning={warning}
@@ -524,10 +527,12 @@ export function App() {
 
         case "afk":
           if (event.agent_id) {
+            const idleSecs = typeof event.idle_secs === "number" && event.idle_secs >= 0 ? event.idle_secs : 0;
             updateAgentLiveStatus(event.agent_id, {
               ...liveStatus[event.agent_id],
               activity: "afk",
-              idleSecs: 0,
+              idleSecs,
+              idleSinceMs: Date.now() - idleSecs * 1000,
             });
           }
           break;
@@ -538,6 +543,7 @@ export function App() {
               ...liveStatus[event.agent_id],
               activity: "active",
               idleSecs: 0,
+              idleSinceMs: undefined,
             });
           }
           break;
@@ -734,6 +740,7 @@ export function App() {
           <AgentDetailRoute
             agents={agents}
             agentInfo={agentInfo}
+            liveStatus={liveStatus}
             setSelectedAgentId={setSelectedAgentId}
             send={send}
             info={info}
