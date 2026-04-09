@@ -412,7 +412,7 @@ export function App() {
     setSelectedAgentId,
   } = useAgents();
 
-  const { notifications, removeNotification, success, warning, info, error } = useNotifications();
+  const { notifications, removeNotification, warning, info, error } = useNotifications();
   const { themeMode, changeTheme } = useTheme();
   const disconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const disconnectNotifiedRef = useRef(false);
@@ -490,9 +490,6 @@ export function App() {
               last_connected_at: event.connected_at,
               last_disconnected_at: null,
             });
-            if (location.pathname === `/agents/${event.agent_id}`) {
-              success("Agent Connected", `${event.name} is now online`);
-            }
           }
           break;
 
@@ -501,7 +498,6 @@ export function App() {
             const agent = agents[event.agent_id];
             if (agent) {
               updateAgent(event.agent_id, { ...agent, online: false });
-              warning("Agent Disconnected", `${agent.name} went offline`);
             }
           }
           break;
@@ -571,17 +567,13 @@ export function App() {
           clearTimeout(disconnectTimerRef.current);
           disconnectTimerRef.current = null;
         }
-        if (disconnectNotifiedRef.current) {
-          info("Connected", "WebSocket connection re-established");
-          disconnectNotifiedRef.current = false;
-        }
+        disconnectNotifiedRef.current = false;
       } else if (status === "disconnected") {
         if (disconnectTimerRef.current) {
           clearTimeout(disconnectTimerRef.current);
         }
         disconnectTimerRef.current = setTimeout(() => {
           disconnectNotifiedRef.current = true;
-          warning("Disconnected", "WebSocket connection lost");
         }, 10000);
       }
     },

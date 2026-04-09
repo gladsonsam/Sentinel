@@ -128,7 +128,24 @@ export function KeysTab({ agentId }: KeysTabProps) {
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <AppIcon agentId={agentId} exeName={item.exe_name} size={16} />
-                <span>{prettyAppLabel({ exeName: item.exe_name, appDisplay: item.app_display })}</span>
+                <button
+                  type="button"
+                  onClick={() =>
+                    filterProps.onChange({ detail: { filteringText: item.exe_name ?? "" } } as any)
+                  }
+                  title="Filter table by this app"
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    padding: 0,
+                    cursor: "pointer",
+                    color: "inherit",
+                    textAlign: "left",
+                    font: "inherit",
+                  }}
+                >
+                  {prettyAppLabel({ exeName: item.exe_name, appDisplay: item.app_display })}
+                </button>
               </div>
               <Box className="sentinel-monospace" fontSize="body-s" color="text-body-secondary">
                 {item.exe_name}

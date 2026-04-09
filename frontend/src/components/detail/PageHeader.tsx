@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import Header from "@cloudscape-design/components/header";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import ButtonDropdown from "@cloudscape-design/components/button-dropdown";
@@ -32,6 +33,18 @@ export function PageHeader({
   onOpenHelp,
   onRunAction,
 }: PageHeaderProps) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  // Keep AFK/idle counters ticking on the agent detail page.
+  useEffect(() => {
+    const needsTick =
+      (agent.online && liveStatus?.activity === "afk" && typeof liveStatus.idleSinceMs === "number") ||
+      inferredIdleSeconds != null;
+    if (!needsTick) return;
+    const t = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [agent.online, liveStatus?.activity, liveStatus?.idleSinceMs, inferredIdleSeconds]);
+
   const handleItemClick: ButtonDropdownProps["onItemClick"] = ({ detail }) => {
     const id = detail.id as AgentAction;
     onRunAction(id);
@@ -41,7 +54,7 @@ export function PageHeader({
   const showInferredIdle = !isAfk && inferredIdleSeconds != null && inferredIdleSeconds >= 60;
   const effectiveAfkIdleSecs =
     isAfk && typeof liveStatus?.idleSinceMs === "number"
-      ? Math.max(0, Math.floor((Date.now() - liveStatus.idleSinceMs) / 1000))
+      ? Math.max(0, Math.floor((nowMs - liveStatus.idleSinceMs) / 1000))
       : liveStatus?.idleSecs;
 
   return (

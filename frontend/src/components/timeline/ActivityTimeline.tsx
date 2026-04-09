@@ -538,12 +538,14 @@ function SessionItem({
   highlighted,
   forceExpanded,
   onOpenScreenshot,
+  onFilterApp,
 }: {
   session: Session;
   isLast: boolean;
   highlighted: boolean;
   forceExpanded: boolean;
   onOpenScreenshot: (eventId: number) => void;
+  onFilterApp: (exeName: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [userToggled, setUserToggled] = useState(false);
@@ -622,10 +624,32 @@ function SessionItem({
           <div className="vtl-card-main">
             <div className="vtl-card-title" style={{ display: "flex", gap: 8, alignItems: "center" }}>
               {isIdle && <Moon size={14} />}
-              {!isIdle && session.agentId ? (
-                <AppIcon agentId={session.agentId} exeName={session.appName} size={16} />
-              ) : null}
-              <span>{isIdle ? "Idle / Away" : session.appDisplayName || session.appName}</span>
+              {!isIdle ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (session.appName) onFilterApp(session.appName);
+                  }}
+                  title="Filter timeline by this app"
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "2px 8px",
+                    borderRadius: 999,
+                    border: "1px solid var(--vtl-border)",
+                    background: "transparent",
+                    color: "inherit",
+                    cursor: "pointer",
+                  }}
+                >
+                  {session.agentId ? <AppIcon agentId={session.agentId} exeName={session.appName} size={16} /> : null}
+                  <span>{session.appDisplayName || session.appName}</span>
+                </button>
+              ) : (
+                <span>Idle / Away</span>
+              )}
               {highlighted && (
                 <span
                   style={{
@@ -787,6 +811,7 @@ export function ActivityTimeline({ sessions, loading, onRefresh, highlightTimest
   const [screenshotModalId, setScreenshotModalId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [alertsOnly, setAlertsOnly] = useState(false);
+  const [appFilterExe, setAppFilterExe] = useState<string | null>(null);
   const [jumpRangeValue, setJumpRangeValue] = useState<DateRangePickerProps.Value | null>(null);
   /** Explicit expand/collapse per day; omitted keys use default (newest day expanded only). */
   const [dayExpanded, setDayExpanded] = useState<Record<string, boolean>>({});
@@ -808,6 +833,10 @@ export function ActivityTimeline({ sessions, loading, onRefresh, highlightTimest
   const filteredSorted = useMemo(() => {
     let xs = sorted;
     if (alertsOnly) xs = xs.filter((s) => (s.alertEvents?.length ?? 0) > 0);
+    if (appFilterExe) {
+      const key = appFilterExe.toLowerCase();
+      xs = xs.filter((s) => (s.appName || "").toLowerCase() === key);
+    }
     if (deferredSearchQuery.trim()) {
       xs = xs.filter((s) => sessionMatchesSearch(s, deferredSearchQuery));
     }
@@ -818,7 +847,7 @@ export function ActivityTimeline({ sessions, loading, onRefresh, highlightTimest
       });
     }
     return xs;
-  }, [sorted, alertsOnly, deferredSearchQuery, jumpRangeBounds]);
+  }, [sorted, alertsOnly, appFilterExe, deferredSearchQuery, jumpRangeBounds]);
 
   const dayGroups = useMemo(() => groupSessionsByDay(filteredSorted), [filteredSorted]);
 
@@ -1038,6 +1067,14 @@ export function ActivityTimeline({ sessions, loading, onRefresh, highlightTimest
                 Alerts only
               </Checkbox>
             </div>
+            {appFilterExe ? (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: 8 }}>
+                <Badge color="blue">App: {appFilterExe}</Badge>
+                <Button variant="link" onClick={() => setAppFilterExe(null)}>
+                  Clear
+                </Button>
+              </div>
+            ) : null}
           </div>
 
           {filteredSorted.length === 0 ? (
@@ -1079,6 +1116,11 @@ export function ActivityTimeline({ sessions, loading, onRefresh, highlightTimest
                                 highlighted={isHighlighted}
                                 forceExpanded={isHighlighted}
                                 onOpenScreenshot={setScreenshotModalId}
+                                onFilterApp={(exe) =>
+                                  setAppFilterExe((prev) =>
+                                    prev?.toLowerCase() === exe.toLowerCase() ? null : exe
+                                  )
+                                }
                               />
                             </div>
                           );
