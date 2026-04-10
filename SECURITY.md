@@ -50,4 +50,3 @@ The server supports common production patterns; see `env.example` for details.
 - **Rate limiting**: Optional `API_RATE_LIMIT_PER_SECOND` limits authenticated `/api/`* traffic per client IP (useful when the dashboard is exposed).
 - **Audit trail**: Sensitive dashboard actions are recorded in the audit log (viewable in the Activity log UI and via `/api/audit`).
 - **Observability**: `GET /metrics` (Prometheus), `GET /healthz` (liveness), `GET /readyz` (DB readiness), structured logs via `LOG_JSON=true`.
-

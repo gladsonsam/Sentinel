@@ -30,6 +30,10 @@ jobs:
           perl -0777 -pe 's/\[package\](.*?)\nversion\s*=\s*\"[^\"]+\"/\[package\]$1\nversion = \"'"$ver"'\"/s' \
             -i server/Cargo.toml
 
+          # Keep Cargo.lock consistent so Docker's `cargo build --locked` succeeds.
+          # Cargo.lock contains the package version for workspace members.
+          perl -0777 -i -pe 's/(\[\[package\]\]\nname\s*=\s*"sentinel-server"\nversion\s*=\s*")[^"]+(")/$1'"$ver"'$2/s' Cargo.lock
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
