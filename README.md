@@ -4,11 +4,11 @@ A lightweight, self-hosted monitoring system built with Rust and React. A Window
 
 ## Screenshots
 
-![Agents overview](docs/images/dashboard-agents-overview.jpg)
+Agents overview
 
-![Agent screen viewer](docs/images/agent-screen-viewer.jpg)
+Agent screen viewer
 
-![Agent activity timeline](docs/images/agent-activity-timeline.jpg)
+Agent activity timeline
 
 > [!WARNING]
 > This project was **largely written with AI assistance** and is intended for **experimentation and testing**, not as a hardened or supported product. **Do not rely on it in production** or for sensitive environments. Monitoring, remote control, and keystroke-related features carry inherent privacy and security implications; the codebase has **not** undergone professional security review and may contain bugs, weak defaults, or other issues that could expose data or systems. Use at your own risk.
@@ -22,11 +22,13 @@ A lightweight, self-hosted monitoring system built with Rust and React. A Window
 
 ## Tech stack
 
-| Component | Technology |
-|-----------|------------|
-| **sentinel-agent** | Rust (Windows, hidden Tauri settings window + hotkey, xcap, enigo) |
-| **sentinel-server** | Rust (Axum, Tokio, SQLx, PostgreSQL) |
-| **sentinel-dashboard** | React 18, Vite, TailwindCSS |
+
+| Component              | Technology                                                         |
+| ---------------------- | ------------------------------------------------------------------ |
+| **sentinel-agent**     | Rust (Windows, hidden Tauri settings window + hotkey, xcap, enigo) |
+| **sentinel-server**    | Rust (Axum, Tokio, SQLx, PostgreSQL)                               |
+| **sentinel-dashboard** | React 18, Vite, TailwindCSS                                        |
+
 
 ## Documentation
 

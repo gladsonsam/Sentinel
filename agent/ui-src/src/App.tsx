@@ -245,6 +245,13 @@ function SettingsPanel() {
     return () => clearInterval(id);
   }, []);
 
+  const [appVersion, setAppVersion] = useState<string>("");
+  useEffect(() => {
+    invoke<string>("get_app_version")
+      .then((v) => setAppVersion(v))
+      .catch(() => setAppVersion(""));
+  }, []);
+
   // ── Save ────────────────────────────────────────────────────────────────────
   const handleSave = useCallback(async () => {
     if (newPw && newPw !== confirmPw) {
@@ -298,6 +305,9 @@ function SettingsPanel() {
           <img src="/favicon.svg" alt="" width={22} height={22} />
           <span className="sentinel-agent-topnav-title">Sentinel</span>
           <span className="sentinel-agent-topnav-tag">Agent</span>
+          {appVersion ? (
+            <span className="sentinel-agent-topnav-version">v{appVersion}</span>
+          ) : null}
         </div>
         <StatusBadge
           status={status.status}

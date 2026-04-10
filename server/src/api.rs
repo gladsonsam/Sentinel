@@ -78,6 +78,7 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route("/settings/storage", get(storage_usage))
         .route("/settings/capabilities", get(settings_capabilities))
+        .route("/settings/version", get(settings_version))
         .route("/settings/integration", get(settings_integration))
         .route(
             "/agents/:id/local-ui-password",
@@ -91,6 +92,7 @@ pub fn router() -> Router<Arc<AppState>> {
                 .put(agent_auto_update_agent_put)
                 .delete(agent_auto_update_agent_delete),
         )
+        .route("/agents/:id/update-now", post(agent_update_now))
         .route("/agent-groups", get(agent_groups_list_h).post(agent_groups_create_h))
         .route(
             "/agent-groups/:group_id",
@@ -110,6 +112,38 @@ pub fn router() -> Router<Arc<AppState>> {
             "/alert-rules/:rule_id",
             put(alert_rules_update_h).delete(alert_rules_delete_h),
         )
+}
+
+// ─── Versions (server + latest agent release) ────────────────────────────────
+
+#[derive(Deserialize)]
+struct LatestAgentJson {
+    version: String,
+}
+
+async fn fetch_latest_agent_version() -> Option<String> {
+    let url = "https://github.com/gladsonsam/Sentinel/releases/latest/download/latest.json";
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(8))
+        .build()
+        .ok()?;
+    let resp = client.get(url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body = resp.json::<LatestAgentJson>().await.ok()?;
+    let v = body.version.trim().trim_start_matches('v').to_string();
+    if v.is_empty() { None } else { Some(v) }
+}
+
+async fn settings_version(State(_s): State<Arc<AppState>>) -> Response {
+    let server_version = env!("CARGO_PKG_VERSION").to_string();
+    let latest_agent_version = fetch_latest_agent_version().await;
+    Json(serde_json::json!({
+        "server_version": server_version,
+        "latest_agent_version": latest_agent_version,
+    }))
+    .into_response()
 }
 
 // ─── Agent auto-update policy (Tauri updater) ─────────────────────────────────
@@ -1550,6 +1584,47 @@ async fn storage_usage(State(s): State<Arc<AppState>>) -> Response {
         Ok(v) => Json(v).into_response(),
         Err(e) => err500(e),
     }
+}
+
+async fn agent_update_now(
+    Path(id): Path<Uuid>,
+    State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> Response {
+    if !user.is_operator() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
+    let ip = audit_ip(&headers, addr);
+
+    let payload = serde_json::json!({ "type": "update_now" }).to_string();
+    let sent = if let Some(tx) = s.agent_cmds.lock().unwrap().get(&id) {
+        tx.send(payload).is_ok()
+    } else {
+        false
+    };
+
+    if !sent {
+        return (
+            StatusCode::CONFLICT,
+            Json(serde_json::json!({ "error": "Agent is not connected" })),
+        )
+            .into_response();
+    }
+
+    let _ = db::insert_audit_log(
+        &s.db,
+        user.username.as_str(),
+        Some(id),
+        "agent_update_now",
+        "ok",
+        &serde_json::json!({}),
+        ip.as_deref(),
+    )
+    .await;
+
+    Json(serde_json::json!({ "ok": true })).into_response()
 }
 
 /// Serve the most-recent JPEG screenshot as a single image.

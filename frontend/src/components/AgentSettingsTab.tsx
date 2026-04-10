@@ -25,6 +25,8 @@ import {
 interface Props {
   agentId: string;
   agentName: string;
+  agentOnline: boolean;
+  agentVersion: string | null;
 }
 
 const OVERRIDE_DEFAULT_DAYS = 30;
@@ -115,7 +117,7 @@ function RetentionOverrideField({
 /**
  * Per-computer retention and local UI lock overrides (Settings tab on an agent).
  */
-export function AgentSettingsTab({ agentId, agentName }: Props) {
+export function AgentSettingsTab({ agentId, agentName, agentOnline, agentVersion }: Props) {
   const [agentIcon, setAgentIcon] = useState<AgentIconKey>("monitor");
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [iconLoad, setIconLoad] = useState(true);
@@ -145,6 +147,10 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
   const [autoUpdOk, setAutoUpdOk] = useState<string | null>(null);
   const [autoUpdGlobal, setAutoUpdGlobal] = useState<boolean | null>(null);
   const [autoUpdOverride, setAutoUpdOverride] = useState<{ enabled: boolean } | null>(null);
+  const [latestAgentVersion, setLatestAgentVersion] = useState<string | null>(null);
+  const [updNow, setUpdNow] = useState(false);
+  const [updNowErr, setUpdNowErr] = useState<string | null>(null);
+  const [updNowOk, setUpdNowOk] = useState<string | null>(null);
 
   const parsedKey = useMemo(() => parseRetentionField(agKey), [agKey]);
   const parsedWin = useMemo(() => parseRetentionField(agWin), [agWin]);
@@ -184,8 +190,9 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
       api.localUiPasswordAgentGet(agentId),
       api.agentIconGet(agentId),
       api.agentAutoUpdateAgentGet(agentId),
+      api.settingsVersionGet(),
     ])
-      .then(([{ global, override }, localUi, icon, autoUpd]) => {
+      .then(([{ global, override }, localUi, icon, autoUpd, versions]) => {
         if (cancelled) return;
         setAgGlobal(global);
         const o = override ?? {
@@ -203,6 +210,7 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
         setAgentIcon(isAgentIconKey(icon.icon) ? icon.icon : "monitor");
         setAutoUpdGlobal(autoUpd.global.enabled);
         setAutoUpdOverride(autoUpd.override);
+        setLatestAgentVersion(versions.latest_agent_version);
       })
       .catch((e) => {
         if (!cancelled) setErr(String(e));
@@ -370,6 +378,26 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
       })
       .catch((e) => setAutoUpdErr(String(e)))
       .finally(() => setAutoUpdSave(false));
+  };
+
+  const isOutOfDate =
+    !!latestAgentVersion &&
+    !!agentVersion &&
+    latestAgentVersion.trim().replace(/^v/i, "") !== agentVersion.trim().replace(/^v/i, "");
+
+  const triggerUpdateNow = () => {
+    setUpdNowErr(null);
+    setUpdNowOk(null);
+    setUpdNow(true);
+    api
+      .agentUpdateNow(agentId)
+      .then(() => {
+        setUpdNowOk(
+          "Update triggered. If the agent is connected, it will download and install the latest release.",
+        );
+      })
+      .catch((e) => setUpdNowErr(String(e)))
+      .finally(() => setUpdNow(false));
   };
 
   const effectiveItems = agGlobal
@@ -668,6 +696,58 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
                 Use global default only
               </Button>
             </SpaceBetween>
+          </SpaceBetween>
+        </Container>
+      )}
+
+      {!load && (
+        <Container
+          header={
+            <Header
+              variant="h2"
+              description={`${agentName} — trigger an immediate update check and install (requires the agent to be online).`}
+            >
+              Update agent
+            </Header>
+          }
+        >
+          <SpaceBetween size="l">
+            <KeyValuePairs
+              columns={1}
+              items={[
+                { label: "Installed version", value: agentVersion ?? "—" },
+                { label: "Latest available", value: latestAgentVersion ?? "—" },
+                {
+                  label: "Status",
+                  value: isOutOfDate ? "Out of date" : "Up to date (or unknown)",
+                },
+              ]}
+            />
+
+            {updNowErr && (
+              <Alert type="error" dismissible onDismiss={() => setUpdNowErr(null)}>
+                {updNowErr}
+              </Alert>
+            )}
+            {updNowOk && (
+              <Alert type="success" dismissible onDismiss={() => setUpdNowOk(null)}>
+                {updNowOk}
+              </Alert>
+            )}
+
+            <Button
+              variant={isOutOfDate ? "primary" : "normal"}
+              disabled={!agentOnline || updNow}
+              loading={updNow}
+              onClick={triggerUpdateNow}
+            >
+              Update now
+            </Button>
+            {!agentOnline && (
+              <Box fontSize="body-s" color="text-body-secondary">
+                Agent is offline. Connect the agent to trigger updates.
+              </Box>
+            )}
           </SpaceBetween>
         </Container>
       )}

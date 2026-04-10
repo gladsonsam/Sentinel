@@ -304,6 +304,12 @@ export const api = {
   ): Promise<{ global: { enabled: boolean }; override: { enabled: boolean } | null }> =>
     delJson(`/agents/${id}/auto-update`),
 
+  agentUpdateNow: (id: string): Promise<{ ok: boolean }> =>
+    postEmpty(`/agents/${id}/update-now`),
+
+  settingsVersionGet: (): Promise<{ server_version: string; latest_agent_version: string | null }> =>
+    get("/settings/version"),
+
   storageUsage: (): Promise<StorageUsage> => get("/settings/storage"),
 
   capabilities: (): Promise<{ remote_script: boolean }> =>

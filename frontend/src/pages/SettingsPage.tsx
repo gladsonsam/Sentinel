@@ -37,19 +37,21 @@ export function SettingsPage({ themeMode, onThemeChange, onBack }: SettingsPageP
   const [settings] = useState<ServerSettings>(getServerSettings);
   const [retention, setRetention] = useState({ keylog_days: 30, window_days: 30, url_days: 30 });
   const [storage, setStorage] = useState<{ database_bytes: number; tables: { name: string; bytes: number }[] } | null>(null);
+  const [versions, setVersions] = useState<{ server_version: string; latest_agent_version: string | null } | null>(null);
   const [loadingMeta, setLoadingMeta] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const loadMeta = async () => {
     try {
       setLoadingMeta(true);
-      const [r, s] = await Promise.all([api.retentionGlobalGet(), api.storageUsage()]);
+      const [r, s, v] = await Promise.all([api.retentionGlobalGet(), api.storageUsage(), api.settingsVersionGet()]);
       setRetention({
         keylog_days: r.keylog_days ?? 30,
         window_days: r.window_days ?? 30,
         url_days: r.url_days ?? 30,
       });
       setStorage(s);
+      setVersions(v);
     } finally {
       setLoadingMeta(false);
     }
@@ -196,6 +198,19 @@ export function SettingsPage({ themeMode, onThemeChange, onBack }: SettingsPageP
           ) : (
             <Box color="text-body-secondary">No storage data yet.</Box>
           )}
+        </Container>
+
+        <Container header="About">
+          <ColumnLayout columns={2} variant="text-grid">
+            <Box>
+              <Box variant="awsui-key-label">Server version</Box>
+              <div>{versions?.server_version ?? "—"}</div>
+            </Box>
+            <Box>
+              <Box variant="awsui-key-label">Latest agent version</Box>
+              <div>{versions?.latest_agent_version ?? "—"}</div>
+            </Box>
+          </ColumnLayout>
         </Container>
 
       </SpaceBetween>

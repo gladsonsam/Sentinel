@@ -850,6 +850,10 @@ fn handle_server_command(
                 }
             }
         }
+        "update_now" => {
+            // Best-effort: if UI/Tauri is running, trigger an immediate updater check.
+            crate::ui::trigger_update_now();
+        }
         "start_capture" => {
             if capture_stop.is_none() {
                 let stop = Arc::new(AtomicBool::new(false));

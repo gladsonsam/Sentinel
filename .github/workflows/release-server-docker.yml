@@ -16,6 +16,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Stamp server version from git tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          ver="${tag#v}"
+          if ! echo "$ver" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-.+][0-9A-Za-z.-]+)*$'; then
+            echo "Tag '$tag' is not a SemVer tag like v1.2.3" >&2
+            exit 1
+          fi
+          # Replace server package version only (keep other workspace members unchanged)
+          perl -0777 -pe 's/\[package\](.*?)\nversion\s*=\s*\"[^\"]+\"/\[package\]$1\nversion = \"'"$ver"'\"/s' \
+            -i server/Cargo.toml
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 

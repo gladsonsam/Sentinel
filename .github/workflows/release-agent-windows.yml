@@ -40,6 +40,29 @@ jobs:
         working-directory: agent/ui-src
         run: npm install --no-audit --no-fund
 
+      - name: Stamp versions from git tag
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "${{ github.ref_name }}"
+          $ver = $tag.TrimStart("v")
+          if (-not ($ver -match "^\d+\.\d+\.\d+(-[0-9A-Za-z\.-]+)?(\+[0-9A-Za-z\.-]+)?$")) {
+            throw "Tag '$tag' is not a SemVer tag like v1.2.3"
+          }
+
+          # agent/Cargo.toml
+          $cargoToml = "agent/Cargo.toml"
+          $cargo = Get-Content $cargoToml -Raw
+          $cargo2 = [regex]::Replace($cargo, '^(version\s*=\s*")[^"]+(")', "`${1}$ver`${2}", "Multiline")
+          if ($cargo2 -eq $cargo) { throw "Failed to update version in $cargoToml" }
+          Set-Content -Path $cargoToml -Value $cargo2 -Encoding utf8 -NoNewline
+
+          # agent/tauri.conf.json
+          $tauriConf = "agent/tauri.conf.json"
+          $json = Get-Content $tauriConf -Raw | ConvertFrom-Json
+          $json.version = $ver
+          ($json | ConvertTo-Json -Depth 64) | Set-Content -Path $tauriConf -Encoding utf8
+
       - name: Build + publish MSI to GitHub Release
         uses: tauri-apps/tauri-action@v0
         env:

@@ -371,7 +371,14 @@ export function AgentDetailPage({
           />
         );
       case "settings":
-        return <AgentSettingsTab agentId={agent.id} agentName={agent.name} />;
+        return (
+          <AgentSettingsTab
+            agentId={agent.id}
+            agentName={agent.name}
+            agentOnline={agent.online}
+            agentVersion={resolvedInfo?.agent_version ?? null}
+          />
+        );
       default:
         return null;
     }

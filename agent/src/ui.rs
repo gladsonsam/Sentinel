@@ -24,6 +24,7 @@
 //! | `exit_agent`         | never                    | Kill the process                     |
 
 use std::sync::{Arc, Mutex};
+use std::sync::OnceLock;
 
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -31,6 +32,8 @@ use tauri_plugin_updater::UpdaterExt;
 use tracing::{error, info};
 
 use crate::config::{AgentStatus, Config};
+
+static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
 // ─── Shared state wrappers ─────────────────────────────────────────────────────
 
@@ -138,6 +141,11 @@ fn get_status(status: State<SharedStatus>) -> StatusResponse {
 }
 
 #[tauri::command]
+fn get_app_version(app: AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
+#[tauri::command]
 fn has_ui_password(stored: State<StoredConfig>) -> bool {
     let cfg = stored.0.lock().unwrap();
     let empty_hash = crate::config::hash_password("");
@@ -203,6 +211,7 @@ pub fn run_tauri(
             get_config,
             save_config,
             get_status,
+            get_app_version,
             has_ui_password,
             verify_ui_password,
             hide_window,
@@ -210,6 +219,8 @@ pub fn run_tauri(
         ])
         // ── Setup ────────────────────────────────────────────────────────────
         .setup(move |app| {
+            let _ = APP_HANDLE.set(app.handle().clone());
+
             // Check for updates in the background (if enabled).
             //
             // If an update is found, we download + install it (Windows will exit
@@ -381,6 +392,39 @@ pub fn run_tauri(
     app.run(|_app_handle, event| {
         if let tauri::RunEvent::ExitRequested { api, .. } = event {
             api.prevent_exit();
+        }
+    });
+}
+
+pub fn trigger_update_now() {
+    let Some(handle) = APP_HANDLE.get().cloned() else {
+        // Headless mode (no UI / no Tauri event loop).
+        return;
+    };
+    tauri::async_runtime::spawn(async move {
+        let result: Result<(), String> = async {
+            let update = handle
+                .updater_builder()
+                .build()
+                .map_err(|e| e.to_string())?
+                .check()
+                .await
+                .map_err(|e| e.to_string())?;
+
+            let Some(update) = update else {
+                return Ok(());
+            };
+            info!("Update-now: installing {}", update.version);
+            update
+                .download_and_install(|_downloaded, _content_length| {}, || {})
+                .await
+                .map_err(|e| format!("{e:?}"))?;
+            Ok(())
+        }
+        .await;
+
+        if let Err(e) = result {
+            error!("Update-now failed: {e}");
         }
     });
 }

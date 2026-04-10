@@ -4,9 +4,8 @@ FROM node:20-alpine AS frontend
 WORKDIR /frontend
 
 # Install deps first for better layer caching.
-COPY frontend/package.json ./
-# Note: no lockfile is committed yet, so we can't use `npm ci` here.
-RUN npm install --no-audit --no-fund
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci --no-audit --no-fund
 
 # Build the app.
 COPY frontend/ ./
@@ -26,14 +25,13 @@ COPY server/Cargo.toml server/Cargo.toml
 
 RUN mkdir -p server/src \
  && echo 'fn main(){}' > server/src/main.rs \
- && cargo build --release --package sentinel-server \
+ && cargo build --release --locked --package sentinel-server \
     2>/dev/null || true \
  && rm -rf server/src
 
-# Real build – touch sources so Cargo rebuilds after the stub.
+# Real build.
 COPY server/ server/
-RUN find server/src -name '*.rs' -exec touch {} + \
- && cargo build --release --package sentinel-server
+RUN cargo build --release --locked --package sentinel-server
 
 # ── Stage 3: Runtime ──────────────────────────────────────────────────────────
 FROM debian:bookworm-slim
