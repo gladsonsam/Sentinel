@@ -23,11 +23,9 @@ WORKDIR /workspace
 COPY Cargo.toml Cargo.lock ./
 COPY server/Cargo.toml server/Cargo.toml
 
-RUN mkdir -p server/src \
- && echo 'fn main(){}' > server/src/main.rs \
- && cargo build --release --locked --package sentinel-server \
-    2>/dev/null || true \
- && rm -rf server/src
+# Pre-fetch dependencies for better caching.
+# This avoids accidentally producing a "dummy" sentinel-server binary during cache warming.
+RUN cargo fetch --locked
 
 # Real build.
 COPY server/ server/
