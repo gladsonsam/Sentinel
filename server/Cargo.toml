@@ -62,3 +62,6 @@ sha2 = "0.10"
 
 # ── Alert rules (URL / keystroke pattern matching) ───────────────────────────
 regex = "1"
+
+# ── External notification providers (Home Assistant, etc.) ─────────────────
+async-trait = "0.1"

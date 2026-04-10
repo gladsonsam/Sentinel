@@ -10,6 +10,7 @@ use regex::RegexBuilder;
 use uuid::Uuid;
 
 use crate::db::{self, AlertRuleRow};
+use crate::notify::AlertMatchPayload;
 use crate::state::AppState;
 
 fn haystack_for_channel(channel: &str, payload: &serde_json::Value) -> String {
@@ -124,6 +125,8 @@ pub async fn on_url_or_keys_event(
                 capture_and_store_screenshot_for_event(&state2, agent_id, event_id).await;
             });
         }
+        let now = chrono::Utc::now();
+        let ts = now.timestamp();
         state.broadcast(
             serde_json::json!({
                 "event": "alert_rule_match",
@@ -133,10 +136,34 @@ pub async fn on_url_or_keys_event(
                 "agent_id": agent_id,
                 "agent_name": agent_name,
                 "snippet": snippet,
-                "ts": chrono::Utc::now().timestamp(),
+                "ts": ts,
             })
             .to_string(),
         );
+
+        let (dashboard_url, dashboard_activity_url) = match state.public_base_url.as_deref() {
+            None => (None, None),
+            Some(base) => {
+                let agent_url = format!("{base}/agents/{agent_id}");
+                let at_iso = now.to_rfc3339();
+                let at = urlencoding::encode(at_iso.as_str());
+                let activity_url = format!("{agent_url}?tab=activity&at={at}");
+                (Some(agent_url), Some(activity_url))
+            }
+        };
+
+        state.notify_hub.dispatch_alert_match(AlertMatchPayload {
+            event_id,
+            rule_id: rule.id,
+            rule_name: rule.name.clone(),
+            channel: channel.to_string(),
+            agent_id,
+            agent_name: agent_name.to_string(),
+            snippet: snippet.clone(),
+            ts,
+            dashboard_url,
+            dashboard_activity_url,
+        });
     }
 }
 

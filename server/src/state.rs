@@ -17,6 +17,23 @@ pub struct AgentConn {
     pub connected_at: DateTime<Utc>,
 }
 
+/// Latest foreground / URL / activity as reported by the agent over WebSocket (for integration API).
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct AgentLiveSnapshot {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_title: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub window_app: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub activity: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idle_secs: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
 /// A message fanned-out to every active dashboard viewer.
 #[derive(Clone, Debug)]
 pub enum Broadcast {
@@ -53,6 +70,19 @@ pub struct AppState {
 
     /// Idempotency for `POST .../software/collect`: (agent_id, key) → last use time.
     pub software_collect_dedup: Mutex<HashMap<(Uuid, String), Instant>>,
+
+    /// External notification providers (Home Assistant, future: Slack, ntfy, …).
+    pub notify_hub: crate::notify::NotifyHub,
+
+    /// Last-known live telemetry per connected agent (window, URL, AFK). Cleared on disconnect.
+    pub agent_live: Mutex<HashMap<Uuid, AgentLiveSnapshot>>,
+
+    /// When set, `GET /api/integration/agents/live` accepts `Authorization: Bearer <token>`.
+    pub integration_api_token: Option<String>,
+
+    /// Public base URL for deep links in external notifications (e.g. Home Assistant).
+    /// Example: `https://sentinel.example.com`
+    pub public_base_url: Option<String>,
 }
 
 /// Cached JPEG with a monotonic `seq` for MJPEG change detection.
@@ -71,6 +101,9 @@ impl AppState {
         wol_min_interval: Duration,
         allow_remote_script: bool,
         metrics: Option<Arc<crate::metrics::AppMetrics>>,
+        notify_hub: crate::notify::NotifyHub,
+        integration_api_token: Option<String>,
+        public_base_url: Option<String>,
     ) -> Self {
         let (tx, _) = broadcast::channel(4096);
         Self {
@@ -91,7 +124,59 @@ impl AppState {
             alert_match_cooldowns: Mutex::new(HashMap::new()),
             metrics,
             software_collect_dedup: Mutex::new(HashMap::new()),
+            notify_hub,
+            agent_live: Mutex::new(HashMap::new()),
+            integration_api_token,
+            public_base_url,
         }
+    }
+
+    /// Merge WebSocket telemetry into the live snapshot for integration consumers (Home Assistant, etc.).
+    pub fn update_agent_live_from_event(
+        &self,
+        agent_id: Uuid,
+        kind: &str,
+        val: &serde_json::Value,
+    ) {
+        let mut map = self.agent_live.lock().unwrap();
+        let snap = map.entry(agent_id).or_default();
+        let now = Utc::now();
+        match kind {
+            "window_focus" => {
+                if let Some(t) = val["title"].as_str() {
+                    snap.window_title = Some(t.to_string());
+                }
+                if let Some(a) = val["app"].as_str() {
+                    snap.window_app = Some(a.to_string());
+                }
+                snap.updated_at = Some(now);
+            }
+            "url" => {
+                if let Some(u) = val["url"].as_str() {
+                    snap.url = Some(u.to_string());
+                }
+                snap.updated_at = Some(now);
+            }
+            "afk" => {
+                let idle = val["idle_secs"]
+                    .as_i64()
+                    .or_else(|| val["idle_secs"].as_u64().map(|u| u as i64))
+                    .unwrap_or(0);
+                snap.activity = Some("afk".into());
+                snap.idle_secs = Some(idle.max(0));
+                snap.updated_at = Some(now);
+            }
+            "active" => {
+                snap.activity = Some("active".into());
+                snap.idle_secs = Some(0);
+                snap.updated_at = Some(now);
+            }
+            _ => {}
+        }
+    }
+
+    pub fn clear_agent_live(&self, agent_id: Uuid) {
+        self.agent_live.lock().unwrap().remove(&agent_id);
     }
 
     /// Returns `Err(retry_after_secs)` when WoL for this agent is throttled.

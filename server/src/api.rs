@@ -74,6 +74,7 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route("/settings/storage", get(storage_usage))
         .route("/settings/capabilities", get(settings_capabilities))
+        .route("/settings/integration", get(settings_integration))
         .route(
             "/agents/:id/local-ui-password",
             get(local_ui_password_agent_get)
@@ -1392,6 +1393,20 @@ async fn local_ui_password_agent_delete(
 async fn settings_capabilities(State(s): State<Arc<AppState>>) -> Response {
     Json(serde_json::json!({
         "remote_script": s.allow_remote_script,
+    }))
+    .into_response()
+}
+
+/// Hints for Home Assistant / other integrations (no secrets).
+async fn settings_integration(
+    State(s): State<Arc<AppState>>,
+    Extension(_user): Extension<auth::AuthUser>,
+) -> Response {
+    Json(serde_json::json!({
+        "enabled": s.integration_api_token.is_some(),
+        "live_path": "/api/integration/agents/live",
+        "auth_header": "Authorization: Bearer <INTEGRATION_API_TOKEN>",
+        "setup": "Optional: set INTEGRATION_API_TOKEN on the server to expose GET /api/integration/agents/live for your own scripts or tools (Bearer token). Home Assistant alert automations use HOME_ASSISTANT_URL + HOME_ASSISTANT_ACCESS_TOKEN and the configured event type instead.",
     }))
     .into_response()
 }

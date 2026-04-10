@@ -8,7 +8,9 @@ mod auth;
 mod config;
 mod db;
 mod error;
+mod integration;
 mod metrics;
+mod notify;
 mod oidc;
 mod oidc_http;
 mod state;
@@ -187,6 +189,28 @@ async fn main() -> anyhow::Result<()> {
         info!("Prometheus metrics enabled at /metrics");
     }
 
+    let notify_hub = notify::NotifyHub::from_env();
+    if !notify_hub.is_empty() {
+        info!(
+            providers = ?notify_hub.provider_ids(),
+            "External notification providers enabled"
+        );
+    }
+
+    let integration_api_token = read_env_or_file("INTEGRATION_API_TOKEN")
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string());
+    if integration_api_token.is_some() {
+        info!("Integration API enabled at GET /api/integration/agents/live (Bearer INTEGRATION_API_TOKEN).");
+    }
+
+    let public_base_url = read_env_or_file("PUBLIC_BASE_URL")
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty());
+    if let Some(ref base) = public_base_url {
+        info!(public_base_url = %base, "Public base URL configured for external deep links");
+    }
+
     let state = Arc::new(state::AppState::new(
         pool,
         allow_insecure_dashboard_open,
@@ -195,6 +219,9 @@ async fn main() -> anyhow::Result<()> {
         wol_min_interval,
         allow_remote_script,
         prom_metrics.clone(),
+        notify_hub,
+        integration_api_token,
+        public_base_url,
     ));
 
     if let Some(ref m) = prom_metrics {
@@ -251,6 +278,13 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/auth/oidc/login", get(auth::oidc_login))
         .route("/api/auth/oidc/callback", get(auth::oidc_callback));
 
+    let integration_routes = Router::new()
+        .route(
+            "/api/integration/agents/live",
+            get(integration::agents_live),
+        )
+        .with_state(state.clone());
+
     let api_inner = if cfg.api_rate_limit_per_second > 0 {
         use tower_governor::governor::GovernorConfigBuilder;
         use tower_governor::key_extractor::SmartIpKeyExtractor;
@@ -288,6 +322,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(health_routes)
         .merge(metrics_routes)
         .merge(auth_routes)
+        .merge(integration_routes)
         .merge(protected)
         .route_service("/agents", ServeFile::new(index_path.clone()))
         .route_service("/agents/*path", ServeFile::new(index_path.clone()))

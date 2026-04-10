@@ -191,6 +191,7 @@ async fn run(mut ws: WebSocket, name: String, state: Arc<AppState>) {
 
     // ── Cleanup ───────────────────────────────────────────────────────────────
     let disconnected_at = chrono::Utc::now();
+    state.clear_agent_live(agent_id);
     state.agents.lock().unwrap().remove(&agent_id);
     state.agent_cmds.lock().unwrap().remove(&agent_id);
     // Clear stale frame so MJPEG stream goes blank rather than serving the
@@ -333,6 +334,10 @@ async fn dispatch_text(text: &str, agent_id: uuid::Uuid, name: &str, state: &Arc
     if let Err(e) = result {
         error!("DB error ({kind} / {agent_id}): {e}");
         return;
+    }
+
+    if matches!(kind, "window_focus" | "url" | "afk" | "active") {
+        state.update_agent_live_from_event(agent_id, kind, &val);
     }
 
     if kind == "keys" || kind == "url" {
