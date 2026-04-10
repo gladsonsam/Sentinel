@@ -50,6 +50,10 @@ jobs:
           projectPath: agent
           tagName: ${{ github.ref_name }}
           releaseName: Sentinel Agent ${{ github.ref_name }}
-          releaseBody: Automated build for ${{ github.ref_name }}.
-          releaseDraft: false
+          releaseBody: |
+            Draft release for ${{ github.ref_name }}.
+
+            - Fill in release notes + announcement
+            - Publish when ready
+          releaseDraft: true
           prerelease: false
