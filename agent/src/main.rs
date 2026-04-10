@@ -57,6 +57,8 @@ mod keyboard_capture;
 mod remote_script;
 #[cfg(target_os = "windows")]
 mod service;
+#[cfg(target_os = "windows")]
+mod updater_client;
 mod software_inventory;
 mod system_info;
 mod toast;
@@ -211,6 +213,17 @@ fn main() {
         info!("Starting in Windows service mode.");
         if let Err(e) = service::run_windows_service() {
             error!("Windows service failed: {e}");
+        }
+        return;
+    }
+
+    #[cfg(target_os = "windows")]
+    if args.iter().any(|a| a == "--updater-service") {
+        let _log_guard = init_logging(Some(program_data_log_path("updater-service.log")));
+        info!("Sentinel agent v{}", env!("CARGO_PKG_VERSION"));
+        info!("Starting in updater service mode.");
+        if let Err(e) = service::run_windows_updater_service() {
+            error!("Updater service failed: {e}");
         }
         return;
     }
@@ -851,8 +864,36 @@ fn handle_server_command(
             }
         }
         "update_now" => {
-            // Best-effort: if UI/Tauri is running, trigger an immediate updater check.
-            crate::ui::trigger_update_now();
+            #[cfg(target_os = "windows")]
+            {
+                let tx = out_tx.clone();
+                tokio::spawn(async move {
+                    match crate::updater_client::update_via_service().await {
+                        Ok(()) => {
+                            // Let the server know we're exiting for update.
+                            let _ = tx
+                                .send(Message::Text(
+                                    serde_json::json!({
+                                        "type": "notify",
+                                        "level": "info",
+                                        "message": "Update downloaded; installing…"
+                                    })
+                                    .to_string(),
+                                ))
+                                .await;
+                            crate::updater_client::exit_for_update();
+                        }
+                        Err(e) => {
+                            warn!("Update-now via service failed: {e:#}");
+                        }
+                    }
+                });
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                // Best-effort: if UI/Tauri is running, trigger an immediate updater check.
+                crate::ui::trigger_update_now();
+            }
         }
         "start_capture" => {
             if capture_stop.is_none() {

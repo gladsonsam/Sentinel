@@ -145,6 +145,43 @@
 
             <Component Id="Path" Guid="{{path_component_guid}}" Win64="$(var.Win64)">
                 <File Id="Path" Name="{{main_binary_name}}.exe" Source="{{main_binary_path}}" KeyPath="yes" Checksum="yes"/>
+                <!-- Machine-wide: launcher service starts the user-mode agent on logon. -->
+                <ServiceInstall
+                    Id="SvcInstallLauncher"
+                    Name="SentinelAgentLauncher"
+                    DisplayName="Sentinel Agent Launcher"
+                    Description="Launches Sentinel Agent in the active user session."
+                    Type="ownProcess"
+                    Start="auto"
+                    ErrorControl="normal"
+                    Account="LocalSystem"
+                    Arguments="--service" />
+                <ServiceControl
+                    Id="SvcControlLauncher"
+                    Name="SentinelAgentLauncher"
+                    Start="install"
+                    Stop="both"
+                    Remove="uninstall"
+                    Wait="yes" />
+
+                <!-- Machine-wide: updater service performs silent MSI installs (no UAC after first install). -->
+                <ServiceInstall
+                    Id="SvcInstallUpdater"
+                    Name="SentinelAgentUpdater"
+                    DisplayName="Sentinel Agent Updater"
+                    Description="Performs silent MSI updates for Sentinel Agent."
+                    Type="ownProcess"
+                    Start="auto"
+                    ErrorControl="normal"
+                    Account="LocalSystem"
+                    Arguments="--updater-service" />
+                <ServiceControl
+                    Id="SvcControlUpdater"
+                    Name="SentinelAgentUpdater"
+                    Start="install"
+                    Stop="both"
+                    Remove="uninstall"
+                    Wait="yes" />
                 {{#each file_associations as |association| ~}}
                 {{#each association.ext as |ext| ~}}
                 <ProgId Id="{{../../product_name}}.{{ext}}" Advertise="yes" Description="{{association.description}}">

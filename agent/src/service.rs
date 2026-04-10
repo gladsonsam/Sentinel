@@ -29,22 +29,39 @@ use windows_service::service::{
 use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
 use windows_service::service_dispatcher;
 
-const SERVICE_NAME: &str = "SentinelAgentLauncher";
+const LAUNCHER_SERVICE_NAME: &str = "SentinelAgentLauncher";
+const UPDATER_SERVICE_NAME: &str = "SentinelAgentUpdater";
 const POLL_INTERVAL: Duration = Duration::from_secs(10);
 
-windows_service::define_windows_service!(ffi_service_main, service_main);
+windows_service::define_windows_service!(ffi_launcher_service_main, launcher_service_main);
+windows_service::define_windows_service!(ffi_updater_service_main, updater_service_main);
 
 pub fn run_windows_service() -> windows_service::Result<()> {
-    service_dispatcher::start(SERVICE_NAME, ffi_service_main)
+    // Back-compat: `--service` runs the launcher service.
+    run_windows_launcher_service()
 }
 
-fn service_main(_arguments: Vec<std::ffi::OsString>) {
-    if let Err(e) = run_service() {
+pub fn run_windows_launcher_service() -> windows_service::Result<()> {
+    service_dispatcher::start(LAUNCHER_SERVICE_NAME, ffi_launcher_service_main)
+}
+
+pub fn run_windows_updater_service() -> windows_service::Result<()> {
+    service_dispatcher::start(UPDATER_SERVICE_NAME, ffi_updater_service_main)
+}
+
+fn launcher_service_main(_arguments: Vec<std::ffi::OsString>) {
+    if let Err(e) = run_launcher_service() {
         error!("Service terminated with error: {e:#}");
     }
 }
 
-fn run_service() -> windows_service::Result<()> {
+fn updater_service_main(_arguments: Vec<std::ffi::OsString>) {
+    if let Err(e) = run_updater_service() {
+        error!("Updater service terminated with error: {e:#}");
+    }
+}
+
+fn run_launcher_service() -> windows_service::Result<()> {
     // Needed on some machines for CreateProcessAsUserW.
     if let Err(e) =
         enable_privileges(&["SeIncreaseQuotaPrivilege", "SeAssignPrimaryTokenPrivilege"])
@@ -54,7 +71,7 @@ fn run_service() -> windows_service::Result<()> {
 
     let (stop_tx, stop_rx) = mpsc::channel::<()>();
     let status_handle =
-        service_control_handler::register(SERVICE_NAME, move |control| match control {
+        service_control_handler::register(LAUNCHER_SERVICE_NAME, move |control| match control {
             ServiceControl::Stop | ServiceControl::Shutdown => {
                 info!("Service stop requested ({:?}).", control);
                 let _ = stop_tx.send(());
@@ -203,6 +220,144 @@ fn launch_user_agent_in_session(session_id: u32) -> Result<()> {
     let _ = unsafe { CloseHandle(impersonation_token) };
 
     create_result.ok().context("CreateProcessAsUserW failed")?;
+    Ok(())
+}
+
+fn run_updater_service() -> windows_service::Result<()> {
+    let (stop_tx, stop_rx) = mpsc::channel::<()>();
+    let status_handle =
+        service_control_handler::register(UPDATER_SERVICE_NAME, move |control| match control {
+            ServiceControl::Stop | ServiceControl::Shutdown => {
+                info!("Updater service stop requested ({:?}).", control);
+                let _ = stop_tx.send(());
+                ServiceControlHandlerResult::NoError
+            }
+            ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
+            _ => ServiceControlHandlerResult::NotImplemented,
+        })?;
+
+    status_handle.set_service_status(ServiceStatus {
+        service_type: ServiceType::OWN_PROCESS,
+        current_state: ServiceState::Running,
+        controls_accepted: ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN,
+        exit_code: ServiceExitCode::Win32(0),
+        checkpoint: 0,
+        wait_hint: Duration::default(),
+        process_id: None,
+    })?;
+
+    info!("Updater service ready (named pipe).");
+
+    // Run a small Tokio runtime for async named-pipe handling.
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| windows_service::Error::Winapi(e.into()))?;
+
+    rt.block_on(async move {
+        use std::os::windows::process::CommandExt;
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::windows::named_pipe::ServerOptions;
+        use windows::Win32::System::Threading::CREATE_NO_WINDOW;
+
+        let stop = stop_rx;
+        loop {
+            match stop.recv_timeout(Duration::from_millis(10)) {
+                Ok(()) => break,
+                Err(mpsc::RecvTimeoutError::Disconnected) => {}
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+            }
+
+            let server = match ServerOptions::new()
+                .first_pipe_instance(true)
+                .create(r"\\.\pipe\SentinelAgentUpdater")
+            {
+                Ok(s) => s,
+                Err(e) => {
+                    warn!("Failed to create named pipe: {e}");
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    continue;
+                }
+            };
+
+            // Wait for a client (with a small timeout so we can react to stop).
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(100)) => {
+                    // no client yet; loop and re-check stop
+                    continue;
+                }
+                res = server.connect() => {
+                    if let Err(e) = res {
+                        warn!("Named pipe connect failed: {e}");
+                        continue;
+                    }
+                }
+            }
+
+            let mut pipe = server;
+            let mut buf = Vec::with_capacity(64 * 1024);
+            if pipe.read_to_end(&mut buf).await.is_err() {
+                continue;
+            }
+            if buf.is_empty() {
+                continue;
+            }
+
+            let resp = match serde_json::from_slice::<serde_json::Value>(&buf) {
+                Ok(v) => {
+                    let action = v.get("action").and_then(|x| x.as_str()).unwrap_or("");
+                    if action != "install_msi" {
+                        serde_json::json!({"ok": false, "error": "unknown action"}).to_string()
+                    } else {
+                        let msi_path = v
+                            .get("msi_path")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        if msi_path.is_empty() {
+                            serde_json::json!({"ok": false, "error": "missing msi_path"}).to_string()
+                        } else {
+                            info!("Updater: installing MSI {}", msi_path);
+                            // Stop user agent process best-effort (so MSI can replace files).
+                            let _ = std::process::Command::new("taskkill")
+                                .creation_flags(CREATE_NO_WINDOW.0)
+                                .args(["/F", "/IM", "Sentinel Agent.exe"])
+                                .status();
+                            let _ = std::process::Command::new("taskkill")
+                                .creation_flags(CREATE_NO_WINDOW.0)
+                                .args(["/F", "/IM", "sentinel-agent.exe"])
+                                .status();
+
+                            let status = std::process::Command::new("msiexec.exe")
+                                .creation_flags(CREATE_NO_WINDOW.0)
+                                .args(["/i", &msi_path, "/qn", "/norestart"])
+                                .status();
+
+                            match status {
+                                Ok(s) if s.success() => serde_json::json!({"ok": true}).to_string(),
+                                Ok(s) => serde_json::json!({"ok": false, "error": format!("msiexec exit={}", s.code().unwrap_or(-1))}).to_string(),
+                                Err(e) => serde_json::json!({"ok": false, "error": format!("msiexec failed: {e}")}).to_string(),
+                            }
+                        }
+                    }
+                }
+                Err(_) => serde_json::json!({"ok": false, "error": "invalid JSON"}).to_string(),
+            };
+
+            let _ = pipe.write_all(resp.as_bytes()).await;
+            let _ = pipe.flush().await;
+        }
+    });
+
+    status_handle.set_service_status(ServiceStatus {
+        service_type: ServiceType::OWN_PROCESS,
+        current_state: ServiceState::Stopped,
+        controls_accepted: ServiceControlAccept::empty(),
+        exit_code: ServiceExitCode::Win32(0),
+        checkpoint: 0,
+        wait_hint: Duration::default(),
+        process_id: None,
+    })?;
     Ok(())
 }
 

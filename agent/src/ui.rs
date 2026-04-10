@@ -28,10 +28,13 @@ use std::sync::OnceLock;
 
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+#[cfg(not(target_os = "windows"))]
 use tauri_plugin_updater::UpdaterExt;
 use tracing::{error, info};
 
 use crate::config::{AgentStatus, Config};
+#[cfg(target_os = "windows")]
+use crate::updater_client;
 
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
@@ -225,7 +228,7 @@ pub fn run_tauri(
             //
             // If an update is found, we download + install it (Windows will exit
             // before running the installer due to platform limitations).
-            let handle_for_updates = app.handle().clone();
+            let _handle_for_updates = app.handle().clone();
             let stored_cfg = app
                 .state::<StoredConfig>()
                 .0
@@ -249,36 +252,43 @@ pub fn run_tauri(
                             continue;
                         }
 
-                    let update = handle_for_updates
-                        .updater_builder()
-                        .build()
-                        .map_err(|e| e.to_string())?
-                        .check()
-                        .await
-                        .map_err(|e| e.to_string())?;
+                    #[cfg(target_os = "windows")]
+                    {
+                        // Machine-wide silent updates are performed by the elevated updater service.
+                        // We download + verify in user mode, then ask the service to install.
+                        if let Err(e) = updater_client::update_via_service().await {
+                            error!("Updater error (service mode): {e:#}");
+                            interval.tick().await;
+                            continue;
+                        }
+                        updater_client::exit_for_update();
+                    }
 
-                    let Some(update) = update else {
-                        interval.tick().await;
-                        continue;
-                    };
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        let update = handle_for_updates
+                            .updater_builder()
+                            .build()
+                            .map_err(|e| e.to_string())?
+                            .check()
+                            .await
+                            .map_err(|e| e.to_string())?;
 
-                    info!(
-                        "Update available: {} ({:?})",
-                        update.version, update.date
-                    );
-                    // Signature verification happens automatically using the configured pubkey.
-                    update
-                        .download_and_install(
-                            |_downloaded, _content_length| {
-                                // Best-effort; could emit to the webview later if desired.
-                            },
-                            || {},
-                        )
-                        .await
-                        .map_err(|e| format!("{e:?}"))?;
-                        // If we got here, Windows update flow likely exited the app; if not,
-                        // avoid hammering by waiting a tick.
+                        let Some(update) = update else {
+                            interval.tick().await;
+                            continue;
+                        };
+
+                        info!(
+                            "Update available: {} ({:?})",
+                            update.version, update.date
+                        );
+                        update
+                            .download_and_install(|_downloaded, _content_length| {}, || {})
+                            .await
+                            .map_err(|e| format!("{e:?}"))?;
                         interval.tick().await;
+                    }
                     }
                 }
                 .await;
@@ -396,6 +406,7 @@ pub fn run_tauri(
     });
 }
 
+#[cfg(not(target_os = "windows"))]
 pub fn trigger_update_now() {
     let Some(handle) = APP_HANDLE.get().cloned() else {
         // Headless mode (no UI / no Tauri event loop).
