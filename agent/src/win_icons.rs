@@ -178,8 +178,57 @@ pub fn icon_png_from_exe_path(exe_path: &str, size_px: u32) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+/// PNG bytes for the Sentinel agent tile (from the bundled `icons/icon.ico`).
+///
+/// Windows often fails to extract an icon from our own EXE via `ExtractIconExW`
+/// even when the installer icon looks fine; the dashboard loads icons from uploaded PNGs.
+#[cfg(target_os = "windows")]
+pub fn sentinel_brand_icon_png() -> Result<Vec<u8>> {
+    use image::codecs::png::PngEncoder;
+    use image::{ColorType, ImageEncoder};
+
+    const ICO_BYTES: &[u8] = include_bytes!("../icons/icon.ico");
+    let img = image::load_from_memory(ICO_BYTES).context("decode embedded icons/icon.ico")?;
+    let rgba = img
+        .resize_exact(64, 64, image::imageops::FilterType::Triangle)
+        .to_rgba8();
+    let mut out = Vec::new();
+    PngEncoder::new(&mut out)
+        .write_image(rgba.as_raw(), rgba.width(), rgba.height(), ColorType::Rgba8.into())
+        .context("encode sentinel brand PNG")?;
+    Ok(out)
+}
+
+#[cfg(target_os = "windows")]
+pub fn is_current_process_exe(image_path: &str) -> bool {
+    let path = image_path.trim();
+    if path.is_empty() {
+        return false;
+    }
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
+    };
+    let Ok(want) = std::fs::canonicalize(path) else {
+        return false;
+    };
+    let Ok(have) = std::fs::canonicalize(exe) else {
+        return false;
+    };
+    want == have
+}
+
 #[cfg(not(target_os = "windows"))]
 pub fn icon_png_from_exe_path(_exe_path: &str, _size_px: u32) -> Result<Vec<u8>> {
     anyhow::bail!("icons are only supported on Windows")
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn sentinel_brand_icon_png() -> Result<Vec<u8>> {
+    anyhow::bail!("icons are only supported on Windows")
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn is_current_process_exe(_image_path: &str) -> bool {
+    false
 }
 

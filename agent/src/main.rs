@@ -593,7 +593,16 @@ async fn run_session(
                     // This keeps the dashboard snappy without requiring extra round trips.
                     let exe_key = event.app.trim().to_lowercase();
                     if !exe_key.is_empty() && !sent_app_icons.contains(&exe_key) && !event.app_path.trim().is_empty() {
-                        if let Ok(png) = win_icons::icon_png_from_exe_path(&event.app_path, 64) {
+                        // `ExtractIconExW` often fails for our own EXE even with a valid installer icon.
+                        // Fall back to the bundled `icons/icon.ico` so Activity shows a tile on the server.
+                        let png = match win_icons::icon_png_from_exe_path(&event.app_path, 64) {
+                            Ok(p) => Ok(p),
+                            Err(_) if win_icons::is_current_process_exe(&event.app_path) => {
+                                win_icons::sentinel_brand_icon_png()
+                            }
+                            Err(e) => Err(e),
+                        };
+                        if let Ok(png) = png {
                             let payload = serde_json::json!({
                                 "type": "app_icon",
                                 "exe_name": exe_key,
@@ -602,11 +611,9 @@ async fn run_session(
                             }).to_string();
                             // Best-effort; ignore failures (icons are optional).
                             let _ = out_tx.send(Message::Text(payload)).await;
-                            sent_app_icons.insert(exe_key.clone());
-                        } else {
-                            // Avoid retrying constantly for executables that can't produce icons.
-                            sent_app_icons.insert(exe_key.clone());
                         }
+                        // Avoid retrying constantly for executables that can't produce icons.
+                        sent_app_icons.insert(exe_key.clone());
                     }
                     let payload = serde_json::json!({
                         "type"  : "window_focus",

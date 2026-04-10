@@ -37,7 +37,7 @@ native-tls        = "0.2"
 xcap = "0.9"
 
 # ── JPEG encoding ─────────────────────────────────────────────────────────────
-image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "ico"] }
 
 # ── Browser URL scraping ──────────────────────────────────────────────────────
 browser-url = "0.1"
