@@ -454,7 +454,7 @@ export function AgentDetailPage({
           onRunAction={runAgentAction}
         />
 
-        <GeneralConfig agent={agent} info={resolvedInfo} onOpenHelp={onOpenHelp} />
+        <GeneralConfig agent={agent} info={resolvedInfo} />
 
         <Tabs
           ariaLabel="Agent views"

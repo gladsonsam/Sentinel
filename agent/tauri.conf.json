@@ -37,11 +37,21 @@
     "icon": [
       "icons/icon.ico"
     ],
+    "createUpdaterArtifacts": true,
     "windows": {
       "wix": {
-        "template": "./wix/templates/main.noshortcuts.wxs",
-        "fragmentPaths": ["./wix/fragments/run-at-logon.wxs"],
-        "componentRefs": ["SentinelRunOnLogon"]
+        "template": "./wix/templates/main.noshortcuts.wxs"
+      }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/gladsonsam/Sentinel/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkwNkVDQzFDMjkzRjVEN0QKUldSOVhUOHBITXh1a003RnZYUUhqNmdsRkZTMktrbnFnZGRMZUFnaGYwNmxqV0tyL2h3bTlCUkYK",
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

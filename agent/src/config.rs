@@ -43,6 +43,13 @@ pub struct Config {
     /// An empty-string hash (`hash_password("")`) means no password required.
     #[serde(default = "empty_password_hash")]
     pub ui_password_hash: String,
+
+    /// Whether the agent should auto-update itself via Tauri updater.
+    ///
+    /// This can be toggled locally in the agent UI and can also be enforced by the server
+    /// via a push command.
+    #[serde(default = "default_auto_update_enabled")]
+    pub auto_update_enabled: bool,
 }
 
 fn default_agent_name() -> String {
@@ -53,6 +60,10 @@ fn empty_password_hash() -> String {
     hash_password("")
 }
 
+fn default_auto_update_enabled() -> bool {
+    true
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -60,6 +71,7 @@ impl Default for Config {
             agent_name: default_agent_name(),
             agent_password: String::new(),
             ui_password_hash: empty_password_hash(),
+            auto_update_enabled: default_auto_update_enabled(),
         }
     }
 }

@@ -12,8 +12,8 @@ pub fn icon_png_from_exe_path(exe_path: &str, size_px: u32) -> Result<Vec<u8>> {
         CreateCompatibleDC, DeleteDC, DeleteObject, GetDIBits, GetObjectW, SelectObject, BITMAP,
         BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP,
     };
+    use windows::Win32::UI::Shell::ExtractIconExW;
     use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, ICONINFO};
-    use windows::Win32::UI::Shell::{ExtractIconExW};
 
     if exe_path.trim().is_empty() {
         anyhow::bail!("empty exe path");
@@ -43,14 +43,20 @@ pub fn icon_png_from_exe_path(exe_path: &str, size_px: u32) -> Result<Vec<u8>> {
     } else {
         // Clean up small if we didn't use it.
         if !small[0].0.is_null() {
-            unsafe { let _ = DestroyIcon(small[0]); }
+            unsafe {
+                let _ = DestroyIcon(small[0]);
+            }
         }
     }
     let hicon = large[0];
 
     // Get HBITMAP (color) for the icon.
     let mut iconinfo = ICONINFO::default();
-    unsafe { GetIconInfo(hicon, &mut iconinfo).ok().context("GetIconInfo failed")? };
+    unsafe {
+        GetIconInfo(hicon, &mut iconinfo)
+            .ok()
+            .context("GetIconInfo failed")?
+    };
     let hbm_color: HBITMAP = iconinfo.hbmColor;
     let hbm_mask: HBITMAP = iconinfo.hbmMask;
 
@@ -162,14 +168,20 @@ pub fn icon_png_from_exe_path(exe_path: &str, size_px: u32) -> Result<Vec<u8>> {
     }
 
     // Optionally downscale to requested size (keeps payload bounded).
-    let (out_w, out_h, out_rgba) = if size_px > 0 && (width as u32 != size_px || height as u32 != size_px) {
-        let img = image::RgbaImage::from_raw(width as u32, height as u32, buf)
-            .context("RgbaImage::from_raw failed")?;
-        let resized = image::imageops::resize(&img, size_px, size_px, image::imageops::FilterType::Triangle);
-        (resized.width(), resized.height(), resized.into_raw())
-    } else {
-        (width as u32, height as u32, buf)
-    };
+    let (out_w, out_h, out_rgba) =
+        if size_px > 0 && (width as u32 != size_px || height as u32 != size_px) {
+            let img = image::RgbaImage::from_raw(width as u32, height as u32, buf)
+                .context("RgbaImage::from_raw failed")?;
+            let resized = image::imageops::resize(
+                &img,
+                size_px,
+                size_px,
+                image::imageops::FilterType::Triangle,
+            );
+            (resized.width(), resized.height(), resized.into_raw())
+        } else {
+            (width as u32, height as u32, buf)
+        };
 
     let mut out = Vec::new();
     let enc = PngEncoder::new(&mut out);
@@ -194,7 +206,12 @@ pub fn sentinel_brand_icon_png() -> Result<Vec<u8>> {
         .to_rgba8();
     let mut out = Vec::new();
     PngEncoder::new(&mut out)
-        .write_image(rgba.as_raw(), rgba.width(), rgba.height(), ColorType::Rgba8.into())
+        .write_image(
+            rgba.as_raw(),
+            rgba.width(),
+            rgba.height(),
+            ColorType::Rgba8.into(),
+        )
         .context("encode sentinel brand PNG")?;
     Ok(out)
 }
@@ -231,4 +248,3 @@ pub fn sentinel_brand_icon_png() -> Result<Vec<u8>> {
 pub fn is_current_process_exe(_image_path: &str) -> bool {
     false
 }
-

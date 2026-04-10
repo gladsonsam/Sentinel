@@ -136,6 +136,18 @@ async fn run(mut ws: WebSocket, name: String, state: Arc<AppState>) {
         }
     }
 
+    // Push auto-update policy so agents can be centrally managed.
+    if let Ok(enabled) = db::effective_agent_auto_update_enabled(&state.db, agent_id).await {
+        let sync = serde_json::json!({
+            "type": "set_auto_update",
+            "enabled": enabled,
+        })
+        .to_string();
+        if let Err(e) = ws.send(Message::Text(sync)).await {
+            warn!("Failed to push auto-update policy to {name}: {e}");
+        }
+    }
+
     loop {
         tokio::select! {
             msg = ws.recv() => {
@@ -224,6 +236,27 @@ pub async fn push_local_ui_password_hash_to_agent(state: &Arc<AppState>, agent_i
     .to_string();
     if let Some(tx) = state.agent_cmds.lock().unwrap().get(&agent_id) {
         let _ = tx.send(payload);
+    }
+}
+
+pub async fn push_auto_update_policy_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
+    let Ok(enabled) = db::effective_agent_auto_update_enabled(&state.db, agent_id).await else {
+        return;
+    };
+    let payload = serde_json::json!({
+        "type": "set_auto_update",
+        "enabled": enabled,
+    })
+    .to_string();
+    if let Some(tx) = state.agent_cmds.lock().unwrap().get(&agent_id) {
+        let _ = tx.send(payload);
+    }
+}
+
+pub async fn push_auto_update_policy_to_all_connected(state: &Arc<AppState>) {
+    let ids: Vec<uuid::Uuid> = state.agents.lock().unwrap().keys().copied().collect();
+    for id in ids {
+        push_auto_update_policy_to_agent(state, id).await;
     }
 }
 

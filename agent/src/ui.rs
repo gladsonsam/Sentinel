@@ -27,6 +27,7 @@ use std::sync::{Arc, Mutex};
 
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_updater::UpdaterExt;
 use tracing::{error, info};
 
 use crate::config::{AgentStatus, Config};
@@ -59,8 +60,14 @@ pub struct SaveConfigPayload {
     pub agent_name: String,
     pub agent_password: String,
     pub ui_password_hash: String,
+    #[serde(default = "default_auto_update_enabled")]
+    pub auto_update_enabled: bool,
     /// Present only when the user is changing the UI password.
     pub new_password: Option<String>,
+}
+
+fn default_auto_update_enabled() -> bool {
+    true
 }
 
 // ─── Tauri commands ────────────────────────────────────────────────────────────
@@ -92,6 +99,7 @@ fn save_config(
         agent_name: config.agent_name.trim().to_string(),
         agent_password: config.agent_password,
         ui_password_hash: ui_hash,
+        auto_update_enabled: config.auto_update_enabled,
     };
 
     crate::config::save_config(&new_cfg).map_err(|e| e.to_string())?;
@@ -185,6 +193,7 @@ pub fn run_tauri(
         }))
         // ── Plugins ─────────────────────────────────────────────────────────
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         // ── Shared state ────────────────────────────────────────────────────
         .manage(SharedConfigTx(config_tx))
         .manage(StoredConfig(shared_cfg))
@@ -201,6 +210,73 @@ pub fn run_tauri(
         ])
         // ── Setup ────────────────────────────────────────────────────────────
         .setup(move |app| {
+            // Check for updates in the background (if enabled).
+            //
+            // If an update is found, we download + install it (Windows will exit
+            // before running the installer due to platform limitations).
+            let handle_for_updates = app.handle().clone();
+            let stored_cfg = app
+                .state::<StoredConfig>()
+                .0
+                .clone();
+            tauri::async_runtime::spawn(async move {
+                // Never crash the agent over updater issues; just log.
+                let result: Result<(), String> = async {
+                    // Re-check periodically so server/local toggles apply without restart.
+                    let mut interval =
+                        tokio::time::interval(std::time::Duration::from_secs(60 * 60 * 6));
+                    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+                    loop {
+                        // Run immediately, then every interval.
+                        let enabled = stored_cfg
+                            .lock()
+                            .map(|c| c.auto_update_enabled)
+                            .unwrap_or(true);
+                        if !enabled {
+                            interval.tick().await;
+                            continue;
+                        }
+
+                    let update = handle_for_updates
+                        .updater_builder()
+                        .build()
+                        .map_err(|e| e.to_string())?
+                        .check()
+                        .await
+                        .map_err(|e| e.to_string())?;
+
+                    let Some(update) = update else {
+                        interval.tick().await;
+                        continue;
+                    };
+
+                    info!(
+                        "Update available: {} ({:?})",
+                        update.version, update.date
+                    );
+                    // Signature verification happens automatically using the configured pubkey.
+                    update
+                        .download_and_install(
+                            |_downloaded, _content_length| {
+                                // Best-effort; could emit to the webview later if desired.
+                            },
+                            || {},
+                        )
+                        .await
+                        .map_err(|e| format!("{e:?}"))?;
+                        // If we got here, Windows update flow likely exited the app; if not,
+                        // avoid hammering by waiting a tick.
+                        interval.tick().await;
+                    }
+                }
+                .await;
+
+                if let Err(e) = result {
+                    error!("Updater error: {e}");
+                }
+            });
+
             let win = app.get_webview_window("main").expect("main window missing");
 
             // Show on first run or explicit flag

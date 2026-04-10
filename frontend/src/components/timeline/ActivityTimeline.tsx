@@ -10,6 +10,7 @@ import {
   Bell,
   ImageIcon,
   Calendar,
+  Lock,
 } from "lucide-react";
 import Container from "@cloudscape-design/components/container";
 import Header from "@cloudscape-design/components/header";
@@ -86,6 +87,11 @@ function sessionMatchesSearch(session: Session, q: string): boolean {
     ...(session.alertEvents ?? []).flatMap((e) => [e.rule_name, e.snippet, e.channel]),
   ];
   return parts.join(" ").toLowerCase().includes(n);
+}
+
+function isLockScreenApp(exeName: string): boolean {
+  const n = (exeName ?? "").trim().toLowerCase();
+  return n === "lockapp" || n === "lockapp.exe";
 }
 
 type DayGroup = {
@@ -362,6 +368,7 @@ function mergeWindowUrlAtSameInstant(rows: MergedActivityRow[]): MergedActivityR
 function buildMergedActivityTimeline(session: Session): MergedActivityRow[] {
   const rows: MergedActivityRow[] = [];
   for (const w of session.windows) {
+    if (!(w.window_title ?? "").trim()) continue;
     const t = timeMsFromUnknown(w.timestamp);
     if (!isNaN(t)) rows.push({ kind: "window", time: t, window: w });
   }
@@ -555,6 +562,7 @@ function SessionItem({
   const alertCount = session.alertEvents?.length ?? 0;
   const canExpand = mergedTimeline.length > 0 || session.hasKeystrokes;
   const isIdle = session.appName === "__idle__";
+  const isLockScreen = !isIdle && isLockScreenApp(session.appName);
 
   const accent = isIdle
     ? "var(--vtl-border)"
@@ -607,7 +615,9 @@ function SessionItem({
 
       {/* Right: card */}
       <div
-        className={`vtl-card${isIdle && !isOpen ? " vtl-card--idle-compact" : ""}`}
+        className={`vtl-card${isIdle ? " vtl-card--idle" : ""}${isIdle && !isOpen ? " vtl-card--idle-compact" : ""}${
+          isLockScreen ? " vtl-card--lockscreen" : ""
+        }`}
         style={highlightStyle}
       >
         <button
@@ -632,6 +642,7 @@ function SessionItem({
                     if (session.appName) onFilterApp(session.appName);
                   }}
                   title="Filter timeline by this app"
+                  className={isLockScreen ? "vtl-app-chip vtl-app-chip--lockscreen" : "vtl-app-chip"}
                   style={{
                     display: "inline-flex",
                     alignItems: "center",
@@ -644,6 +655,7 @@ function SessionItem({
                     cursor: "pointer",
                   }}
                 >
+                  {isLockScreen ? <Lock size={14} /> : null}
                   {session.agentId ? <AppIcon agentId={session.agentId} exeName={session.appName} size={16} /> : null}
                   <span>{session.appDisplayName || session.appName}</span>
                 </button>
@@ -666,7 +678,7 @@ function SessionItem({
             </div>
             {!isIdle && (
               <div style={{ fontSize: "12px", opacity: 0.8 }} className="sentinel-monospace">
-                {session.appName}
+                {isLockScreen ? null : session.appName}
               </div>
             )}
             {!isIdle && session.windowTitle && session.windowTitle !== session.appName && (

@@ -52,6 +52,9 @@ enigo = "0.2"
 # ── Windows API (keyboard capture, window tracker, toast notifications) ─────
 windows = { version = "0.62", features = [
     "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_RemoteDesktop",
+    "Win32_System_Environment",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Shell",
     "Win32_System_Threading",
@@ -94,12 +97,14 @@ ipconfig = "0.3"
 
 # ── Installed software (registry) / temp script files ────────────────────────
 tempfile = "3"
+windows-service = "0.7"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
 tauri = { version = "2", features = [] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
 
 
 # ── Build dependencies ───────────────────────────────────────────────────────

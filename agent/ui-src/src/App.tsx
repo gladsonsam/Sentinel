@@ -39,6 +39,7 @@ interface AgentConfig {
   agent_name: string;
   agent_password: string;
   ui_password_hash: string;
+  auto_update_enabled: boolean;
 }
 
 type ConnectionStatus = "Connected" | "Connecting" | "Disconnected" | "Error";
@@ -208,6 +209,7 @@ function SettingsPanel() {
     agent_name: "",
     agent_password: "",
     ui_password_hash: "",
+    auto_update_enabled: true,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -345,6 +347,23 @@ function SettingsPanel() {
                 onChange={(v) => setConfig((c) => ({ ...c, agent_password: v }))}
                 placeholder="Server auth secret"
               />
+            </FormGroup>
+
+            <FormGroup>
+              <Label htmlFor="auto-update-enabled">Auto updates</Label>
+              <label className="sentinel-agent-toggle">
+                <input
+                  id="auto-update-enabled"
+                  type="checkbox"
+                  checked={config.auto_update_enabled}
+                  onChange={(e) =>
+                    setConfig((c) => ({ ...c, auto_update_enabled: e.target.checked }))
+                  }
+                />
+                <span>
+                  Automatically download and install updates (recommended)
+                </span>
+              </label>
             </FormGroup>
             
             <p className="text-xs text-muted mt-4">

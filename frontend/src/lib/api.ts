@@ -280,6 +280,30 @@ export const api = {
   ): Promise<LocalUiPasswordAgentState> =>
     delJson(`/agents/${id}/local-ui-password`),
 
+  // ── Agent auto-update policy (pushed to Windows agents) ────────────────────
+
+  agentAutoUpdateGlobalGet: (): Promise<{ enabled: boolean }> =>
+    get("/settings/agent-auto-update"),
+
+  agentAutoUpdateGlobalPut: (body: { enabled: boolean }): Promise<{ enabled: boolean }> =>
+    putJson("/settings/agent-auto-update", body),
+
+  agentAutoUpdateAgentGet: (
+    id: string,
+  ): Promise<{ global: { enabled: boolean }; override: { enabled: boolean } | null }> =>
+    get(`/agents/${id}/auto-update`),
+
+  agentAutoUpdateAgentPut: (
+    id: string,
+    body: { enabled: boolean },
+  ): Promise<{ global: { enabled: boolean }; override: { enabled: boolean } | null }> =>
+    putJson(`/agents/${id}/auto-update`, body),
+
+  agentAutoUpdateAgentDelete: (
+    id: string,
+  ): Promise<{ global: { enabled: boolean }; override: { enabled: boolean } | null }> =>
+    delJson(`/agents/${id}/auto-update`),
+
   storageUsage: (): Promise<StorageUsage> => get("/settings/storage"),
 
   capabilities: (): Promise<{ remote_script: boolean }> =>

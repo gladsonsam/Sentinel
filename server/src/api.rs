@@ -72,6 +72,10 @@ pub fn router() -> Router<Arc<AppState>> {
             "/settings/local-ui-password",
             get(local_ui_password_global_get).put(local_ui_password_global_put),
         )
+        .route(
+            "/settings/agent-auto-update",
+            get(agent_auto_update_global_get).put(agent_auto_update_global_put),
+        )
         .route("/settings/storage", get(storage_usage))
         .route("/settings/capabilities", get(settings_capabilities))
         .route("/settings/integration", get(settings_integration))
@@ -80,6 +84,12 @@ pub fn router() -> Router<Arc<AppState>> {
             get(local_ui_password_agent_get)
                 .put(local_ui_password_agent_put)
                 .delete(local_ui_password_agent_delete),
+        )
+        .route(
+            "/agents/:id/auto-update",
+            get(agent_auto_update_agent_get)
+                .put(agent_auto_update_agent_put)
+                .delete(agent_auto_update_agent_delete),
         )
         .route("/agent-groups", get(agent_groups_list_h).post(agent_groups_create_h))
         .route(
@@ -100,6 +110,130 @@ pub fn router() -> Router<Arc<AppState>> {
             "/alert-rules/:rule_id",
             put(alert_rules_update_h).delete(alert_rules_delete_h),
         )
+}
+
+// ─── Agent auto-update policy (Tauri updater) ─────────────────────────────────
+
+async fn agent_auto_update_global_get(State(s): State<Arc<AppState>>) -> Response {
+    match db::get_agent_auto_update_global(&s.db).await {
+        Ok(enabled) => Json(serde_json::json!({ "enabled": enabled })).into_response(),
+        Err(e) => err500(e),
+    }
+}
+
+#[derive(Deserialize)]
+struct AgentAutoUpdateBody {
+    enabled: bool,
+}
+
+async fn agent_auto_update_global_put(
+    State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(body): Json<AgentAutoUpdateBody>,
+) -> Response {
+    if !user.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
+    let ip = audit_ip(&headers, addr);
+    match db::set_agent_auto_update_global(&s.db, body.enabled).await {
+        Ok(()) => {
+            let _ = db::insert_audit_log(
+                &s.db,
+                user.username.as_str(),
+                None,
+                "set_agent_auto_update_global",
+                "ok",
+                &serde_json::json!({ "enabled": body.enabled }),
+                ip.as_deref(),
+            )
+            .await;
+            ws_agent::push_auto_update_policy_to_all_connected(&s).await;
+            agent_auto_update_global_get(State(s.clone())).await
+        }
+        Err(e) => err500(e),
+    }
+}
+
+async fn agent_auto_update_agent_get(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Response {
+    let global = match db::get_agent_auto_update_global(&s.db).await {
+        Ok(v) => v,
+        Err(e) => return err500(e),
+    };
+    let ov = match db::get_agent_auto_update_override(&s.db, id).await {
+        Ok(v) => v,
+        Err(e) => return err500(e),
+    };
+    Json(serde_json::json!({
+        "global": { "enabled": global },
+        "override": match ov {
+            None => serde_json::Value::Null,
+            Some(v) => serde_json::json!({ "enabled": v }),
+        }
+    }))
+    .into_response()
+}
+
+async fn agent_auto_update_agent_put(
+    Path(id): Path<Uuid>,
+    State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(body): Json<AgentAutoUpdateBody>,
+) -> Response {
+    if !user.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
+    let ip = audit_ip(&headers, addr);
+    match db::set_agent_auto_update_override(&s.db, id, body.enabled).await {
+        Ok(()) => {
+            let _ = db::insert_audit_log(
+                &s.db,
+                user.username.as_str(),
+                Some(id),
+                "set_agent_auto_update_override",
+                "ok",
+                &serde_json::json!({ "enabled": body.enabled }),
+                ip.as_deref(),
+            )
+            .await;
+            ws_agent::push_auto_update_policy_to_agent(&s, id).await;
+            agent_auto_update_agent_get(Path(id), State(s.clone())).await
+        }
+        Err(e) => err500(e),
+    }
+}
+
+async fn agent_auto_update_agent_delete(
+    Path(id): Path<Uuid>,
+    State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> Response {
+    if !user.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
+    let ip = audit_ip(&headers, addr);
+    match db::clear_agent_auto_update_override(&s.db, id).await {
+        Ok(()) => {
+            let _ = db::insert_audit_log(
+                &s.db,
+                user.username.as_str(),
+                Some(id),
+                "clear_agent_auto_update_override",
+                "ok",
+                &serde_json::json!({}),
+                ip.as_deref(),
+            )
+            .await;
+            ws_agent::push_auto_update_policy_to_agent(&s, id).await;
+            agent_auto_update_agent_get(Path(id), State(s.clone())).await
+        }
+        Err(e) => err500(e),
+    }
 }
 
 async fn agent_app_icon(

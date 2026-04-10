@@ -57,35 +57,42 @@ export function PageHeader({
       ? Math.max(0, Math.floor((nowMs - liveStatus.idleSinceMs) / 1000))
       : liveStatus?.idleSecs;
 
+  const idleLine = isAfk ? (
+    <ActivityStatus isAfk idleSeconds={effectiveAfkIdleSecs} />
+  ) : showInferredIdle ? (
+    <StatusIndicator type="warning">
+      Idle / Away ({Math.floor((inferredIdleSeconds as number) / 60)}m)
+    </StatusIndicator>
+  ) : null;
+
+  const connectedText = `Connected: ${agent.connected_at ? fmtDateTime(agent.connected_at) : "offline"}`;
+
   return (
     <Header
       variant="h1"
-      description={`Connected: ${agent.connected_at ? fmtDateTime(agent.connected_at) : "offline"}`}
-      actions={
-        <SpaceBetween direction="horizontal" size="xs">
-          {isAfk && <ActivityStatus isAfk idleSeconds={effectiveAfkIdleSecs} />}
-          {showInferredIdle && (
-            <StatusIndicator type="warning">
-              Idle / Away ({Math.floor((inferredIdleSeconds as number) / 60)}m)
-            </StatusIndicator>
-          )}
-          <ButtonDropdown
-            items={[{ id: "help", text: "Open help" }]}
-            onItemClick={() => onOpenHelp()}
-          >
-            Open help
-          </ButtonDropdown>
-          <ButtonDropdown
-            items={[
-              { id: "wake-lan", text: "Wake on LAN" },
-              { id: "request-info", text: "Request fresh system info" },
-              { id: "restart-host", text: "Restart computer" },
-              { id: "shutdown-host", text: "Shutdown computer" },
-            ]}
-            onItemClick={handleItemClick}
-          >
-            Actions
-          </ButtonDropdown>
+      description={
+        <SpaceBetween size="xs">
+          {idleLine}
+          <div>{connectedText}</div>
+          <SpaceBetween direction="horizontal" size="xs">
+            <ButtonDropdown
+              items={[{ id: "help", text: "Open help" }]}
+              onItemClick={() => onOpenHelp()}
+            >
+              Open help
+            </ButtonDropdown>
+            <ButtonDropdown
+              items={[
+                { id: "wake-lan", text: "Wake on LAN" },
+                { id: "request-info", text: "Request fresh system info" },
+                { id: "restart-host", text: "Restart computer" },
+                { id: "shutdown-host", text: "Shutdown computer" },
+              ]}
+              onItemClick={handleItemClick}
+            >
+              Actions
+            </ButtonDropdown>
+          </SpaceBetween>
         </SpaceBetween>
       }
     >

@@ -74,6 +74,14 @@ function normalizeSpace(s: string | undefined | null): string {
   return (s ?? "").replace(/\s+/g, " ").trim();
 }
 
+function isBlankWindowEvent(w: WindowEvent): boolean {
+  return (
+    normalizeSpace(w.exe_name) === "" &&
+    normalizeSpace(w.window_title) === "" &&
+    normalizeSpace(w.app_display) === ""
+  );
+}
+
 function isGenericWindowsOsName(name: string): boolean {
   const n = normalizeSpace(name).toLowerCase();
   return (
@@ -96,6 +104,11 @@ function deriveAppDisplayName(window: WindowEvent): string {
   const title = normalizeSpace(window.window_title);
   const titleTail = lastTitleSegment(title);
   const meta = normalizeSpace(window.app_display);
+
+  // Windows lock screen host process.
+  if (exe === "lockapp" || exe === "lockapp.exe") {
+    return "Lock screen";
+  }
 
   // Microsoft Office: normalize corrupt/concatenated "Microsoft OfficeWINWORD. EXE" style labels
   // and prefer friendly names like "Microsoft Word".
@@ -246,6 +259,7 @@ export function aggregateSessions({
   let currentSession: Session | null = null;
 
   const sortedWindows = [...windows]
+    .filter((w) => !isBlankWindowEvent(w))
     .filter((w) => !isTaskSwitchingNoiseEvent(w))
     .sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()

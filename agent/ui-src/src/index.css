@@ -324,6 +324,20 @@ button {
   color: var(--color-muted);
 }
 
+/* ── Toggle row (checkbox + label) ─────────────────────────────────────────── */
+.sentinel-agent-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  user-select: none;
+  font-size: 0.9rem;
+  color: var(--color-primary);
+}
+
+.sentinel-agent-toggle input[type="checkbox"] {
+  margin-top: 3px;
+}
+
 button.sentinel-agent-section-label {
   margin-bottom: 12px;
   color: var(--color-muted);

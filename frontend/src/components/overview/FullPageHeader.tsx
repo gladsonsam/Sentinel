@@ -53,7 +53,6 @@ export function FullPageHeader({
     <Header
       variant="h1"
       counter={`(${totalAgents})`}
-      description="Monitor connected agents and open a detail view for telemetry, controls, and history."
       actions={
         <SpaceBetween direction="horizontal" size="xs" alignItems="center">
           <Button onClick={onRefresh} iconName="refresh">

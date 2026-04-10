@@ -4,22 +4,19 @@ import ColumnLayout from "@cloudscape-design/components/column-layout";
 import Box from "@cloudscape-design/components/box";
 import type { Agent, AgentInfo } from "../../lib/types";
 import { ConnectionStatus } from "../common/StatusIndicator";
-import { InfoLink } from "../common/InfoLink";
 
 interface GeneralConfigProps {
   agent: Agent;
   info: AgentInfo | null;
-  onOpenHelp: () => void;
 }
 
-export function GeneralConfig({ agent, info, onOpenHelp }: GeneralConfigProps) {
+export function GeneralConfig({ agent, info }: GeneralConfigProps) {
   const agentVersion = info?.agent_version || "—";
   return (
     <Container
       header={
         <Header
           variant="h2"
-          info={<InfoLink onFollow={onOpenHelp} />}
           description="General agent summary and system details."
         >
           General configuration

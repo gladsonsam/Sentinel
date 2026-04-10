@@ -11,6 +11,7 @@ import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
 import Modal from "@cloudscape-design/components/modal";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Spinner from "@cloudscape-design/components/spinner";
+import Toggle from "@cloudscape-design/components/toggle";
 import type { RetentionPolicy } from "../lib/types";
 import { api } from "../lib/api";
 import { AGENT_ICON_DEFS, AGENT_ICON_MAP, type AgentIconKey, isAgentIconKey } from "../lib/agentIcons";
@@ -138,6 +139,12 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
   const [ok, setOk] = useState<string | null>(null);
   const [localUiErr, setLocalUiErr] = useState<string | null>(null);
   const [localUiOk, setLocalUiOk] = useState<string | null>(null);
+  const [autoUpdLoad, setAutoUpdLoad] = useState(true);
+  const [autoUpdSave, setAutoUpdSave] = useState(false);
+  const [autoUpdErr, setAutoUpdErr] = useState<string | null>(null);
+  const [autoUpdOk, setAutoUpdOk] = useState<string | null>(null);
+  const [autoUpdGlobal, setAutoUpdGlobal] = useState<boolean | null>(null);
+  const [autoUpdOverride, setAutoUpdOverride] = useState<{ enabled: boolean } | null>(null);
 
   const parsedKey = useMemo(() => parseRetentionField(agKey), [agKey]);
   const parsedWin = useMemo(() => parseRetentionField(agWin), [agWin]);
@@ -176,8 +183,9 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
       api.retentionAgentGet(agentId),
       api.localUiPasswordAgentGet(agentId),
       api.agentIconGet(agentId),
+      api.agentAutoUpdateAgentGet(agentId),
     ])
-      .then(([{ global, override }, localUi, icon]) => {
+      .then(([{ global, override }, localUi, icon, autoUpd]) => {
         if (cancelled) return;
         setAgGlobal(global);
         const o = override ?? {
@@ -193,6 +201,8 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
         setLocalUiPwd("");
         setLocalUiPwd2("");
         setAgentIcon(isAgentIconKey(icon.icon) ? icon.icon : "monitor");
+        setAutoUpdGlobal(autoUpd.global.enabled);
+        setAutoUpdOverride(autoUpd.override);
       })
       .catch((e) => {
         if (!cancelled) setErr(String(e));
@@ -201,6 +211,7 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
         if (!cancelled) {
           setLoad(false);
           setIconLoad(false);
+          setAutoUpdLoad(false);
         }
       });
     return () => {
@@ -220,20 +231,6 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
       })
       .catch((e) => setIconErr(String(e)))
       .finally(() => setIconSave(false));
-  };
-
-  const resetAgentIcon = () => {
-    setIconErr(null);
-    setIconOk(null);
-    setIconSave(true);
-    api
-      .agentIconPut(agentId, "monitor")
-      .then(() => setIconOk("Reset to default."))
-      .catch((e) => setIconErr(String(e)))
-      .finally(() => {
-        setAgentIcon("monitor");
-        setIconSave(false);
-      });
   };
 
   const saveOverrides = () => {
@@ -341,6 +338,40 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
       .finally(() => setLocalUiSave(false));
   };
 
+  const saveAutoUpdateOverride = (enabled: boolean) => {
+    setAutoUpdErr(null);
+    setAutoUpdOk(null);
+    setAutoUpdSave(true);
+    api
+      .agentAutoUpdateAgentPut(agentId, { enabled })
+      .then((s) => {
+        setAutoUpdGlobal(s.global.enabled);
+        setAutoUpdOverride(s.override);
+        setAutoUpdOk(
+          s.override
+            ? "Saved. This agent will receive the new auto-update setting when connected."
+            : "Saved.",
+        );
+      })
+      .catch((e) => setAutoUpdErr(String(e)))
+      .finally(() => setAutoUpdSave(false));
+  };
+
+  const clearAutoUpdateOverride = () => {
+    setAutoUpdErr(null);
+    setAutoUpdOk(null);
+    setAutoUpdSave(true);
+    api
+      .agentAutoUpdateAgentDelete(agentId)
+      .then((s) => {
+        setAutoUpdGlobal(s.global.enabled);
+        setAutoUpdOverride(s.override);
+        setAutoUpdOk("This computer now follows the global default from Preferences.");
+      })
+      .catch((e) => setAutoUpdErr(String(e)))
+      .finally(() => setAutoUpdSave(false));
+  };
+
   const effectiveItems = agGlobal
     ? [
         {
@@ -399,26 +430,22 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
             constraintText="Pick an icon for this computer. Clear removes it."
           >
             <SpaceBetween direction="horizontal" size="s" alignItems="center">
-              <Box className="sentinel-agent-icon-lg" aria-hidden="true">
-                {agentIcon ? (() => {
-                  const Icon = AGENT_ICON_MAP[agentIcon].Icon;
-                  return <Icon size={28} />;
-                })() : null}
-              </Box>
-              <Button
+              <button
+                type="button"
+                className="sentinel-agent-icon-lg sentinel-agent-icon-lg-clickable"
                 disabled={iconLoad || iconSave}
                 onClick={() => setIconPickerOpen(true)}
+                aria-label="Change agent icon"
               >
-                Choose icon
-              </Button>
+                {agentIcon
+                  ? (() => {
+                      const Icon = AGENT_ICON_MAP[agentIcon].Icon;
+                      return <Icon size={28} />;
+                    })()
+                  : null}
+              </button>
             </SpaceBetween>
           </FormField>
-
-          <SpaceBetween direction="horizontal" size="xs">
-            <Button disabled={iconLoad || iconSave} onClick={resetAgentIcon}>
-              Reset to default
-            </Button>
-          </SpaceBetween>
         </SpaceBetween>
       </Container>
 
@@ -641,6 +668,76 @@ export function AgentSettingsTab({ agentId, agentName }: Props) {
                 Use global default only
               </Button>
             </SpaceBetween>
+          </SpaceBetween>
+        </Container>
+      )}
+
+      {!load && (
+        <Container
+          header={
+            <Header
+              variant="h2"
+              description={`${agentName} — control whether the Windows agent self-updates from GitHub Releases.`}
+            >
+              Agent auto updates
+            </Header>
+          }
+        >
+          <SpaceBetween size="l">
+            <KeyValuePairs
+              columns={1}
+              items={[
+                {
+                  label: "Global default (Preferences)",
+                  value:
+                    autoUpdGlobal == null
+                      ? "—"
+                      : autoUpdGlobal
+                        ? "Enabled"
+                        : "Disabled",
+                },
+                {
+                  label: "This computer",
+                  value:
+                    autoUpdOverride === null
+                      ? "Follows the global default above."
+                      : autoUpdOverride.enabled
+                        ? "Override: enabled"
+                        : "Override: disabled",
+                },
+              ]}
+            />
+
+            {autoUpdErr && (
+              <Alert type="error" dismissible onDismiss={() => setAutoUpdErr(null)}>
+                {autoUpdErr}
+              </Alert>
+            )}
+            {autoUpdOk && (
+              <Alert type="success" dismissible onDismiss={() => setAutoUpdOk(null)}>
+                {autoUpdOk}
+              </Alert>
+            )}
+
+            <FormField
+              label="Override for this computer"
+              description="When enabled, the agent will periodically check for updates and install them."
+            >
+              <Toggle
+                checked={autoUpdOverride?.enabled ?? autoUpdGlobal ?? true}
+                disabled={autoUpdLoad || autoUpdSave}
+                onChange={({ detail }) => saveAutoUpdateOverride(detail.checked)}
+              >
+                Enable auto updates
+              </Toggle>
+            </FormField>
+
+            <Button
+              disabled={autoUpdSave || autoUpdOverride === null}
+              onClick={clearAutoUpdateOverride}
+            >
+              Use global default only
+            </Button>
           </SpaceBetween>
         </Container>
       )}

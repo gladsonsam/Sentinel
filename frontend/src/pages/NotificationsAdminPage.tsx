@@ -210,7 +210,7 @@ function ScreenshotCell({
 export function NotificationsAdminPage() {
   const navigate = useNavigate();
   const isNarrow = useMediaQuery("(max-width: 768px)");
-  const [mainTab, setMainTab] = useState<MainTabId>("groups");
+  const [mainTab, setMainTab] = useState<MainTabId>("rules");
   const [groups, setGroups] = useState<AgentGroup[] | null>(null);
   const [rules, setRules] = useState<AlertRule[] | null>(null);
   const [agentsList, setAgentsList] = useState<Agent[]>([]);
@@ -1040,9 +1040,9 @@ export function NotificationsAdminPage() {
                 label="View"
                 selectedId={mainTab}
                 options={[
-                  { id: "groups", text: "Agent groups" },
                   { id: "rules", text: "Alert rules" },
                   { id: "history", text: "History" },
+                  { id: "groups", text: "Agent groups" },
                 ]}
                 onChange={({ detail }) => setMainTab(detail.selectedId as MainTabId)}
               />
@@ -1057,9 +1057,9 @@ export function NotificationsAdminPage() {
               activeTabId={mainTab}
               onChange={({ detail }) => setMainTab(detail.activeTabId as MainTabId)}
               tabs={[
-                { label: "Agent groups", id: "groups", content: groupsPanel },
                 { label: "Alert rules", id: "rules", content: rulesPanel },
                 { label: "History", id: "history", content: globalHistoryPanel },
+                { label: "Agent groups", id: "groups", content: groupsPanel },
               ]}
             />
           )}

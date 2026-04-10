@@ -236,6 +236,26 @@
   border: 1px solid var(--awsui-color-border-divider-default);
 }
 
+.sentinel-agent-icon-lg-clickable {
+  appearance: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+.sentinel-agent-icon-lg-clickable:hover {
+  border-color: var(--awsui-color-border-item-selected);
+}
+
+.sentinel-agent-icon-lg-clickable:focus-visible {
+  outline: 2px solid var(--sentinel-primary);
+  outline-offset: 2px;
+}
+
+.sentinel-agent-icon-lg-clickable:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
 .sentinel-agent-card-header {
   display: flex;
   align-items: center;
@@ -1111,6 +1131,48 @@
 .vtl-pill-alert {
   background: color-mix(in srgb, var(--awsui-color-text-status-error, #d13212) 14%, transparent);
   color: var(--awsui-color-text-status-error, #ce3311);
+}
+
+.vtl-app-chip {
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    box-shadow 0.12s ease;
+}
+
+.vtl-app-chip:hover {
+  background: color-mix(in srgb, var(--vtl-border) 22%, transparent);
+}
+
+.vtl-app-chip--lockscreen {
+  border-color: color-mix(in srgb, #7c3aed 40%, var(--vtl-border)) !important;
+  background: color-mix(in srgb, #7c3aed 10%, transparent) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, #7c3aed 15%, transparent);
+}
+
+/* Full-card highlights */
+.vtl-card--lockscreen {
+  border-color: color-mix(in srgb, #7c3aed 42%, var(--vtl-border));
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, #7c3aed 9%, transparent),
+      transparent 55%
+    );
+}
+
+.vtl-card--lockscreen .vtl-card-title {
+  color: color-mix(in srgb, #7c3aed 22%, var(--vtl-text));
+}
+
+.vtl-card--idle {
+  border-color: color-mix(in srgb, var(--sentinel-warning) 42%, var(--vtl-border));
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--sentinel-warning) 12%, transparent),
+      transparent 60%
+    );
 }
 
 /* Merged timeline: windows + URLs + alert screenshots in one chronological list */

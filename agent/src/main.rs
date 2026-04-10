@@ -55,6 +55,8 @@ mod config;
 mod input;
 mod keyboard_capture;
 mod remote_script;
+#[cfg(target_os = "windows")]
+mod service;
 mod software_inventory;
 mod system_info;
 mod toast;
@@ -70,6 +72,7 @@ use std::sync::{
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
 use input::InputController;
 use keyboard_capture::InputEvent;
@@ -83,9 +86,93 @@ use tokio_tungstenite::{
 use tracing::{error, info, warn};
 use tracing_subscriber::{fmt, EnvFilter};
 use window_tracker::WindowTracker;
-use base64::Engine;
 
 use config::{AgentStatus, Config};
+
+#[cfg(target_os = "windows")]
+struct HeldHandle(#[allow(dead_code)] windows::Win32::Foundation::HANDLE);
+
+// HANDLE is just a numeric/opaque OS handle. Holding it for process lifetime is safe.
+#[cfg(target_os = "windows")]
+unsafe impl Send for HeldHandle {}
+#[cfg(target_os = "windows")]
+unsafe impl Sync for HeldHandle {}
+
+#[cfg(target_os = "windows")]
+static USER_AGENT_MUTEX: std::sync::OnceLock<HeldHandle> = std::sync::OnceLock::new();
+
+#[cfg(target_os = "windows")]
+fn program_data_log_path(filename: &str) -> std::path::PathBuf {
+    // Prefer a stable, shared location for service logs.
+    // %ProgramData% is writable for LocalSystem and readable by admins.
+    let base = std::env::var_os("ProgramData")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(r"C:\ProgramData"));
+    base.join("Sentinel").join(filename)
+}
+
+fn init_logging(
+    preferred_log_file: Option<std::path::PathBuf>,
+) -> Option<tracing_appender::non_blocking::WorkerGuard> {
+    // In Windows release builds we run with `windows_subsystem = "windows"`,
+    // so there is often no console attached. Write logs to a file by default
+    // so failures are visible.
+    //
+    // Override path by setting `AGENT_LOG_FILE` to an absolute path.
+    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+
+    let mut log_file_path = std::env::var("AGENT_LOG_FILE")
+        .ok()
+        .map(std::path::PathBuf::from)
+        .or(preferred_log_file);
+
+    if log_file_path.is_none() {
+        let mut p = config::config_path();
+        p.pop(); // .../sentinel
+        p.push("agent.log");
+        log_file_path = Some(p);
+    }
+
+    if let Some(path) = log_file_path {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            Ok(file) => {
+                let (writer, guard) = tracing_appender::non_blocking(file);
+                fmt()
+                    .with_env_filter(env_filter)
+                    .with_target(false)
+                    .with_thread_ids(false)
+                    .compact()
+                    .with_writer(writer)
+                    .init();
+                Some(guard)
+            }
+            Err(_) => {
+                fmt()
+                    .with_env_filter(env_filter)
+                    .with_target(false)
+                    .with_thread_ids(false)
+                    .compact()
+                    .init();
+                None
+            }
+        }
+    } else {
+        fmt()
+            .with_env_filter(env_filter)
+            .with_target(false)
+            .with_thread_ids(false)
+            .compact()
+            .init();
+        None
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tunables
@@ -115,72 +202,52 @@ const URL_POLL_INTERVAL_SECS: u64 = 2;
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn main() {
-    // ── Logging ───────────────────────────────────────────────────────────
-    //
-    // In Windows release builds we run with `windows_subsystem = "windows"`,
-    // so there is often no console attached. Write logs to a file under
-    // %LOCALAPPDATA%\sentinel\agent.log by default so failures are visible.
-    //
-    // Override path by setting `AGENT_LOG_FILE` to an absolute path.
-    let env_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let args: Vec<String> = std::env::args().collect();
 
-    let mut log_file_path = std::env::var("AGENT_LOG_FILE")
-        .ok()
-        .map(std::path::PathBuf::from);
-    if log_file_path.is_none() {
-        let mut p = config::config_path();
-        p.pop(); // .../sentinel
-        p.push("agent.log");
-        log_file_path = Some(p);
+    #[cfg(target_os = "windows")]
+    if args.iter().any(|a| a == "--service") {
+        let _log_guard = init_logging(Some(program_data_log_path("service.log")));
+        info!("Sentinel agent v{}", env!("CARGO_PKG_VERSION"));
+        info!("Starting in Windows service mode.");
+        if let Err(e) = service::run_windows_service() {
+            error!("Windows service failed: {e}");
+        }
+        return;
     }
 
-    let _log_guard = if let Some(path) = log_file_path {
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        match std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&path)
-        {
-            Ok(file) => {
-                let (writer, guard) = tracing_appender::non_blocking(file);
-                fmt()
-                    .with_env_filter(env_filter)
-                    .with_target(false)
-                    .with_thread_ids(false)
-                    .compact()
-                    .with_writer(writer)
-                    .init();
-                Some(guard)
-            }
-            Err(_) => {
-                // Last resort (debug builds / console runs)
-                fmt()
-                    .with_env_filter(env_filter)
-                    .with_target(false)
-                    .with_thread_ids(false)
-                    .compact()
-                    .init();
-                None
-            }
-        }
-    } else {
-        fmt()
-            .with_env_filter(env_filter)
-            .with_target(false)
-            .with_thread_ids(false)
-            .compact()
-            .init();
-        None
-    };
-
+    let _log_guard = init_logging(parse_log_file_arg(&args));
     info!("Sentinel agent v{}", env!("CARGO_PKG_VERSION"));
+
+    // Ensure a single user-agent instance (service launcher can otherwise create duplicates).
+    #[cfg(target_os = "windows")]
+    {
+        use windows::core::PCWSTR;
+        use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
+        use windows::Win32::System::Threading::CreateMutexW;
+
+        let name = crate::service::to_wide_z("Global\\SentinelAgentMain");
+        let h: HANDLE = match unsafe { CreateMutexW(None, false, PCWSTR(name.as_ptr())) } {
+            Ok(h) => h,
+            Err(_) => HANDLE::default(),
+        };
+        if h.is_invalid() {
+            warn!("CreateMutexW failed; continuing without single-instance guard.");
+        } else {
+            let err = unsafe { GetLastError() };
+            if err == ERROR_ALREADY_EXISTS {
+                let _ = unsafe { CloseHandle(h) };
+                info!("Another Sentinel agent instance is already running; exiting.");
+                return;
+            }
+            // Keep mutex held for process lifetime.
+            let _ = USER_AGENT_MUTEX.set(HeldHandle(h));
+        }
+    }
 
     // Allow forcing the settings UI to show on startup. This is helpful on
     // Windows where the app has no taskbar entry and is otherwise "invisible"
     // until the global hotkey is pressed.
-    let show_ui_on_startup = std::env::args().any(|a| a == "--show-ui")
+    let show_ui_on_startup = args.iter().any(|a| a == "--show-ui")
         || std::env::var("AGENT_SHOW_UI")
             .map(|v| {
                 matches!(
@@ -192,7 +259,7 @@ fn main() {
 
     // Allow disabling the UI entirely (headless mode). Useful when running the
     // agent as a scheduled task / service where a window surface cannot be created.
-    let no_ui = std::env::args().any(|a| a == "--no-ui")
+    let no_ui = args.iter().any(|a| a == "--no-ui")
         || std::env::var("AGENT_NO_UI")
             .map(|v| {
                 matches!(
@@ -287,6 +354,26 @@ fn main() {
             show_ui_on_startup,
         );
     }
+}
+
+fn parse_log_file_arg(args: &[String]) -> Option<std::path::PathBuf> {
+    // Optional CLI override (used by the Windows launcher service so we can always find logs).
+    if let Some(i) = args.iter().position(|a| a == "--log-file") {
+        if let Some(p) = args.get(i + 1) {
+            let p = p.trim_matches('"').trim();
+            if !p.is_empty() {
+                return Some(std::path::PathBuf::from(p));
+            }
+        }
+        return None;
+    }
+    if let Some(a) = args.iter().find(|a| a.starts_with("--log-file=")) {
+        let p = a.trim_start_matches("--log-file=").trim_matches('"').trim();
+        if !p.is_empty() {
+            return Some(std::path::PathBuf::from(p));
+        }
+    }
+    None
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -743,6 +830,22 @@ fn handle_server_command(
                             info!("Local settings UI password updated from server.");
                         }
                         Err(e) => warn!("Failed to save config (server UI password): {e}"),
+                    }
+                }
+            }
+        }
+        "set_auto_update" => {
+            if let Some(enabled) = val["enabled"].as_bool() {
+                if let Ok(mut c) = shared_cfg.lock() {
+                    c.auto_update_enabled = enabled;
+                    match crate::config::save_config(&*c) {
+                        Ok(()) => {
+                            let new_cfg = c.clone();
+                            drop(c);
+                            let _ = config_tx.send(Some(new_cfg));
+                            info!("Auto-update setting updated from server (enabled={enabled}).");
+                        }
+                        Err(e) => warn!("Failed to save config (server auto_update): {e}"),
                     }
                 }
             }
