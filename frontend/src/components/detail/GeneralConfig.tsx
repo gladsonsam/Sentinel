@@ -104,7 +104,7 @@ export function GeneralConfig({ agent, info }: GeneralConfigProps) {
             <SpaceBetween direction="horizontal" size="xs" alignItems="center">
               <div>{agentVersion}</div>
               {versionsLoad ? (
-                <Spinner size="small" />
+                <Spinner size="normal" />
               ) : isOutOfDate ? (
                 <StatusIndicator type="warning">Update available</StatusIndicator>
               ) : latest ? (
