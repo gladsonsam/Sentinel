@@ -18,6 +18,20 @@ blueprint:
       selector:
         text: {}
 
+    notification_icon:
+      name: Notification icon (optional)
+      description: "MDI icon name (e.g. mdi:alert). Leave blank for default."
+      default: ""
+      selector:
+        text: {}
+
+    notification_color:
+      name: Notification color (optional)
+      description: "Notification color. Mainly used on Android (status bar / icon tint)."
+      default: [255, 0, 0]
+      selector:
+        color_rgb: {}
+
 mode: queued
 
 trigger:
@@ -27,6 +41,8 @@ trigger:
 variables:
   phone_device: !input phone_device
   title_prefix: !input title_prefix
+  notification_icon: !input notification_icon
+  notification_color: !input notification_color
 
   # Companion notify service is derived from the device name.
   notify_service: >-
@@ -36,6 +52,10 @@ variables:
   deep_url: >-
     {{ trigger.event.data.dashboard_activity_url
        | default(trigger.event.data.dashboard_url | default('')) }}
+
+  # Convert [r,g,b] to "#rrggbb"
+  notification_color_hex: >-
+    {{ '#%02x%02x%02x' | format(notification_color[0], notification_color[1], notification_color[2]) }}
 
 action:
   - service: "{{ notify_service }}"
@@ -49,4 +69,7 @@ action:
         # iOS uses `url`; Android uses `clickAction`.
         url: "{{ deep_url }}"
         clickAction: "{{ deep_url }}"
+        # Presentation (mostly mobile-app specific)
+        notification_icon: "{{ notification_icon }}"
+        color: "{{ notification_color_hex }}"
 
