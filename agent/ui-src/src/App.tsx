@@ -317,7 +317,7 @@ function SettingsPanel() {
       </header>
 
       {/* ── Body ── */}
-      <main className="flex-1 p-5 min-h-0 overflow-hidden">
+      <main className="flex-1 p-5 min-h-0 overflow-auto">
 
         {/* ── Connection section ── */}
         <section className="mb-5">

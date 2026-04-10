@@ -72,7 +72,7 @@ body,
 #root {
   margin: 0;
   padding: 0;
-  overflow: hidden;
+  overflow: auto;
   font-family: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
   background: var(--color-bg);
   color: var(--color-primary);
