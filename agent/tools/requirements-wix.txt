@@ -1,0 +1,3 @@
+# Used by tools/gen_wix_assets.py (WiX BMPs + icons/icon.ico from frontend/public/favicon.svg)
+Pillow>=10
+svg.path>=6.3

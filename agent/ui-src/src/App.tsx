@@ -17,7 +17,6 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import {
-  Shield,
   Save,
   X,
   Power,
@@ -51,7 +50,15 @@ interface StatusResponse {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function StatusBadge({ status, message }: { status: ConnectionStatus; message?: string }) {
+function StatusBadge({
+  status,
+  message,
+  className = "",
+}: {
+  status: ConnectionStatus;
+  message?: string;
+  className?: string;
+}) {
   const configs: Record<ConnectionStatus, { color: string; icon: React.ReactNode; label: string }> = {
     Connected: {
       color: "text-ok",
@@ -78,7 +85,7 @@ function StatusBadge({ status, message }: { status: ConnectionStatus; message?: 
   const cfg = configs[status];
 
   return (
-    <div className={`flex items-center gap-1.5 text-xs font-medium ${cfg.color}`}>
+    <div className={`flex items-center gap-1.5 text-xs font-medium ${cfg.color} ${className}`.trim()}>
       {cfg.icon}
       <span className="truncate max-w-[180px]">{cfg.label}</span>
     </div>
@@ -157,46 +164,37 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
   };
 
   return (
-    <div className="flex h-[380px] items-center justify-center bg-bg animate-fade-in">
-      <div
-        className="w-[340px] rounded-2xl border border-border bg-surface shadow-2xl p-8"
-        style={{ boxShadow: "0 25px 60px rgba(0,0,0,0.6)" }}
-      >
-        {/* Icon */}
-        <div className="flex justify-center mb-6">
-          <div className="w-12 h-12 rounded-full bg-accent/10 flex items-center justify-center">
-            <Lock size={22} className="text-accent" />
+    <div className="sentinel-agent-auth-shell animate-fade-in">
+      <div className="sentinel-agent-auth-card">
+        <div className="sentinel-agent-auth-card-content">
+          <div className="sentinel-agent-auth-card-brand">
+            <img src="/favicon.svg" alt="" className="sentinel-agent-auth-logo" />
+            <h1 className="sentinel-agent-auth-title">Sentinel</h1>
+            <p className="sentinel-agent-auth-subtitle">Sign in to continue</p>
           </div>
+
+          <p className="sentinel-agent-auth-hint">Enter the UI access password for this agent.</p>
+
+          <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+            <PasswordInput
+              id="gate-password"
+              value={pw}
+              onChange={setPw}
+              placeholder="Password"
+            />
+
+            {error && (
+              <p className="text-xs text-danger flex items-center gap-1.5">
+                <AlertTriangle size={12} />
+                Wrong password — try again
+              </p>
+            )}
+
+            <button type="submit" disabled={checking || !pw} className="sentinel-btn-primary w-full py-2.5">
+              {checking ? "Checking…" : "Unlock"}
+            </button>
+          </form>
         </div>
-
-        <h1 className="text-lg font-bold text-center text-primary mb-1">Agent Settings</h1>
-        <p className="text-xs text-muted text-center mb-6">Enter UI access password to continue</p>
-
-        <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-          <PasswordInput
-            id="gate-password"
-            value={pw}
-            onChange={setPw}
-            placeholder="Password"
-          />
-
-          {error && (
-            <p className="text-xs text-danger flex items-center gap-1.5">
-              <AlertTriangle size={12} />
-              Wrong password — try again
-            </p>
-          )}
-
-          <button
-            type="submit"
-            disabled={checking || !pw}
-            className="mt-1 w-full py-2 rounded-lg bg-accent text-white text-sm font-semibold
-                       hover:bg-accent/90 disabled:opacity-50 disabled:cursor-not-allowed
-                       transition-colors"
-          >
-            {checking ? "Checking…" : "Unlock"}
-          </button>
-        </form>
       </div>
     </div>
   );
@@ -292,34 +290,31 @@ function SettingsPanel() {
   }
 
   return (
-    <div className="bg-bg flex flex-col animate-fade-in">
-      {/* ── Header ── */}
-      <header className="flex items-center justify-between px-5 h-12 bg-surface border-b border-border flex-shrink-0">
-        <div className="flex items-center gap-2">
-          <Shield size={16} className="text-accent" />
-          <span className="text-[15px] font-semibold tracking-wide text-primary">
-            Sentinel Agent
-          </span>
+    <div className="bg-bg flex flex-col min-h-0 animate-fade-in">
+      <header className="sentinel-agent-topnav">
+        <div className="sentinel-agent-topnav-identity">
+          <img src="/favicon.svg" alt="" width={22} height={22} />
+          <span className="sentinel-agent-topnav-title">Sentinel</span>
+          <span className="sentinel-agent-topnav-tag">Agent</span>
         </div>
-        <StatusBadge status={status.status} message={status.message} />
+        <StatusBadge
+          status={status.status}
+          message={status.message}
+          className="sentinel-agent-nav-status"
+        />
       </header>
 
       {/* ── Body ── */}
-      <main className="flex-1 p-6" style={{ overflow: "hidden" }}>
+      <main className="flex-1 p-5 min-h-0 overflow-hidden">
 
         {/* ── Connection section ── */}
-        <section className="mb-6">
-          <div className="flex items-center gap-2 mb-3">
-            <Settings size={14} className="text-muted" />
-            <h2 className="text-xs uppercase tracking-widest font-bold text-muted">
-              Connection
-            </h2>
-          </div>
+        <section className="mb-5">
+          <h2 className="sentinel-agent-section-label">
+            <Settings size={14} className="opacity-80" aria-hidden />
+            Connection
+          </h2>
 
-          <div
-            className="rounded-xl border border-border bg-surface p-5"
-            style={{ boxShadow: "0 4px 16px rgba(0,0,0,0.4)" }}
-          >
+          <div className="sentinel-agent-panel">
             <FormGroup>
               <Label htmlFor="server-url">Server URL</Label>
               <input
@@ -359,27 +354,23 @@ function SettingsPanel() {
         </section>
 
         {/* ── UI Password section (collapsible) ── */}
-        <section className="mb-6">
+        <section className="mb-5">
           <button
+            type="button"
             onClick={() => setPwOpen((o) => !o)}
-            className="flex items-center gap-2 mb-3 w-full text-left"
+            className="sentinel-agent-section-label mb-3 w-full text-left bg-transparent border-none p-0 cursor-pointer hover:opacity-90"
           >
-            <Lock size={14} className="text-muted" />
-            <h2 className="text-xs uppercase tracking-widest font-bold text-muted flex-1">
-              UI Access Password
-            </h2>
+            <Lock size={14} className="opacity-80" aria-hidden />
+            <span className="flex-1 text-left">UI access password</span>
             {pwOpen ? (
-              <ChevronUp size={14} className="text-muted" />
+              <ChevronUp size={14} className="opacity-70 shrink-0" aria-hidden />
             ) : (
-              <ChevronDown size={14} className="text-muted" />
+              <ChevronDown size={14} className="opacity-70 shrink-0" aria-hidden />
             )}
           </button>
 
           {pwOpen && (
-            <div
-              className="rounded-xl border border-border bg-surface p-5 animate-fade-in"
-              style={{ boxShadow: "0 4px 16px rgba(0,0,0,0.4)" }}
-            >
+            <div className="sentinel-agent-panel animate-fade-in">
               <p className="text-xs text-muted mb-4">
                 Leave blank to keep the current password. Set a password to require it when
                 reopening the settings window via Ctrl+Shift+F12.
@@ -409,14 +400,8 @@ function SettingsPanel() {
         </section>
 
         {/* ── Action buttons ── */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-accent text-white
-                       text-sm font-semibold hover:bg-accent/90 disabled:opacity-50
-                       disabled:cursor-not-allowed transition-colors"
-          >
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={handleSave} disabled={saving} className="sentinel-btn-primary">
             {saving ? (
               <Loader2 size={14} className="animate-spin" />
             ) : (
@@ -425,26 +410,16 @@ function SettingsPanel() {
             Save
           </button>
 
-          <button
-            onClick={handleClose}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-border
-                       bg-surface text-sm font-medium text-primary hover:bg-border/40
-                       transition-colors"
-          >
+          <button type="button" onClick={handleClose} className="sentinel-btn-secondary">
             <X size={14} />
             Close
           </button>
 
-          <div className="flex-1" />
+          <div className="flex-1 min-w-[8px]" />
 
-          <button
-            onClick={handleExit}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-danger/30
-                       bg-danger/10 text-danger text-sm font-medium hover:bg-danger/20
-                       transition-colors"
-          >
+          <button type="button" onClick={handleExit} className="sentinel-btn-danger">
             <Power size={14} />
-            Exit Agent
+            Exit agent
           </button>
         </div>
 
@@ -460,8 +435,8 @@ function SettingsPanel() {
         )}
 
         {/* ── Hotkey hint ── */}
-        <p className="mt-5 text-[11px] text-muted">
-          Reopen anytime: <kbd className="font-mono bg-surface border border-border rounded px-1">Ctrl+Shift+F12</kbd>
+        <p className="mt-4 text-[11px] text-muted">
+          Reopen anytime: <kbd className="sentinel-kbd">Ctrl+Shift+F12</kbd>
         </p>
       </main>
     </div>

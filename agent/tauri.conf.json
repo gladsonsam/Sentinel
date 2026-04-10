@@ -1,5 +1,6 @@
 {
   "productName": "Sentinel Agent",
+  "mainBinaryName": "Sentinel Agent",
   "version": "0.1.0",
   "identifier": "com.sentinel.agent",
   "build": {
@@ -32,6 +33,7 @@
   "bundle": {
     "active": true,
     "targets": ["msi"],
+    "licenseFile": "./wix/assets/license.rtf",
     "icon": [
       "icons/icon.ico"
     ],

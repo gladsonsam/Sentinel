@@ -49,14 +49,21 @@
 
         <Media Id="1" Cabinet="app.cab" EmbedCab="yes" />
 
-        {{#if banner_path}}
-        <WixVariable Id="WixUIBannerBmp" Value="{{banner_path}}" />
-        {{/if}}
+        <!-- Custom modern UI assets.
+             WiX runs from: target\<triple>\<profile>\wix\<arch>\
+             Our repo assets are at: agent\wix\assets\
+             So from the WiX working directory, this is 5 levels up. -->
+        <WixVariable Id="WixUIBannerBmp" Value="..\..\..\..\..\wix\assets\wix-banner.bmp" />
+        <WixVariable Id="WixUIDialogBmp" Value="..\..\..\..\..\wix\assets\wix-dialog.bmp" />
+
         {{#if dialog_image_path}}
         <WixVariable Id="WixUIDialogBmp" Value="{{dialog_image_path}}" />
         {{/if}}
+        <!-- Single WixUILicenseRtf: Tauri sets {{license}} when bundle.licenseFile is set (do not duplicate). -->
         {{#if license}}
         <WixVariable Id="WixUILicenseRtf" Value="{{license}}" />
+        {{else}}
+        <WixVariable Id="WixUILicenseRtf" Value="..\..\..\..\..\wix\assets\license.rtf" />
         {{/if}}
 
         <Icon Id="ProductIcon" SourceFile="{{icon_path}}"/>
@@ -82,16 +89,12 @@
           <RegistrySearch Id="PrevInstallDirWithName" Root="HKCU" Key="Software\\{{manufacturer}}\\{{product_name}}" Name="InstallDir" Type="raw" />
         </Property>
 
-        <!-- launch app checkbox -->
-        <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="!(loc.LaunchApp)" />
-        <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1"/>
+        <!-- Launch on Finish without the optional checkbox (avoids the grey group box). -->
         <CustomAction Id="LaunchApplication" Impersonate="yes" FileKey="Path" ExeCommand="[LAUNCHAPPARGS]" Return="asyncNoWait" />
 
         <UI>
-            <!-- launch app checkbox -->
-            <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication">WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 and NOT Installed</Publish>
-
             <Property Id="WIXUI_INSTALLDIR" Value="INSTALLDIR" />
+            <Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApplication" Order="1">REMOVE &lt;&gt; "ALL"</Publish>
 
             {{#unless license}}
             <!-- Skip license dialog -->
@@ -141,7 +144,7 @@
             </Component>
 
             <Component Id="Path" Guid="{{path_component_guid}}" Win64="$(var.Win64)">
-                <File Id="Path" Source="{{main_binary_path}}" KeyPath="yes" Checksum="yes"/>
+                <File Id="Path" Name="{{main_binary_name}}.exe" Source="{{main_binary_path}}" KeyPath="yes" Checksum="yes"/>
                 {{#each file_associations as |association| ~}}
                 {{#each association.ext as |ext| ~}}
                 <ProgId Id="{{../../product_name}}.{{ext}}" Advertise="yes" Description="{{association.description}}">

@@ -12,7 +12,7 @@
           <RegistryValue
             Type="string"
             Name="SentinelAgent"
-            Value="&quot;[INSTALLDIR]sentinel-agent.exe&quot;"
+            Value="&quot;[INSTALLDIR]{{main_binary_name}}.exe&quot;"
             KeyPath="yes"
           />
         </RegistryKey>
