@@ -1,5 +1,5 @@
 blueprint:
-  name: "Sentinel alert"
+  name: "Sentinel Alert"
   description: "Triggers on sentinel_alert and sends an actionable push to a selected mobile_app device, deep-linking to the agent activity timeline at the event time."
   domain: automation
 
@@ -46,10 +46,7 @@ action:
         {{ trigger.event.data.snippet }}
       data:
         # Tap notification body → open deep link
+        # iOS uses `url`; Android uses `clickAction`.
         url: "{{ deep_url }}"
-        # Action button → open deep link
-        actions:
-          - action: "URI"
-            title: "Open event"
-            uri: "{{ deep_url }}"
+        clickAction: "{{ deep_url }}"
 
