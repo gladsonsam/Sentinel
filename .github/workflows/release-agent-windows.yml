@@ -37,7 +37,8 @@ jobs:
 
       - name: Install UI dependencies
         shell: pwsh
-        run: npm --prefix agent/ui-src install --no-audit --no-fund
+        working-directory: agent/ui-src
+        run: npm install --no-audit --no-fund
 
       - name: Build + publish MSI to GitHub Release
         uses: tauri-apps/tauri-action@v0
