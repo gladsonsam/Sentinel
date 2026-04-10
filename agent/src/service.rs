@@ -269,7 +269,9 @@ fn run_updater_service() -> windows_service::Result<()> {
             }
 
             let server = match ServerOptions::new()
-                .first_pipe_instance(true)
+                // Important: `first_pipe_instance(true)` will fail with "Access is denied"
+                // once a pipe instance already exists. We want a long-running service that
+                // can accept sequential connections, so create normal instances.
                 .create(r"\\.\pipe\SentinelAgentUpdater")
             {
                 Ok(s) => s,
