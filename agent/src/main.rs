@@ -59,6 +59,8 @@ mod remote_script;
 mod service;
 #[cfg(target_os = "windows")]
 mod updater_client;
+#[cfg(target_os = "windows")]
+mod updater_manifest;
 mod software_inventory;
 mod system_info;
 mod toast;
@@ -217,16 +219,6 @@ fn main() {
         return;
     }
 
-    #[cfg(target_os = "windows")]
-    if args.iter().any(|a| a == "--updater-service") {
-        let _log_guard = init_logging(Some(program_data_log_path("updater-service.log")));
-        info!("Sentinel agent v{}", env!("CARGO_PKG_VERSION"));
-        info!("Starting in updater service mode.");
-        if let Err(e) = service::run_windows_updater_service() {
-            error!("Updater service failed: {e}");
-        }
-        return;
-    }
 
     let _log_guard = init_logging(parse_log_file_arg(&args));
     info!("Sentinel agent v{}", env!("CARGO_PKG_VERSION"));
