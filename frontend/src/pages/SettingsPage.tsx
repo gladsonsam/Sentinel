@@ -10,15 +10,25 @@ import Button from "@cloudscape-design/components/button";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
 import Table from "@cloudscape-design/components/table";
 import Box from "@cloudscape-design/components/box";
+import Toggle from "@cloudscape-design/components/toggle";
+import Alert from "@cloudscape-design/components/alert";
 import { api } from "../lib/api";
 import type { ThemeMode } from "../hooks/useTheme";
 import { saveServerSettings, type ServerSettings, getServerSettings } from "../lib/serverSettings";
+import type { DashboardNavUser, StorageUsage } from "../lib/types";
 
 interface SettingsPageProps {
   themeMode: ThemeMode;
   onThemeChange: (mode: ThemeMode) => void;
   onBack?: () => void;
+  currentUser?: DashboardNavUser | null;
 }
+
+const THEME_SELECT_OPTIONS: { label: string; value: ThemeMode }[] = [
+  { label: "System", value: "system" },
+  { label: "Light", value: "light" },
+  { label: "Dark", value: "dark" },
+];
 
 function formatBytesAdaptive(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes < 0) return "—";
@@ -33,32 +43,89 @@ function formatBytesAdaptive(bytes: number): string {
   return `${value.toFixed(2)} ${units[idx]}`;
 }
 
-export function SettingsPage({ themeMode, onThemeChange, onBack }: SettingsPageProps) {
+export function SettingsPage({
+  themeMode,
+  onThemeChange,
+  onBack,
+  currentUser = null,
+}: SettingsPageProps) {
   const [settings] = useState<ServerSettings>(getServerSettings);
-  const [retention, setRetention] = useState({ keylog_days: 30, window_days: 30, url_days: 30 });
-  const [storage, setStorage] = useState<{ database_bytes: number; tables: { name: string; bytes: number }[] } | null>(null);
-  const [versions, setVersions] = useState<Awaited<ReturnType<typeof api.settingsVersionGet>> | null>(null);
+  const [retention, setRetention] = useState({ keylog_days: 0, window_days: 0, url_days: 0 });
+  const [storage, setStorage] = useState<StorageUsage | null>(null);
+  const [githubRelease, setGithubRelease] = useState<{
+    tag: string | null;
+    releasesUrl: string;
+  } | null>(null);
+  const [githubReleaseLoading, setGithubReleaseLoading] = useState(false);
+  const [githubReleaseError, setGithubReleaseError] = useState<string | null>(null);
   const [loadingMeta, setLoadingMeta] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [agentAutoUpdateEnabled, setAgentAutoUpdateEnabled] = useState<boolean | null>(null);
+  const [agentAutoUpdateLoadErr, setAgentAutoUpdateLoadErr] = useState<string | null>(null);
+  const [agentAutoUpdateSaveErr, setAgentAutoUpdateSaveErr] = useState<string | null>(null);
+  const [agentAutoUpdateSaving, setAgentAutoUpdateSaving] = useState(false);
+
+  const isAdmin = currentUser?.role === "admin";
+
+  const loadGithubRelease = async (nocache: boolean) => {
+    setGithubReleaseLoading(true);
+    setGithubReleaseError(null);
+    try {
+      const v = await api.settingsVersionGet({ nocache });
+      setGithubRelease({
+        tag: v.latest_server_release,
+        releasesUrl: v.releases_url,
+      });
+    } catch (e: unknown) {
+      setGithubReleaseError(String((e as { message?: string })?.message || "Failed to load GitHub release"));
+      if (!nocache) setGithubRelease(null);
+    } finally {
+      setGithubReleaseLoading(false);
+    }
+  };
 
   const loadMeta = async () => {
+    setLoadingMeta(true);
     try {
-      setLoadingMeta(true);
-      const [r, s, v] = await Promise.all([api.retentionGlobalGet(), api.storageUsage(), api.settingsVersionGet()]);
+      const [r, s] = await Promise.all([api.retentionGlobalGet(), api.storageUsage()]);
       setRetention({
-        keylog_days: r.keylog_days ?? 30,
-        window_days: r.window_days ?? 30,
-        url_days: r.url_days ?? 30,
+        keylog_days: r.keylog_days ?? 0,
+        window_days: r.window_days ?? 0,
+        url_days: r.url_days ?? 0,
       });
       setStorage(s);
-      setVersions(v);
+    } catch {
+      /* retention/storage optional for About; agent policy loads below */
+    }
+    try {
+      const au = await api.agentAutoUpdateGlobalGet();
+      setAgentAutoUpdateEnabled(au.enabled);
+      setAgentAutoUpdateLoadErr(null);
+    } catch {
+      setAgentAutoUpdateEnabled(null);
+      setAgentAutoUpdateLoadErr("Could not load the global agent auto-update policy.");
     } finally {
       setLoadingMeta(false);
     }
   };
 
+  const saveGlobalAutoUpdate = async (enabled: boolean) => {
+    if (!isAdmin) return;
+    setAgentAutoUpdateSaving(true);
+    setAgentAutoUpdateSaveErr(null);
+    try {
+      const res = await api.agentAutoUpdateGlobalPut({ enabled });
+      setAgentAutoUpdateEnabled(res.enabled);
+    } catch (e) {
+      setAgentAutoUpdateSaveErr(String(e));
+    } finally {
+      setAgentAutoUpdateSaving(false);
+    }
+  };
+
   useEffect(() => {
-    loadMeta();
+    void loadMeta();
+    void loadGithubRelease(false);
   }, []);
 
   const save = async () => {
@@ -66,9 +133,9 @@ export function SettingsPage({ themeMode, onThemeChange, onBack }: SettingsPageP
     try {
       saveServerSettings(settings);
       await api.retentionGlobalPut({
-        keylog_days: retention.keylog_days,
-        window_days: retention.window_days,
-        url_days: retention.url_days,
+        keylog_days: retention.keylog_days === 0 ? null : retention.keylog_days,
+        window_days: retention.window_days === 0 ? null : retention.window_days,
+        url_days: retention.url_days === 0 ? null : retention.url_days,
       });
       await loadMeta();
     } finally {
@@ -105,16 +172,15 @@ export function SettingsPage({ themeMode, onThemeChange, onBack }: SettingsPageP
               description="Applied immediately and persisted in browser storage."
             >
               <Select
-                selectedOption={{ label: themeMode, value: themeMode }}
+                selectedOption={
+                  THEME_SELECT_OPTIONS.find((o) => o.value === themeMode) ??
+                  THEME_SELECT_OPTIONS[0]
+                }
                 onChange={({ detail }) => {
                   const val = detail.selectedOption.value as ThemeMode | undefined;
                   if (val) onThemeChange(val);
                 }}
-                options={[
-                  { label: "System", value: "system" },
-                  { label: "Light", value: "light" },
-                  { label: "Dark", value: "dark" },
-                ]}
+                options={THEME_SELECT_OPTIONS}
               />
             </FormField>
 
@@ -124,50 +190,58 @@ export function SettingsPage({ themeMode, onThemeChange, onBack }: SettingsPageP
 
         <Container header="Data retention">
           <SpaceBetween size="s">
-            <FormField label="Keystrokes retention (days)">
+            <Box fontSize="body-s" color="text-body-secondary">
+              Set to <Box variant="code">0</Box> for unlimited retention (no automatic prune) for that category. Values 1–36500
+              delete raw rows older than that many days. Top URL/window aggregates are kept separately.
+            </Box>
+            <FormField label="Keystrokes retention (days)" description="0 = keep all keystroke sessions.">
               <Input
                 type="number"
+                inputMode="numeric"
                 value={String(retention.keylog_days)}
                 onChange={({ detail }) =>
                   setRetention((prev) => ({
                     ...prev,
-                    keylog_days: Number(detail.value || "30"),
+                    keylog_days: Math.max(0, Math.min(36500, Number(detail.value) || 0)),
                   }))
                 }
               />
             </FormField>
-            <FormField label="Windows/activity retention (days)">
+            <FormField label="Windows/activity retention (days)" description="0 = keep all window and AFK/active events.">
               <Input
                 type="number"
+                inputMode="numeric"
                 value={String(retention.window_days)}
                 onChange={({ detail }) =>
                   setRetention((prev) => ({
                     ...prev,
-                    window_days: Number(detail.value || "30"),
+                    window_days: Math.max(0, Math.min(36500, Number(detail.value) || 0)),
                   }))
                 }
               />
             </FormField>
-            <FormField label="URLs retention (days)">
+            <FormField label="URLs retention (days)" description="0 = keep all URL visit rows.">
               <Input
                 type="number"
+                inputMode="numeric"
                 value={String(retention.url_days)}
                 onChange={({ detail }) =>
                   setRetention((prev) => ({
                     ...prev,
-                    url_days: Number(detail.value || "30"),
+                    url_days: Math.max(0, Math.min(36500, Number(detail.value) || 0)),
                   }))
                 }
               />
             </FormField>
-            <Box fontSize="body-s" color="text-body-secondary">
-              Raw telemetry older than this is pruned. Top URL/window aggregates remain available.
-            </Box>
           </SpaceBetween>
         </Container>
 
         <Container
-          header="Storage usage"
+          header={
+            <Header variant="h2" description="Total size is PostgreSQL pg_database_size (entire DB on disk). The table lists every heap, partitioned parent, and materialized view in the public schema with indexes and TOAST included per relation.">
+              Storage usage
+            </Header>
+          }
           footer={
             <Button iconName="refresh" onClick={loadMeta} loading={loadingMeta}>
               Refresh usage
@@ -176,21 +250,29 @@ export function SettingsPage({ themeMode, onThemeChange, onBack }: SettingsPageP
         >
           {storage ? (
             <SpaceBetween size="m">
-              <ColumnLayout columns={2}>
+              <ColumnLayout columns={3} variant="text-grid">
                 <Box>
-                  <Box variant="awsui-key-label">Database total</Box>
+                  <Box variant="awsui-key-label">Total database size</Box>
                   <div>{formatBytesAdaptive(storage.database_bytes)}</div>
                 </Box>
                 <Box>
-                  <Box variant="awsui-key-label">Tracked tables</Box>
-                  <div>{storage.tables.length}</div>
+                  <Box variant="awsui-key-label">Public schema (sum of below)</Box>
+                  <div>{formatBytesAdaptive(storage.public_tables_bytes)}</div>
+                </Box>
+                <Box>
+                  <Box variant="awsui-key-label">System catalogs &amp; internal</Box>
+                  <div>{formatBytesAdaptive(storage.other_bytes)}</div>
                 </Box>
               </ColumnLayout>
+              <Box fontSize="body-s" color="text-body-secondary">
+                {storage.tables.length} relation{storage.tables.length === 1 ? "" : "s"} in <Box variant="code">public</Box>{" "}
+                (partition children are rolled into their parent&apos;s size).
+              </Box>
               <Table
                 items={storage.tables}
                 columnDefinitions={[
-                  { id: "name", header: "Table", cell: (item) => item.name },
-                  { id: "bytes", header: "Size", cell: (item) => formatBytesAdaptive(item.bytes) },
+                  { id: "name", header: "Relation", cell: (item) => item.name },
+                  { id: "bytes", header: "Size (with indexes)", cell: (item) => formatBytesAdaptive(item.bytes) },
                 ]}
                 variant="embedded"
               />
@@ -200,33 +282,68 @@ export function SettingsPage({ themeMode, onThemeChange, onBack }: SettingsPageP
           )}
         </Container>
 
-        <Container header="About">
-          <ColumnLayout columns={2} variant="text-grid">
-            <Box>
-              <Box variant="awsui-key-label">Server version</Box>
-              <div>{versions?.server_version ?? "—"}</div>
-            </Box>
+        <Container
+          header={
+            <Header variant="h2" description="Tag from the latest GitHub release (same source as server Docker images).">
+              About
+            </Header>
+          }
+          footer={
+            <Button
+              iconName="refresh"
+              loading={githubReleaseLoading}
+              onClick={() => void loadGithubRelease(true)}
+            >
+              Check GitHub now
+            </Button>
+          }
+        >
+          <SpaceBetween size="m">
+            {githubReleaseError ? (
+              <Box color="text-status-error">{githubReleaseError}</Box>
+            ) : null}
+            {agentAutoUpdateSaveErr ? (
+              <Alert type="error" dismissible onDismiss={() => setAgentAutoUpdateSaveErr(null)}>
+                {agentAutoUpdateSaveErr}
+              </Alert>
+            ) : null}
+            {agentAutoUpdateLoadErr ? (
+              <Alert type="error">{agentAutoUpdateLoadErr}</Alert>
+            ) : agentAutoUpdateEnabled === null && loadingMeta ? (
+              <Box color="text-body-secondary">Loading agent auto-update policy…</Box>
+            ) : (
+              <FormField
+                label="Agent auto updates (global default)"
+                description={
+                  isAdmin
+                    ? "When enabled, the server tells connected Windows agents they may check GitHub releases and install updates (policy is pushed over the WebSocket). Operators can still set a per-computer override on each agent’s Settings tab."
+                    : "Current default policy for Windows agents. Only administrators can change it."
+                }
+                constraintText={!isAdmin ? "Administrator role required to edit." : undefined}
+              >
+                <Toggle
+                  checked={agentAutoUpdateEnabled ?? false}
+                  disabled={
+                    agentAutoUpdateEnabled === null || !isAdmin || agentAutoUpdateSaving || loadingMeta
+                  }
+                  onChange={({ detail }) => void saveGlobalAutoUpdate(detail.checked)}
+                >
+                  Enable agent auto updates by default
+                </Toggle>
+              </FormField>
+            )}
             <Box>
               <Box variant="awsui-key-label">Latest GitHub release</Box>
-              <div>
-                {versions?.latest_server_release ?? "—"}
-                {versions?.releases_url ? (
-                  <Box fontSize="body-s" margin={{ top: "xs" }} color="text-body-secondary">
-                    <a href={versions.releases_url} target="_blank" rel="noopener noreferrer">
-                      Releases &amp; Docker (ghcr.io/gladsonsam/sentinel/server)
-                    </a>
-                    {versions.server_update_available ? (
-                      <span> — newer than this server</span>
-                    ) : null}
-                  </Box>
-                ) : null}
-              </div>
+              <div>{githubReleaseLoading && githubRelease == null ? "…" : githubRelease?.tag ?? "—"}</div>
+              {githubRelease?.releasesUrl ? (
+                <Box fontSize="body-s" margin={{ top: "xs" }} color="text-body-secondary">
+                  <a href={githubRelease.releasesUrl} target="_blank" rel="noopener noreferrer">
+                    Open releases on GitHub
+                  </a>
+                </Box>
+              ) : null}
             </Box>
-            <Box>
-              <Box variant="awsui-key-label">Latest agent version</Box>
-              <div>{versions?.latest_agent_version ?? "—"}</div>
-            </Box>
-          </ColumnLayout>
+          </SpaceBetween>
         </Container>
 
       </SpaceBetween>

@@ -94,7 +94,6 @@ export function AuthenticatedAgentDetail({
       onOpenActivityLog={onOpenActivityLog}
       onOpenUsers={onOpenUsers}
       onOpenNotifications={onOpenNotifications}
-      onOpenAgentGroups={onOpenAgentGroups}
       onGoHome={onGoHome}
       onBackToOverview={onBackToOverview}
       contentType="default"

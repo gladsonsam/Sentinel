@@ -9,7 +9,6 @@ interface Props {
   onShowPreferences: () => void;
   onOpenUsers: () => void;
   onOpenNotifications?: () => void;
-  onOpenAgentGroups?: () => void;
   onGoHome: () => void;
   currentUser?: DashboardNavUser | null;
   notifications: NotificationItem[];
@@ -24,7 +23,6 @@ export function AuthenticatedLogs({
   onShowPreferences,
   onOpenUsers,
   onOpenNotifications,
-  onOpenAgentGroups,
   onGoHome,
   currentUser = null,
   notifications,
@@ -39,7 +37,6 @@ export function AuthenticatedLogs({
       onShowPreferences={onShowPreferences}
       onOpenUsers={onOpenUsers}
       onOpenNotifications={onOpenNotifications}
-      onOpenAgentGroups={onOpenAgentGroups}
       onGoHome={onGoHome}
       onBackToOverview={onBack}
       contentType="default"

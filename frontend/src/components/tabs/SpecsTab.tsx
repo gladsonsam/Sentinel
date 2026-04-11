@@ -30,14 +30,11 @@ function partitionIpAddresses(ips: string[]): { v4: string[]; v6: string[] } {
 
 function CopyableAddressList({ ips }: { ips: string[] }) {
   return (
-    <>
+    <SpaceBetween size="xxs" direction="vertical">
       {ips.map((ip, idx) => (
-        <span key={`${ip}-${idx}`}>
-          {idx > 0 ? ", " : null}
-          <CopyableInline text={ip.trim()} />
-        </span>
+        <CopyableInline key={`${ip}-${idx}`} text={ip.trim()} />
       ))}
-    </>
+    </SpaceBetween>
   );
 }
 

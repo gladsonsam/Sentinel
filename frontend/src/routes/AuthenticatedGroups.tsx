@@ -17,7 +17,7 @@ interface Props {
   onToolsChange: (open: boolean) => void;
 }
 
-export function AuthenticatedNotifications({
+export function AuthenticatedGroups({
   onLogout,
   onShowPreferences,
   onOpenActivityLog,
@@ -32,7 +32,7 @@ export function AuthenticatedNotifications({
 }: Props) {
   return (
     <DashboardLayout
-      content={<NotificationsAdminPage mode="alerts" />}
+      content={<NotificationsAdminPage mode="groups" />}
       onLogout={onLogout}
       onShowPreferences={onShowPreferences}
       onOpenActivityLog={onOpenActivityLog}

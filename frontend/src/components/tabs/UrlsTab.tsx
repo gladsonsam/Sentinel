@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Table from "@cloudscape-design/components/table";
 import Box from "@cloudscape-design/components/box";
 import Header from "@cloudscape-design/components/header";
@@ -25,6 +25,39 @@ interface TopUrlRow {
 
 interface UrlsTabProps {
   agentId: string;
+}
+
+function normalizeHref(value: string | undefined): string {
+  const raw = (value || "").trim();
+  if (!raw) return "#";
+  if (/^https?:\/\//i.test(raw)) return raw;
+  return `https://${raw}`;
+}
+
+function hostnameFromUrl(url: string): string {
+  const raw = url.trim();
+  if (!raw) return "";
+  try {
+    const href = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
+    return new URL(href).hostname;
+  } catch {
+    return raw.split(/[/:?#]/)[0] || raw;
+  }
+}
+
+/** Distinct hostnames in server top-URL order, up to `max` entries. */
+function topHostnamesFromRows(rows: TopUrlRow[], max: number): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const row of rows) {
+    const host = hostnameFromUrl(row.url);
+    const key = host.toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(host);
+    if (out.length >= max) break;
+  }
+  return out;
 }
 
 export function UrlsTab({ agentId }: UrlsTabProps) {
@@ -101,6 +134,13 @@ export function UrlsTab({ agentId }: UrlsTabProps) {
     }
   );
 
+  const headerDescription = useMemo(() => {
+    const hosts = topHostnamesFromRows(topItems, 6);
+    return hosts.length > 0
+      ? `Top hostnames retained long-term: ${hosts.join(" • ")}`
+      : "Top URL aggregates are retained after raw URL retention expiry.";
+  }, [topItems]);
+
   return (
     <Table
       {...collectionProps}
@@ -143,11 +183,7 @@ export function UrlsTab({ agentId }: UrlsTabProps) {
               Refresh
             </Button>
           }
-          description={
-            topItems.length > 0
-              ? `Top URLs retained long-term: ${topItems.slice(0, 3).map((t) => t.url).join(" • ")}`
-              : "Top URL aggregates are retained after raw URL retention expiry."
-          }
+          description={headerDescription}
         >
           URL History
         </Header>
@@ -169,9 +205,3 @@ export function UrlsTab({ agentId }: UrlsTabProps) {
     />
   );
 }
-  const normalizeHref = (value: string | undefined): string => {
-    const raw = (value || "").trim();
-    if (!raw) return "#";
-    if (/^https?:\/\//i.test(raw)) return raw;
-    return `https://${raw}`;
-  };

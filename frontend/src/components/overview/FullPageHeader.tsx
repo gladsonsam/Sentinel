@@ -21,6 +21,8 @@ interface FullPageHeaderProps {
   onShutdownSelected: () => void;
   /** Admin: add all selected agents to an agent group (opens group picker from overview). */
   onBulkAddToGroup?: () => void;
+  /** Admin: open the agent groups page. */
+  onOpenAgentGroups?: () => void;
 }
 
 export function FullPageHeader({
@@ -32,6 +34,7 @@ export function FullPageHeader({
   onRestartSelected,
   onShutdownSelected,
   onBulkAddToGroup,
+  onOpenAgentGroups,
 }: FullPageHeaderProps) {
   const bulkItems: ButtonDropdownProps.ItemOrGroup[] =
     onBulkAddToGroup != null
@@ -72,6 +75,11 @@ export function FullPageHeader({
           <Button onClick={onRefresh} iconName="refresh">
             Refresh
           </Button>
+          {onOpenAgentGroups != null ? (
+            <Button onClick={onOpenAgentGroups} iconName="folder">
+              Agent groups
+            </Button>
+          ) : null}
           {selectedCount > 0 && (
             <ButtonDropdown
               items={bulkItems}

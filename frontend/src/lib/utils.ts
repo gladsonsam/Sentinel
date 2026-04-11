@@ -82,9 +82,12 @@ export function formatWindowsInstallDate(s: string | null | undefined): string {
   return t;
 }
 
-/** Lexicographic sort key for `install_date` (unknown / invalid → last when ascending). */
+/** Sentinel sort key for missing/invalid install dates (see `compareInstallDateSortKeys` for ordering). */
+export const INSTALL_DATE_SORT_MISSING = "99999999";
+
+/** Lexicographic sort key for `install_date` (unknown / invalid → `INSTALL_DATE_SORT_MISSING`). */
 export function installDateSortKey(s: string | null | undefined): string {
-  const missing = "99999999";
+  const missing = INSTALL_DATE_SORT_MISSING;
   if (s == null) return missing;
   const t = String(s).trim();
   if (!t) return missing;
@@ -103,6 +106,20 @@ export function installDateSortKey(s: string | null | undefined): string {
     }
   }
   return missing;
+}
+
+/**
+ * Sort by `installDateSortKey` values: rows without a date stay last in both directions.
+ * `descending` true = newest (largest YYYYMMDD) first.
+ */
+export function compareInstallDateSortKeys(aKey: string, bKey: string, descending: boolean): number {
+  const am = aKey === INSTALL_DATE_SORT_MISSING;
+  const bm = bKey === INSTALL_DATE_SORT_MISSING;
+  if (am && bm) return 0;
+  if (am) return 1;
+  if (bm) return -1;
+  const c = aKey.localeCompare(bKey);
+  return descending ? -c : c;
 }
 
 /** Truncate a string to `maxLen` characters, appending '…' if truncated. */

@@ -1,4 +1,7 @@
 import type { CSSProperties } from "react";
+import * as LucideIcons from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import { isUserPhotoDataUrl, parseUserLucideIcon } from "../../lib/userAvatar";
 
 function initialsFromUsername(name: string): string {
   const cleaned = name.trim();
@@ -26,7 +29,7 @@ export interface DashboardUserAvatarProps {
   style?: CSSProperties;
 }
 
-/** Circle avatar: optional emoji/symbol, otherwise colored initials. */
+/** Circle avatar: optional Lucide icon key, photo data URL, or short legacy glyph; otherwise colored initials. */
 export function DashboardUserAvatar({
   username,
   displayIcon,
@@ -34,12 +37,61 @@ export function DashboardUserAvatar({
   className,
   style,
 }: DashboardUserAvatarProps) {
-  const icon = displayIcon?.trim();
+  const raw = displayIcon?.trim() ?? "";
   const hue = hashHue(username || "user");
   const bg = `hsl(${hue} 42% 36%)`;
   const fg = "hsl(0 0% 98%)";
 
-  if (icon) {
+  if (isUserPhotoDataUrl(raw)) {
+    return (
+      <img
+        className={`sentinel-user-avatar sentinel-user-avatar--photo ${className ?? ""}`}
+        src={raw}
+        alt=""
+        width={size}
+        height={size}
+        style={{
+          width: size,
+          height: size,
+          objectFit: "cover",
+          borderRadius: "50%",
+          flexShrink: 0,
+          ...style,
+        }}
+        title={username}
+      />
+    );
+  }
+
+  const lucideName = parseUserLucideIcon(raw);
+  if (lucideName) {
+    const Cmp = (LucideIcons as unknown as Record<string, LucideIcon>)[lucideName];
+    if (Cmp) {
+      return (
+        <span
+          className={`sentinel-user-avatar sentinel-user-avatar--lucide ${className ?? ""}`}
+          style={{
+            width: size,
+            height: size,
+            background: bg,
+            color: fg,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            borderRadius: "50%",
+            flexShrink: 0,
+            ...style,
+          }}
+          title={username}
+          aria-hidden
+        >
+          <Cmp size={Math.max(14, size * 0.52)} strokeWidth={2} color={fg} />
+        </span>
+      );
+    }
+  }
+
+  if (raw.length > 0) {
     return (
       <span
         className={`sentinel-user-avatar sentinel-user-avatar--glyph ${className ?? ""}`}
@@ -52,7 +104,7 @@ export function DashboardUserAvatar({
         title={username}
         aria-hidden
       >
-        {icon}
+        {raw}
       </span>
     );
   }

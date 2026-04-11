@@ -33,8 +33,7 @@ interface Props {
   onOpenAgentGroups?: () => void;
 }
 
-const OVERRIDE_DEFAULT_DAYS = 30;
-const PRESET_DAYS = [7, 30, 90, 365] as const;
+const PRESET_DAYS = [0, 7, 30, 90, 365] as const;
 
 function RetentionOverrideField({
   title,
@@ -90,7 +89,7 @@ function RetentionOverrideField({
               disabled={formDisabled}
               onClick={() => onChange(String(d))}
             >
-              {d} days
+              {d === 0 ? "Unlimited" : `${d} days`}
             </Button>
           ))}
         </SpaceBetween>
@@ -111,7 +110,7 @@ function RetentionOverrideField({
           value={value}
           disabled={formDisabled || !overrideEnabled}
           onChange={({ detail }) => onChange(detail.value)}
-          placeholder="Inherit from Preferences"
+          placeholder="0 = unlimited, blank = inherit"
         />
       </FormField>
     </SpaceBetween>
@@ -234,9 +233,9 @@ export function AgentSettingsTab({
       .finally(() => setGrpBusy(false));
   };
 
-  const parsedKey = useMemo(() => parseRetentionField(agKey), [agKey]);
-  const parsedWin = useMemo(() => parseRetentionField(agWin), [agWin]);
-  const parsedUrl = useMemo(() => parseRetentionField(agUrl), [agUrl]);
+  const parsedKey = useMemo(() => parseRetentionField(agKey, "agent"), [agKey]);
+  const parsedWin = useMemo(() => parseRetentionField(agWin, "agent"), [agWin]);
+  const parsedUrl = useMemo(() => parseRetentionField(agUrl, "agent"), [agUrl]);
   const hasRetentionErrors =
     !!parsedKey.error || !!parsedWin.error || !!parsedUrl.error;
 
@@ -246,15 +245,15 @@ export function AgentSettingsTab({
 
   const enableKeyOverride = () => {
     if (keyOverrideEnabled) return;
-    setAgKey(String(agGlobal?.keylog_days ?? OVERRIDE_DEFAULT_DAYS));
+    setAgKey(String(agGlobal?.keylog_days ?? 0));
   };
   const enableWinOverride = () => {
     if (winOverrideEnabled) return;
-    setAgWin(String(agGlobal?.window_days ?? OVERRIDE_DEFAULT_DAYS));
+    setAgWin(String(agGlobal?.window_days ?? 0));
   };
   const enableUrlOverride = () => {
     if (urlOverrideEnabled) return;
-    setAgUrl(String(agGlobal?.url_days ?? OVERRIDE_DEFAULT_DAYS));
+    setAgUrl(String(agGlobal?.url_days ?? 0));
   };
 
   useEffect(() => {
@@ -282,9 +281,9 @@ export function AgentSettingsTab({
           window_days: null,
           url_days: null,
         };
-        setAgKey(daysToField(o.keylog_days));
-        setAgWin(daysToField(o.window_days));
-        setAgUrl(daysToField(o.url_days));
+        setAgKey(daysToField(o.keylog_days, "agent"));
+        setAgWin(daysToField(o.window_days, "agent"));
+        setAgUrl(daysToField(o.url_days, "agent"));
         setLocalUiGlobalSet(localUi.global.password_set);
         setLocalUiOverride(localUi.override);
         setLocalUiPwd("");
@@ -329,9 +328,9 @@ export function AgentSettingsTab({
     let body: RetentionPolicy;
     try {
       body = {
-        keylog_days: fieldToDays(agKey),
-        window_days: fieldToDays(agWin),
-        url_days: fieldToDays(agUrl),
+        keylog_days: fieldToDays(agKey, "agent"),
+        window_days: fieldToDays(agWin, "agent"),
+        url_days: fieldToDays(agUrl, "agent"),
       };
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -347,9 +346,9 @@ export function AgentSettingsTab({
           window_days: null,
           url_days: null,
         };
-        setAgKey(daysToField(o.keylog_days));
-        setAgWin(daysToField(o.window_days));
-        setAgUrl(daysToField(o.url_days));
+        setAgKey(daysToField(o.keylog_days, "agent"));
+        setAgWin(daysToField(o.window_days, "agent"));
+        setAgUrl(daysToField(o.url_days, "agent"));
         setOk("Saved.");
       })
       .catch((e) => setErr(String(e)))
@@ -369,9 +368,9 @@ export function AgentSettingsTab({
           window_days: null,
           url_days: null,
         };
-        setAgKey(daysToField(o.keylog_days));
-        setAgWin(daysToField(o.window_days));
-        setAgUrl(daysToField(o.url_days));
+        setAgKey(daysToField(o.keylog_days, "agent"));
+        setAgWin(daysToField(o.window_days, "agent"));
+        setAgUrl(daysToField(o.url_days, "agent"));
         setOk("This computer now follows the defaults from Preferences.");
       })
       .catch((e) => setErr(String(e)))
@@ -537,7 +536,7 @@ export function AgentSettingsTab({
 
           <FormField
             label="Icon"
-            constraintText="Pick an icon for this computer. Clear removes it."
+            constraintText="Pick an icon for this computer."
           >
             <SpaceBetween direction="horizontal" size="s" alignItems="center">
               <button
@@ -782,7 +781,8 @@ export function AgentSettingsTab({
             />
 
             <Box variant="p" color="text-body-secondary">
-              Blank fields with Inherit use the values from Preferences. Save applies all three.
+              Blank with Inherit follows Preferences. <strong>0</strong> means unlimited retention for
+              that stream on this PC. Save applies all three.
             </Box>
 
             <SpaceBetween direction="horizontal" size="xs">
@@ -954,7 +954,7 @@ export function AgentSettingsTab({
               columns={1}
               items={[
                 {
-                  label: "Global default (Preferences)",
+                  label: "Global default (Settings → About)",
                   value:
                     autoUpdGlobal == null
                       ? "—"

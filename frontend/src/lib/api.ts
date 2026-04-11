@@ -312,13 +312,16 @@ export const api = {
   agentUpdateNow: (id: string): Promise<{ ok: boolean }> =>
     postEmpty(`/agents/${id}/update-now`),
 
-  settingsVersionGet: (): Promise<{
+  settingsVersionGet: (opts?: { nocache?: boolean }): Promise<{
     server_version: string;
     latest_server_release: string | null;
     server_update_available: boolean;
     latest_agent_version: string | null;
     releases_url: string;
-  }> => get("/settings/version"),
+  }> => {
+    const qs = opts?.nocache ? "?nocache=true" : "";
+    return get(`/settings/version${qs}`);
+  },
 
   storageUsage: (): Promise<StorageUsage> => get("/settings/storage"),
 
@@ -479,3 +482,5 @@ export const api = {
   },
 };
 
+/** How often the UI should call `settingsVersionGet` (server caches GitHub for a similar window). */
+export const SETTINGS_VERSION_POLL_INTERVAL_MS = 5 * 60 * 1000;

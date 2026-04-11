@@ -48,9 +48,9 @@ export function PreferencesTab({
   const [localUiErr, setLocalUiErr] = useState<string | null>(null);
   const [localUiOk, setLocalUiOk] = useState<string | null>(null);
 
-  const parsedKey = useMemo(() => parseRetentionField(gKey), [gKey]);
-  const parsedWin = useMemo(() => parseRetentionField(gWin), [gWin]);
-  const parsedUrl = useMemo(() => parseRetentionField(gUrl), [gUrl]);
+  const parsedKey = useMemo(() => parseRetentionField(gKey, "global"), [gKey]);
+  const parsedWin = useMemo(() => parseRetentionField(gWin, "global"), [gWin]);
+  const parsedUrl = useMemo(() => parseRetentionField(gUrl, "global"), [gUrl]);
   const hasRetentionErrors = !!parsedKey.error || !!parsedWin.error || !!parsedUrl.error;
 
   useEffect(() => {
@@ -60,9 +60,9 @@ export function PreferencesTab({
     Promise.all([api.retentionGlobalGet(), api.localUiPasswordGlobalGet()])
       .then(([p, ui]) => {
         if (cancelled) return;
-        setGKey(daysToField(p.keylog_days));
-        setGWin(daysToField(p.window_days));
-        setGUrl(daysToField(p.url_days));
+        setGKey(daysToField(p.keylog_days, "global"));
+        setGWin(daysToField(p.window_days, "global"));
+        setGUrl(daysToField(p.url_days, "global"));
         setLocalUiPasswordSet(ui.password_set);
         setLocalUiPwd("");
         setLocalUiPwd2("");
@@ -84,9 +84,9 @@ export function PreferencesTab({
     let body: RetentionPolicy;
     try {
       body = {
-        keylog_days: fieldToDays(gKey),
-        window_days: fieldToDays(gWin),
-        url_days: fieldToDays(gUrl),
+        keylog_days: fieldToDays(gKey, "global"),
+        window_days: fieldToDays(gWin, "global"),
+        url_days: fieldToDays(gUrl, "global"),
       };
     } catch (e) {
       setGErr(e instanceof Error ? e.message : String(e));
@@ -96,9 +96,9 @@ export function PreferencesTab({
     api
       .retentionGlobalPut(body)
       .then((p) => {
-        setGKey(daysToField(p.keylog_days));
-        setGWin(daysToField(p.window_days));
-        setGUrl(daysToField(p.url_days));
+        setGKey(daysToField(p.keylog_days, "global"));
+        setGWin(daysToField(p.window_days, "global"));
+        setGUrl(daysToField(p.url_days, "global"));
         setGOk("Saved.");
       })
       .catch((e) => setGErr(String(e)))
@@ -198,8 +198,8 @@ export function PreferencesTab({
         </h2>
         <p className="text-sm text-muted mb-1">
           How long to keep keylogs, window history, and URLs for <strong>all</strong>{" "}
-          computers by default. Enter a number of days, or leave a box empty to keep
-          that data until you remove it yourself.
+          computers by default. Use <strong>0</strong> or leave a box empty for unlimited
+          retention (no automatic delete).
         </p>
         <p className="text-xs text-muted mb-4">
           Different rules for one machine? Select it in the sidebar and open the{" "}
@@ -211,13 +211,13 @@ export function PreferencesTab({
               <span className="text-sm font-medium text-primary">Keylogs</span>
               <input
                 type="number"
-                min={1}
+                min={0}
                 max={36500}
                 step={1}
                 className={RETENTION_INPUT_CLASS}
                 value={gKey}
                 onChange={(e) => setGKey(e.target.value)}
-                placeholder="Leave blank to keep until removed"
+                placeholder="0 or blank = unlimited"
                 disabled={gSave}
               />
               {parsedKey.error ? (
@@ -237,13 +237,13 @@ export function PreferencesTab({
               </span>
               <input
                 type="number"
-                min={1}
+                min={0}
                 max={36500}
                 step={1}
                 className={RETENTION_INPUT_CLASS}
                 value={gWin}
                 onChange={(e) => setGWin(e.target.value)}
-                placeholder="Leave blank to keep until removed"
+                placeholder="0 or blank = unlimited"
                 disabled={gSave}
               />
               {parsedWin.error ? (
@@ -258,13 +258,13 @@ export function PreferencesTab({
               <span className="text-sm font-medium text-primary">URLs</span>
               <input
                 type="number"
-                min={1}
+                min={0}
                 max={36500}
                 step={1}
                 className={RETENTION_INPUT_CLASS}
                 value={gUrl}
                 onChange={(e) => setGUrl(e.target.value)}
-                placeholder="Leave blank to keep until removed"
+                placeholder="0 or blank = unlimited"
                 disabled={gSave}
               />
               {parsedUrl.error ? (

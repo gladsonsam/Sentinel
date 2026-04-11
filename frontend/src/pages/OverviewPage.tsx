@@ -20,6 +20,8 @@ interface OverviewPageProps {
   onBatchShutdown: (agentIds: string[]) => void;
   /** Admin: show “Add selected to group” in bulk actions. */
   adminBulkGroupAssignment?: boolean;
+  /** Admin: open the dedicated agent groups page. */
+  onOpenAgentGroups?: () => void;
 }
 
 export function OverviewPage({
@@ -35,6 +37,7 @@ export function OverviewPage({
   onBatchRestart,
   onBatchShutdown,
   adminBulkGroupAssignment,
+  onOpenAgentGroups,
 }: OverviewPageProps) {
   const hasAgents = Object.keys(agents).length > 0;
   const [bulkScriptIds, setBulkScriptIds] = useState<string[] | null>(null);
@@ -60,6 +63,7 @@ export function OverviewPage({
           onBulkAddToGroup={
             adminBulkGroupAssignment ? (ids) => setBulkGroupIds(ids) : undefined
           }
+          onOpenAgentGroups={onOpenAgentGroups}
         />
       ) : (
         <NoAgentsState />

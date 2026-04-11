@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ChangeEvent } from "react";
+import * as LucideIcons from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import ContentLayout from "@cloudscape-design/components/content-layout";
 import Header from "@cloudscape-design/components/header";
 import Table from "@cloudscape-design/components/table";
@@ -20,6 +23,11 @@ import { api } from "../lib/api";
 import type { DashboardRole, DashboardSessionUser, DashboardUser } from "../lib/types";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { DashboardUserAvatar } from "../components/common/DashboardUserAvatar";
+import {
+  encodeUserLucideIcon,
+  parseUserLucideIcon,
+  resizeImageFileToJpegDataUrl,
+} from "../lib/userAvatar";
 
 const ROLE_OPTIONS: { label: string; value: DashboardRole; description: string }[] = [
   {
@@ -41,7 +49,130 @@ const ROLE_OPTIONS: { label: string; value: DashboardRole; description: string }
   },
 ];
 
-const PRESET_ICONS = ["😀", "🖥️", "🔒", "🛡️", "⭐", "📊", "👤", "🚀", "💼", "🔧"];
+/** Lucide React export names (PascalCase). Invalid names are skipped at render. */
+const PROFILE_LUCIDE_NAMES = [
+  "User",
+  "UserCircle",
+  "Shield",
+  "Monitor",
+  "Laptop",
+  "Server",
+  "HardDrive",
+  "Briefcase",
+  "Building2",
+  "Wrench",
+  "Rocket",
+  "Star",
+  "Globe",
+  "Lock",
+  "Key",
+  "Eye",
+  "Camera",
+  "Cpu",
+  "Wifi",
+  "Terminal",
+  "Code",
+  "Database",
+  "Fingerprint",
+  "Bell",
+  "Zap",
+];
+
+function UserAvatarFields({
+  username,
+  setUsername,
+  icon,
+  setIcon,
+  idLabel,
+  isNarrow,
+  onImportError,
+}: {
+  username: string;
+  setUsername: (v: string) => void;
+  icon: string;
+  setIcon: (v: string) => void;
+  idLabel: string;
+  isNarrow: boolean;
+  onImportError?: (message: string) => void;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
+
+  const onPhotoChange = async (e: ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f?.type.startsWith("image/")) return;
+    setPhotoBusy(true);
+    try {
+      const dataUrl = await resizeImageFileToJpegDataUrl(f, 128, 0.82);
+      setIcon(dataUrl);
+    } catch (err: unknown) {
+      onImportError?.(String((err as { message?: string })?.message || "Could not import photo"));
+    } finally {
+      setPhotoBusy(false);
+    }
+  };
+
+  const grid = (
+    <div className="sentinel-user-icon-grid">
+      {PROFILE_LUCIDE_NAMES.map((name) => {
+        const Cmp = (LucideIcons as unknown as Record<string, LucideIcon>)[name];
+        if (!Cmp) return null;
+        const encoded = encodeUserLucideIcon(name);
+        const selected = icon === encoded || parseUserLucideIcon(icon) === name;
+        return (
+          <button
+            key={name}
+            type="button"
+            className={`sentinel-user-lucide-pick${selected ? " sentinel-user-lucide-pick--selected" : ""}`}
+            title={name}
+            aria-label={`Use ${name} icon`}
+            aria-pressed={selected}
+            onClick={() => setIcon(encoded)}
+          >
+            <Cmp size={22} strokeWidth={2} />
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  return (
+    <SpaceBetween size="m">
+      <ColumnLayout columns={isNarrow ? 1 : 2}>
+        <FormField label="Sign-in username" description={idLabel}>
+          <Input value={username} onChange={({ detail }) => setUsername(detail.value)} />
+        </FormField>
+        <FormField
+          label="Avatar"
+          description="Choose a Lucide icon or import a photo (JPEG/PNG/WebP/GIF). Cleared avatars use initials."
+        >
+          <SpaceBetween size="m">
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/gif"
+              hidden
+              onChange={(ev) => void onPhotoChange(ev)}
+            />
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button iconName="upload" onClick={() => fileRef.current?.click()} loading={photoBusy}>
+                Import photo
+              </Button>
+              <Button variant="link" onClick={() => setIcon("")}>
+                Clear avatar
+              </Button>
+            </SpaceBetween>
+            <Box variant="awsui-key-label" margin={{ top: "xs" }}>
+              Icon library
+            </Box>
+            {grid}
+          </SpaceBetween>
+        </FormField>
+      </ColumnLayout>
+    </SpaceBetween>
+  );
+}
 
 function roleBadge(role: DashboardRole) {
   const color = role === "admin" ? "red" : role === "operator" ? "blue" : "grey";
@@ -118,7 +249,7 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
   const rowActions = (): ButtonDropdownProps.ItemOrGroup[] => [
     {
       id: "edit_profile",
-      text: "Username & icon",
+      text: "Username & avatar",
     },
     {
       id: "set_role",
@@ -266,52 +397,15 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
     </SpaceBetween>
   );
 
-  const profileFields = (opts: {
-    username: string;
-    setUsername: (v: string) => void;
-    icon: string;
-    setIcon: (v: string) => void;
-    idLabel: string;
-  }) => (
-    <SpaceBetween size="m">
-      <ColumnLayout columns={isNarrow ? 1 : 2}>
-        <FormField label="Sign-in username" description={opts.idLabel}>
-          <Input value={opts.username} onChange={({ detail }) => opts.setUsername(detail.value)} />
-        </FormField>
-        <FormField
-          label="Avatar icon"
-          description="Optional emoji or short symbol (max 32 characters). Leave empty for initials from your username."
-        >
-          <Input value={opts.icon} onChange={({ detail }) => opts.setIcon(detail.value)} placeholder="e.g. 🖥️" />
-        </FormField>
-      </ColumnLayout>
-      <div>
-        <Box variant="awsui-key-label" margin={{ bottom: "xs" }}>
-          Quick picks
-        </Box>
-        <SpaceBetween direction="horizontal" size="xs">
-          {PRESET_ICONS.map((ch) => (
-            <Button key={ch} variant="inline-icon" onClick={() => opts.setIcon(ch)} ariaLabel={`Use ${ch}`}>
-              {ch}
-            </Button>
-          ))}
-          <Button variant="inline-link" onClick={() => opts.setIcon("")}>
-            Clear icon
-          </Button>
-        </SpaceBetween>
-      </div>
-    </SpaceBetween>
-  );
-
   return (
     <ContentLayout
       header={
         <Header
           variant="h1"
-          description="Update your username and avatar. Admins can manage passwords, roles, and OIDC links for the whole team."
+          description="Update your username and avatar. Admins can manage passwords, roles, and OIDC links for everyone."
           actions={isNarrow ? undefined : headerActions}
         >
-          Team &amp; profile
+          Users
         </Header>
       }
     >
@@ -340,7 +434,7 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
           {me ? (
             <Container
               header={
-                <Header variant="h2" description="Shown in the top bar and team list. Changing username affects how you sign in.">
+                <Header variant="h2" description="Shown in the account menu and user list. Changing username affects how you sign in.">
                   Your profile
                 </Header>
               }
@@ -352,13 +446,15 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
                     Signed in as <Box variant="strong">{me.username}</Box> ({me.role})
                   </Box>
                 </div>
-                {profileFields({
-                  username: selfUsername,
-                  setUsername: setSelfUsername,
-                  icon: selfIcon,
-                  setIcon: setSelfIcon,
-                  idLabel: "Must be unique. Use letters, numbers, or common punctuation.",
-                })}
+                <UserAvatarFields
+                  username={selfUsername}
+                  setUsername={setSelfUsername}
+                  icon={selfIcon}
+                  setIcon={setSelfIcon}
+                  idLabel="Must be unique. Use letters, numbers, or common punctuation."
+                  isNarrow={isNarrow}
+                  onImportError={(m) => setActionError(m)}
+                />
                 <Button variant="primary" onClick={() => void saveSelfProfile()} loading={savingSelf}>
                   Save your profile
                 </Button>
@@ -456,7 +552,7 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
               )}
             </>
           ) : (
-            <Alert type="info" header="Admin-only team management">
+            <Alert type="info" header="Admin-only user management">
               Only administrators can view the full user list, create accounts, or change roles. You can still update your own
               username and avatar above.
             </Alert>
@@ -563,13 +659,15 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
                 />
                 {roleBadge(editOther.role)}
               </div>
-              {profileFields({
-                username: editOtherUsername,
-                setUsername: setEditOtherUsername,
-                icon: editOtherIcon,
-                setIcon: setEditOtherIcon,
-                idLabel: "Must be unique on this server.",
-              })}
+              <UserAvatarFields
+                username={editOtherUsername}
+                setUsername={setEditOtherUsername}
+                icon={editOtherIcon}
+                setIcon={setEditOtherIcon}
+                idLabel="Must be unique on this server."
+                isNarrow={isNarrow}
+                onImportError={(m) => setActionError(m)}
+              />
             </SpaceBetween>
           ) : null}
         </Modal>

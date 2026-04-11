@@ -1,9 +1,7 @@
 import { useEffect, useState } from "react";
 import TopNavigation from "@cloudscape-design/components/top-navigation";
-import { api } from "../../lib/api";
-import type { DashboardNavUser } from "../../lib/types";
-
-const VERSION_POLL_MS = 30 * 60 * 1000;
+import { api, SETTINGS_VERSION_POLL_INTERVAL_MS } from "../../lib/api";
+import { dashboardRoleLabel, type DashboardNavUser } from "../../lib/types";
 
 interface TopNavProps {
   onLogout: () => void;
@@ -11,10 +9,8 @@ interface TopNavProps {
   /** Opens the central activity / audit log page. */
   onOpenActivityLog?: () => void;
   onOpenUsers?: () => void;
-  /** Admin: alert rules / notification patterns. */
+  /** Admin: alerts (rules + history). */
   onOpenNotifications?: () => void;
-  /** Admin: agent groups (membership + rules scoped to groups). */
-  onOpenAgentGroups?: () => void;
   onBackToOverview?: () => void;
   /** Clicking the Sentinel logo/title returns here (usually agent overview). */
   onGoHome: () => void;
@@ -27,7 +23,6 @@ export function TopNav({
   onOpenActivityLog,
   onOpenUsers,
   onOpenNotifications,
-  onOpenAgentGroups,
   onBackToOverview,
   onGoHome,
   currentUser = null,
@@ -61,22 +56,28 @@ export function TopNav({
     };
 
     load();
-    const id = window.setInterval(load, VERSION_POLL_MS);
+    const id = window.setInterval(load, SETTINGS_VERSION_POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
       window.clearInterval(id);
     };
   }, []);
 
-  const identityTitle =
-    versionLine != null ? `Sentinel | v${versionLine.label}` : "Sentinel";
+  const versionTitle =
+    versionLine == null
+      ? "Server version (unavailable)"
+      : versionLine.updateAvailable && versionLine.remoteVersion != null
+        ? `This server is v${versionLine.label}. GitHub latest is v${versionLine.remoteVersion}. Open Settings for details.`
+        : versionLine.updateAvailable
+          ? `This server is v${versionLine.label}. A newer release may be available on GitHub.`
+          : `This server is v${versionLine.label}. Matches or exceeds the latest GitHub release (last check).`;
 
   return (
     <div id="sentinel-top-nav" className="sentinel-top-nav">
       <TopNavigation
         identity={{
           href: "#",
-          title: identityTitle,
+          title: "Sentinel",
           logo: {
             src: `${import.meta.env.BASE_URL}favicon.svg`,
             alt: "Sentinel",
@@ -94,6 +95,20 @@ export function TopNav({
                   text: "Back to overview",
                   iconName: "angle-left" as const,
                   onClick: onBackToOverview,
+                },
+              ]
+            : []),
+          ...(versionLine != null
+            ? [
+                {
+                  type: "button" as const,
+                  variant: "link" as const,
+                  text: versionLine.updateAvailable
+                    ? `v${versionLine.label} · update available`
+                    : `v${versionLine.label}`,
+                  title: versionTitle,
+                  ariaLabel: versionTitle,
+                  onClick: () => onShowPreferences(),
                 },
               ]
             : []),
@@ -119,20 +134,16 @@ export function TopNav({
             type: "menu-dropdown" as const,
             iconName: "user-profile" as const,
             text: currentUser
-              ? `${currentUser.display_icon?.trim() ? `${currentUser.display_icon.trim()} ` : ""}${currentUser.username} (${currentUser.role})`
+              ? `${currentUser.username}\n${dashboardRoleLabel(currentUser.role)}`
               : "Account",
+            description: currentUser ? dashboardRoleLabel(currentUser.role) : undefined,
             title: "Account",
-            ariaLabel: "Account",
+            ariaLabel: currentUser
+              ? `${currentUser.username}, ${dashboardRoleLabel(currentUser.role)}`
+              : "Account",
             items: [
-              ...(onOpenUsers
-                ? [{ id: "users", text: "Team & profile" }]
-                : []),
-              ...(onOpenAgentGroups
-                ? [{ id: "agent_groups", text: "Agent groups" }]
-                : []),
-              ...(onOpenNotifications
-                ? [{ id: "notifications", text: "Alert rules" }]
-                : []),
+              ...(onOpenUsers ? [{ id: "users", text: "Users" }] : []),
+              ...(onOpenNotifications ? [{ id: "notifications", text: "Alerts" }] : []),
               ...(onOpenActivityLog
                 ? [{ id: "activity_log", text: "Activity log" }]
                 : []),
@@ -141,7 +152,6 @@ export function TopNav({
             ],
             onItemClick: ({ detail }) => {
               if (detail.id === "users") onOpenUsers?.();
-              else if (detail.id === "agent_groups") onOpenAgentGroups?.();
               else if (detail.id === "notifications") onOpenNotifications?.();
               else if (detail.id === "activity_log") onOpenActivityLog?.();
               else if (detail.id === "settings") onShowPreferences();

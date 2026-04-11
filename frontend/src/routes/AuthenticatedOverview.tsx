@@ -71,6 +71,7 @@ export function AuthenticatedOverview({
           onBatchRestart={onBatchRestart}
           onBatchShutdown={onBatchShutdown}
           adminBulkGroupAssignment={currentUser?.role === "admin"}
+          onOpenAgentGroups={onOpenAgentGroups}
         />
       }
       onLogout={onLogout}
@@ -78,7 +79,6 @@ export function AuthenticatedOverview({
       onOpenActivityLog={onOpenActivityLog}
       onOpenUsers={onOpenUsers}
       onOpenNotifications={onOpenNotifications}
-      onOpenAgentGroups={onOpenAgentGroups}
       onGoHome={onGoHome}
       contentType="cards"
       currentUser={currentUser}

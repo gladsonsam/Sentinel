@@ -14,10 +14,8 @@ interface DashboardLayoutProps {
   onShowPreferences: () => void;
   onOpenActivityLog?: () => void;
   onOpenUsers?: () => void;
-  /** Admin: URL / keystroke alert rules UI. */
+  /** Admin: alerts (rules + history). */
   onOpenNotifications?: () => void;
-  /** Admin: agent groups & membership (same area as alert rules). */
-  onOpenAgentGroups?: () => void;
   onBackToOverview?: () => void;
   onGoHome: () => void;
   currentUser?: DashboardNavUser | null;
@@ -37,7 +35,6 @@ export function DashboardLayout({
   onOpenActivityLog,
   onOpenUsers,
   onOpenNotifications,
-  onOpenAgentGroups,
   onBackToOverview,
   onGoHome,
   currentUser = null,
@@ -58,7 +55,6 @@ export function DashboardLayout({
         onOpenActivityLog={onOpenActivityLog}
         onOpenUsers={onOpenUsers}
         onOpenNotifications={onOpenNotifications}
-        onOpenAgentGroups={onOpenAgentGroups}
         onBackToOverview={onBackToOverview}
         onGoHome={onGoHome}
         currentUser={currentUser}

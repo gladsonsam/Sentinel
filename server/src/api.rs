@@ -134,7 +134,8 @@ struct GitHubLatestRelease {
 
 /// Avoid hammering GitHub on every dashboard poll; multiple users share this process-local cache.
 static SETTINGS_VERSION_CACHE: Mutex<Option<(Instant, serde_json::Value)>> = Mutex::new(None);
-const SETTINGS_VERSION_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
+/// Keep dashboard/settings version checks reasonably fresh without hammering GitHub.
+const SETTINGS_VERSION_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 
 async fn fetch_latest_agent_version() -> Option<String> {
     let url = "https://github.com/gladsonsam/Sentinel/releases/latest/download/latest.json";
@@ -182,6 +183,13 @@ fn semver_is_newer(latest: &str, current: &str) -> bool {
     }
 }
 
+#[derive(Deserialize, Default)]
+struct SettingsVersionQuery {
+    /// When true, skip process-local cache and fetch GitHub (and agent manifest) again.
+    #[serde(default)]
+    nocache: bool,
+}
+
 async fn build_settings_version_json() -> serde_json::Value {
     let server_version = env!("CARGO_PKG_VERSION").to_string();
     let (latest_server_release, latest_agent_version) = tokio::join!(
@@ -202,12 +210,17 @@ async fn build_settings_version_json() -> serde_json::Value {
     })
 }
 
-async fn settings_version(State(_s): State<Arc<AppState>>) -> Response {
+async fn settings_version(
+    Query(q): Query<SettingsVersionQuery>,
+    State(_s): State<Arc<AppState>>,
+) -> Response {
     let now = Instant::now();
-    if let Ok(guard) = SETTINGS_VERSION_CACHE.lock() {
-        if let Some((t, cached)) = guard.as_ref() {
-            if now.duration_since(*t) < SETTINGS_VERSION_CACHE_TTL {
-                return Json(cached.clone()).into_response();
+    if !q.nocache {
+        if let Ok(guard) = SETTINGS_VERSION_CACHE.lock() {
+            if let Some((t, cached)) = guard.as_ref() {
+                if now.duration_since(*t) < SETTINGS_VERSION_CACHE_TTL {
+                    return Json(cached.clone()).into_response();
+                }
             }
         }
     }
@@ -618,6 +631,39 @@ fn normalize_profile_display_icon_set(raw: &str) -> Result<String, &'static str>
     let t = raw.trim();
     if t.is_empty() {
         return Err("icon must not be blank (omit the field or send null to clear)");
+    }
+    // Stored as `icon:lucide:Name` (PascalCase, matches lucide-react export).
+    if let Some(name) = t.strip_prefix("icon:lucide:") {
+        if name.is_empty() {
+            return Err("Lucide icon name is required");
+        }
+        if name.len() > 48 {
+            return Err("Lucide icon name is too long");
+        }
+        if !name.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return Err("Lucide icon name must be alphanumeric (PascalCase)");
+        }
+        return Ok(format!("icon:lucide:{name}"));
+    }
+    // Client-resized JPEG/PNG/WebP/GIF data URL for a profile photo.
+    if t.starts_with("data:image/") {
+        const MAX_AVATAR_DATA_URL_BYTES: usize = 240_000;
+        if t.len() > MAX_AVATAR_DATA_URL_BYTES {
+            return Err("avatar image is too large");
+        }
+        let head = t.split(',').next().unwrap_or("").to_ascii_lowercase();
+        let ok = head.starts_with("data:image/png;base64")
+            || head.starts_with("data:image/jpeg;base64")
+            || head.starts_with("data:image/jpg;base64")
+            || head.starts_with("data:image/webp;base64")
+            || head.starts_with("data:image/gif;base64");
+        if !ok {
+            return Err("avatar must be a PNG, JPEG, WebP, or GIF data URL");
+        }
+        if t.chars().any(|c| c.is_control()) {
+            return Err("avatar data URL may not contain control characters");
+        }
+        return Ok(t.to_string());
     }
     if t.len() > 32 {
         return Err("icon must be at most 32 characters");
@@ -1461,19 +1507,40 @@ struct RetentionBody {
     url_days: Option<i32>,
 }
 
-fn validate_retention_days(
-    keylog_days: Option<i32>,
-    window_days: Option<i32>,
-    url_days: Option<i32>,
-) -> Result<(), &'static str> {
-    for d in [keylog_days, window_days, url_days] {
-        if let Some(n) = d {
-            if !(1..=36_500).contains(&n) {
-                return Err("each retention value must be null (forever) or between 1 and 36500 days");
-            }
+/// Global policy: `None` or `0` → unlimited (stored as SQL NULL). Otherwise 1..=36500.
+fn normalize_global_retention(body: RetentionBody) -> Result<db::RetentionPolicy, &'static str> {
+    let norm = |d: Option<i32>| -> Result<Option<i32>, &'static str> {
+        match d {
+            None => Ok(None),
+            Some(0) => Ok(None),
+            Some(x) if (1..=36_500).contains(&x) => Ok(Some(x)),
+            Some(x) if x < 0 => Err("retention days cannot be negative"),
+            Some(_) => Err("retention days must be 0 (unlimited) or between 1 and 36500"),
         }
-    }
-    Ok(())
+    };
+    Ok(db::RetentionPolicy {
+        keylog_days: norm(body.keylog_days)?,
+        window_days: norm(body.window_days)?,
+        url_days: norm(body.url_days)?,
+    })
+}
+
+/// Agent override: `None` → inherit global. `Some(0)` → unlimited. `Some(n)` → n days.
+fn parse_agent_retention(body: RetentionBody) -> Result<db::RetentionAgentOverride, &'static str> {
+    let parse = |d: Option<i32>| -> Result<Option<i32>, &'static str> {
+        match d {
+            None => Ok(None),
+            Some(0) => Ok(Some(0)),
+            Some(x) if (1..=36_500).contains(&x) => Ok(Some(x)),
+            Some(x) if x < 0 => Err("retention days cannot be negative"),
+            Some(_) => Err("retention override must be omitted (inherit), 0 (unlimited), or 1–36500 days"),
+        }
+    };
+    Ok(db::RetentionAgentOverride {
+        keylog_days: parse(body.keylog_days)?,
+        window_days: parse(body.window_days)?,
+        url_days: parse(body.url_days)?,
+    })
 }
 
 async fn retention_global_get(State(s): State<Arc<AppState>>) -> Response {
@@ -1498,15 +1565,13 @@ async fn retention_global_put(
     if !user.is_admin() {
         return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
     }
-    if let Err(msg) = validate_retention_days(body.keylog_days, body.window_days, body.url_days) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
-    }
-    let ip = audit_ip(&headers, addr);
-    let p = db::RetentionPolicy {
-        keylog_days: body.keylog_days,
-        window_days: body.window_days,
-        url_days: body.url_days,
+    let p = match normalize_global_retention(body) {
+        Ok(p) => p,
+        Err(msg) => {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+        }
     };
+    let ip = audit_ip(&headers, addr);
     match db::set_retention_global(&s.db, &p).await {
         Ok(()) => {
             let _ = db::insert_audit_log(
@@ -1569,15 +1634,13 @@ async fn agent_retention_put(
     if !user.is_admin() {
         return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
     }
-    if let Err(msg) = validate_retention_days(body.keylog_days, body.window_days, body.url_days) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
-    }
-    let ip = audit_ip(&headers, addr);
-    let ov = db::RetentionAgentOverride {
-        keylog_days: body.keylog_days,
-        window_days: body.window_days,
-        url_days: body.url_days,
+    let ov = match parse_agent_retention(body) {
+        Ok(ov) => ov,
+        Err(msg) => {
+            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+        }
     };
+    let ip = audit_ip(&headers, addr);
     match db::set_retention_agent(&s.db, id, &ov).await {
         Ok(()) => {
             let _ = db::insert_audit_log(

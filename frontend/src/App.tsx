@@ -1,7 +1,15 @@
 import { useState, useEffect, useRef, useCallback, lazy, Suspense, useMemo } from "react";
 import "@cloudscape-design/global-styles/index.css";
 import "./styles/cloudscape-theme.css";
-import { Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import {
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+  useParams,
+  useSearchParams,
+} from "react-router-dom";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { useAgents } from "./hooks/useAgents";
 import { useTheme } from "./hooks/useTheme";
@@ -28,6 +36,9 @@ const AuthenticatedLogs = lazy(() =>
 const UsersPage = lazy(() => import("./pages/UsersPage").then((m) => ({ default: m.UsersPage })));
 const AuthenticatedNotifications = lazy(() =>
   import("./routes/AuthenticatedNotifications").then((m) => ({ default: m.AuthenticatedNotifications })),
+);
+const AuthenticatedGroups = lazy(() =>
+  import("./routes/AuthenticatedGroups").then((m) => ({ default: m.AuthenticatedGroups })),
 );
 
 function sessionToNavUser(u: DashboardSessionUser | null): DashboardNavUser | null {
@@ -271,7 +282,6 @@ function SettingsRoute({
   openLogs,
   onOpenUsers,
   onOpenNotifications,
-  onOpenAgentGroups,
   currentUser,
   notifications,
   removeNotification,
@@ -285,7 +295,6 @@ function SettingsRoute({
   openLogs: () => void;
   onOpenUsers: () => void;
   onOpenNotifications?: () => void;
-  onOpenAgentGroups?: () => void;
   currentUser: DashboardSessionUser | null;
   notifications: NotificationItem[];
   removeNotification: (id: string) => void;
@@ -305,7 +314,6 @@ function SettingsRoute({
         onOpenActivityLog={openLogs}
         onOpenUsers={onOpenUsers}
         onOpenNotifications={onOpenNotifications}
-        onOpenAgentGroups={onOpenAgentGroups}
         onGoHome={() => navigate("/")}
         notifications={notifications}
         onDismissNotification={removeNotification}
@@ -326,7 +334,6 @@ function LogsRoute({
   setToolsOpen,
   onOpenUsers,
   onOpenNotifications,
-  onOpenAgentGroups,
   currentUser,
 }: {
   handleLogout: () => Promise<void>;
@@ -337,7 +344,6 @@ function LogsRoute({
   setToolsOpen: (open: boolean) => void;
   onOpenUsers: () => void;
   onOpenNotifications?: () => void;
-  onOpenAgentGroups?: () => void;
   currentUser: DashboardSessionUser | null;
 }) {
   const back = useReturnTo();
@@ -350,7 +356,6 @@ function LogsRoute({
         onShowPreferences={openSettings}
         onOpenUsers={onOpenUsers}
         onOpenNotifications={onOpenNotifications}
-        onOpenAgentGroups={onOpenAgentGroups}
         onGoHome={() => navigate("/")}
         notifications={notifications}
         onDismissNotification={removeNotification}
@@ -368,7 +373,6 @@ function NotificationsRoute({
   openLogs,
   onOpenUsers,
   onOpenNotifications,
-  onOpenAgentGroups,
   currentUser,
   notifications,
   removeNotification,
@@ -380,7 +384,56 @@ function NotificationsRoute({
   openLogs: () => void;
   onOpenUsers: () => void;
   onOpenNotifications?: () => void;
-  onOpenAgentGroups?: () => void;
+  currentUser: DashboardSessionUser | null;
+  notifications: NotificationItem[];
+  removeNotification: (id: string) => void;
+  toolsOpen: boolean;
+  setToolsOpen: (open: boolean) => void;
+}) {
+  const navigate = useNavigate();
+  const [notifySearch] = useSearchParams();
+  if (currentUser?.role !== "admin") {
+    return <Navigate to="/" replace />;
+  }
+  if (notifySearch.get("tab") === "groups") {
+    return <Navigate to="/groups" replace />;
+  }
+  return (
+    <Suspense fallback={<LoadShell label="Loading notifications…" />}>
+      <AuthenticatedNotifications
+        onLogout={() => void handleLogout()}
+        onShowPreferences={openSettings}
+        onOpenActivityLog={openLogs}
+        onOpenUsers={onOpenUsers}
+        onOpenNotifications={onOpenNotifications}
+        onGoHome={() => navigate("/")}
+        notifications={notifications}
+        onDismissNotification={removeNotification}
+        toolsOpen={toolsOpen}
+        onToolsChange={setToolsOpen}
+        currentUser={sessionToNavUser(currentUser)}
+      />
+    </Suspense>
+  );
+}
+
+function GroupsRoute({
+  handleLogout,
+  openSettings,
+  openLogs,
+  onOpenUsers,
+  onOpenNotifications,
+  currentUser,
+  notifications,
+  removeNotification,
+  toolsOpen,
+  setToolsOpen,
+}: {
+  handleLogout: () => Promise<void>;
+  openSettings: () => void;
+  openLogs: () => void;
+  onOpenUsers: () => void;
+  onOpenNotifications?: () => void;
   currentUser: DashboardSessionUser | null;
   notifications: NotificationItem[];
   removeNotification: (id: string) => void;
@@ -392,14 +445,13 @@ function NotificationsRoute({
     return <Navigate to="/" replace />;
   }
   return (
-    <Suspense fallback={<LoadShell label="Loading notifications…" />}>
-      <AuthenticatedNotifications
+    <Suspense fallback={<LoadShell label="Loading groups…" />}>
+      <AuthenticatedGroups
         onLogout={() => void handleLogout()}
         onShowPreferences={openSettings}
         onOpenActivityLog={openLogs}
         onOpenUsers={onOpenUsers}
         onOpenNotifications={onOpenNotifications}
-        onOpenAgentGroups={onOpenAgentGroups}
         onGoHome={() => navigate("/")}
         notifications={notifications}
         onDismissNotification={removeNotification}
@@ -418,8 +470,8 @@ export function App() {
   const [me, setMe] = useState<DashboardSessionUser | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
-  const openAgentGroupsAdmin = useCallback(() => navigate("/notifications?tab=groups"), [navigate]);
-  const openAlertRulesAdmin = useCallback(() => navigate("/notifications?tab=rules"), [navigate]);
+  const openAgentGroupsAdmin = useCallback(() => navigate("/groups"), [navigate]);
+  const openAlertRulesAdmin = useCallback(() => navigate("/notifications"), [navigate]);
   const adminAgentGroupsNav = me?.role === "admin" ? openAgentGroupsAdmin : undefined;
   const adminAlertRulesNav = me?.role === "admin" ? openAlertRulesAdmin : undefined;
 
@@ -787,7 +839,6 @@ export function App() {
             openLogs={handleOpenLogs}
             onOpenUsers={() => navigate("/users")}
             onOpenNotifications={adminAlertRulesNav}
-            onOpenAgentGroups={adminAgentGroupsNav}
             currentUser={me}
             notifications={notifications}
             removeNotification={removeNotification}
@@ -808,7 +859,6 @@ export function App() {
             setToolsOpen={setToolsOpen}
             onOpenUsers={() => navigate("/users")}
             onOpenNotifications={adminAlertRulesNav}
-            onOpenAgentGroups={adminAgentGroupsNav}
             currentUser={me}
           />
         }
@@ -822,7 +872,23 @@ export function App() {
             openLogs={handleOpenLogs}
             onOpenUsers={() => navigate("/users")}
             onOpenNotifications={adminAlertRulesNav}
-            onOpenAgentGroups={adminAgentGroupsNav}
+            currentUser={me}
+            notifications={notifications}
+            removeNotification={removeNotification}
+            toolsOpen={toolsOpen}
+            setToolsOpen={setToolsOpen}
+          />
+        }
+      />
+      <Route
+        path="/groups"
+        element={
+          <GroupsRoute
+            handleLogout={handleLogout}
+            openSettings={handleOpenSettings}
+            openLogs={handleOpenLogs}
+            onOpenUsers={() => navigate("/users")}
+            onOpenNotifications={adminAlertRulesNav}
             currentUser={me}
             notifications={notifications}
             removeNotification={removeNotification}
@@ -841,7 +907,6 @@ export function App() {
               onShowPreferences={handleOpenSettings}
               onOpenActivityLog={handleOpenLogs}
               onOpenNotifications={adminAlertRulesNav}
-              onOpenAgentGroups={adminAgentGroupsNav}
               onGoHome={() => navigate("/")}
               contentType="default"
               notifications={notifications}

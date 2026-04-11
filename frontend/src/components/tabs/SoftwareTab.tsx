@@ -1,15 +1,21 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
 import Header from "@cloudscape-design/components/header";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Table from "@cloudscape-design/components/table";
+import type { TableProps } from "@cloudscape-design/components/table";
 import Pagination from "@cloudscape-design/components/pagination";
 import TextFilter from "@cloudscape-design/components/text-filter";
 import { useCollection } from "@cloudscape-design/collection-hooks";
 import { api } from "../../lib/api";
 import type { AgentSoftwareRow } from "../../lib/types";
-import { fmtDateTime, formatWindowsInstallDate, installDateSortKey } from "../../lib/utils";
+import {
+  compareInstallDateSortKeys,
+  fmtDateTime,
+  formatWindowsInstallDate,
+  installDateSortKey,
+} from "../../lib/utils";
 
 type SoftwareRow = AgentSoftwareRow & {
   id: string;
@@ -30,6 +36,32 @@ export function SoftwareTab({ agentId, onNotifyInfo, onNotifyError }: SoftwareTa
   const [loading, setLoading] = useState(true);
   const [collecting, setCollecting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [filteringText, setFilteringText] = useState("");
+
+  const columnDefinitions = useMemo<TableProps.ColumnDefinition<SoftwareRow>[]>(
+    () => [
+      { id: "name", header: "Name", cell: (i) => i.name, sortingField: "name" },
+      { id: "version", header: "Version", cell: (i) => i.version || "—" },
+      {
+        id: "publisher",
+        header: "Publisher",
+        cell: (i) => i.publisher || "—",
+        sortingField: "publisher_sort",
+      },
+      {
+        id: "install_date",
+        header: "Install date",
+        cell: (i) => formatWindowsInstallDate(i.install_date ?? null),
+        sortingField: "install_date_sort",
+      },
+    ],
+    [],
+  );
+
+  const [sortingState, setSortingState] = useState<TableProps.SortingState<SoftwareRow>>(() => ({
+    sortingColumn: columnDefinitions.find((c) => c.id === "install_date")!,
+    isDescending: true,
+  }));
 
   const load = useCallback(async () => {
     setErr(null);
@@ -75,24 +107,41 @@ export function SoftwareTab({ agentId, onNotifyInfo, onNotifyError }: SoftwareTa
     }
   };
 
-  const { items, collectionProps, filterProps, paginationProps } = useCollection(rows, {
-    filtering: {
-      filteringFunction: (item, filteringText) => {
-        const q = filteringText.toLowerCase();
-        return (
-          item.name.toLowerCase().includes(q) ||
-          (item.version ?? "").toLowerCase().includes(q) ||
-          (item.publisher ?? "").toLowerCase().includes(q)
-        );
-      },
-    },
+  const filteredRows = useMemo(() => {
+    const q = filteringText.trim().toLowerCase();
+    if (!q) return rows;
+    return rows.filter(
+      (item) =>
+        item.name.toLowerCase().includes(q) ||
+        (item.version ?? "").toLowerCase().includes(q) ||
+        (item.publisher ?? "").toLowerCase().includes(q),
+    );
+  }, [rows, filteringText]);
+
+  const sortedRows = useMemo(() => {
+    const list = [...filteredRows];
+    const field = sortingState.sortingColumn.sortingField;
+    const desc = sortingState.isDescending ?? false;
+    if (field === "install_date_sort") {
+      list.sort((a, b) =>
+        compareInstallDateSortKeys(a.install_date_sort, b.install_date_sort, desc),
+      );
+    } else if (field === "name") {
+      list.sort((a, b) => {
+        const c = a.name.localeCompare(b.name);
+        return desc ? -c : c;
+      });
+    } else if (field === "publisher_sort") {
+      list.sort((a, b) => {
+        const c = a.publisher_sort.localeCompare(b.publisher_sort);
+        return desc ? -c : c;
+      });
+    }
+    return list;
+  }, [filteredRows, sortingState]);
+
+  const { items, collectionProps, paginationProps, actions } = useCollection(sortedRows, {
     pagination: { pageSize: 50 },
-    sorting: {
-      defaultState: {
-        sortingColumn: { sortingField: "name" },
-        isDescending: false,
-      },
-    },
   });
 
   return (
@@ -125,28 +174,31 @@ export function SoftwareTab({ agentId, onNotifyInfo, onNotifyError }: SoftwareTa
       )}
       <Table
         {...collectionProps}
+        columnDefinitions={columnDefinitions}
         trackBy="id"
-        columnDefinitions={[
-          { id: "name", header: "Name", cell: (i) => i.name, sortingField: "name" },
-          { id: "version", header: "Version", cell: (i) => i.version || "—" },
-          {
-            id: "publisher",
-            header: "Publisher",
-            cell: (i) => i.publisher || "—",
-            sortingField: "publisher_sort",
-          },
-          {
-            id: "install_date",
-            header: "Install date",
-            cell: (i) => formatWindowsInstallDate(i.install_date ?? null),
-            sortingField: "install_date_sort",
-          },
-        ]}
+        sortingColumn={sortingState.sortingColumn}
+        sortingDescending={sortingState.isDescending}
+        onSortingChange={({ detail }) => {
+          const sf = detail.sortingColumn.sortingField;
+          const col =
+            columnDefinitions.find((c) => c.sortingField === sf) ??
+            columnDefinitions.find((c) => c.id === "install_date")!;
+          setSortingState({ sortingColumn: col, isDescending: detail.isDescending ?? false });
+          actions.setCurrentPage(1);
+        }}
         items={items}
         loading={loading}
         loadingText="Loading software inventory"
         filter={
-          <TextFilter {...filterProps} filteringPlaceholder="Find software" countText={`${items.length} matches`} />
+          <TextFilter
+            filteringText={filteringText}
+            onChange={({ detail }) => {
+              setFilteringText(detail.filteringText);
+              actions.setCurrentPage(1);
+            }}
+            filteringPlaceholder="Find software"
+            countText={`${filteredRows.length} matches`}
+          />
         }
         pagination={<Pagination {...paginationProps} />}
         empty={

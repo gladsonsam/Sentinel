@@ -200,6 +200,13 @@
   max-inline-size: none;
 }
 
+/* Account menu trigger: name + role on two lines (newline in TopNav `text`). */
+#sentinel-top-nav.sentinel-top-nav [class*="utility-type-menu-dropdown"] button[class*="awsui_button"] > span[class*="awsui_text"] {
+  white-space: pre-line;
+  line-height: 1.25;
+  text-align: start;
+}
+
 /* Custom component styles */
 .sentinel-agent-card {
   transition: all 0.2s ease;
@@ -721,6 +728,40 @@ button.sentinel-copyable-inline.sentinel-copyable-inline--flash {
 .sentinel-user-avatar--initials {
   font-weight: 600;
   letter-spacing: 0.02em;
+}
+
+.sentinel-user-avatar--lucide {
+  box-sizing: border-box;
+}
+
+.sentinel-user-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(42px, 1fr));
+  gap: 8px;
+  max-width: 420px;
+}
+
+.sentinel-user-lucide-pick {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border-radius: 8px;
+  border: 1px solid var(--awsui-color-border-container-top);
+  background: var(--awsui-color-background-container-content);
+  color: var(--awsui-color-text-body-default);
+  cursor: pointer;
+}
+
+.sentinel-user-lucide-pick:hover {
+  border-color: var(--awsui-color-border-item-focused);
+}
+
+.sentinel-user-lucide-pick--selected {
+  border-color: var(--awsui-color-border-item-selected);
+  box-shadow: 0 0 0 1px var(--awsui-color-border-item-selected);
 }
 
 .sentinel-top-nav-account-avatar {

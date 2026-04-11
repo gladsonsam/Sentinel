@@ -50,13 +50,17 @@ export function ScriptsTab({ agentId, dashboardRole = null }: ScriptsTabProps) {
   };
 
   const blockedByRole = dashboardRole === "viewer";
+  const remoteAllowed = remoteOk === true;
+  const scriptControlsDisabled = !remoteAllowed || blockedByRole || running;
+
+  const headerDescription =
+    remoteOk === false
+      ? "The Sentinel server was not started with remote script execution enabled. Set environment variable ALLOW_REMOTE_SCRIPT_EXECUTION=true on the server and restart it to use this tab. When enabled, this runs PowerShell or cmd on this machine over the agent WebSocket — equivalent to arbitrary code execution: use only on trusted networks."
+      : "Runs PowerShell or cmd on this machine over the agent WebSocket.";
 
   return (
     <SpaceBetween size="l">
-      <Header
-        variant="h2"
-        description="Runs PowerShell or cmd on this machine over the agent WebSocket. Requires ALLOW_REMOTE_SCRIPT_EXECUTION=true on the server. This is equivalent to arbitrary code execution: use only on trusted networks."
-      >
+      <Header variant="h2" description={headerDescription}>
         Remote script
       </Header>
 
@@ -69,8 +73,7 @@ export function ScriptsTab({ agentId, dashboardRole = null }: ScriptsTabProps) {
 
       {remoteOk === false && (
         <Alert type="warning" header="Remote scripting disabled">
-          Set environment variable <code>ALLOW_REMOTE_SCRIPT_EXECUTION=true</code> on the Sentinel server, then restart
-          the server, to enable this feature.
+          Set <code>ALLOW_REMOTE_SCRIPT_EXECUTION=true</code> on the Sentinel server, then restart the server.
         </Alert>
       )}
 
@@ -83,6 +86,7 @@ export function ScriptsTab({ agentId, dashboardRole = null }: ScriptsTabProps) {
       <FormField label="Shell">
         <Select
           selectedOption={shell}
+          disabled={scriptControlsDisabled}
           onChange={({ detail }) => {
             const o = detail.selectedOption;
             if (o?.value != null) {
@@ -106,7 +110,7 @@ export function ScriptsTab({ agentId, dashboardRole = null }: ScriptsTabProps) {
           style={{ width: "100%", fontFamily: "monospace", fontSize: "13px", padding: "8px" }}
           value={script}
           onChange={(e) => setScript(e.target.value)}
-          disabled={running || remoteOk === false || blockedByRole}
+          disabled={scriptControlsDisabled}
           spellCheck={false}
         />
       </FormField>
@@ -114,7 +118,7 @@ export function ScriptsTab({ agentId, dashboardRole = null }: ScriptsTabProps) {
       <Button
         variant="primary"
         loading={running}
-        disabled={remoteOk === false || blockedByRole}
+        disabled={!remoteAllowed || blockedByRole}
         onClick={() => void run()}
       >
         Run on this agent

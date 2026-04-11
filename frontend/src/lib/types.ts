@@ -152,7 +152,11 @@ export type WsEvent =
       data: { path: string; ok: boolean; error?: string };
     };
 
-/** Server-side telemetry retention; `null` = keep forever. */
+/**
+ * Server-side telemetry retention.
+ * Global defaults: `null` = unlimited (UI shows 0).
+ * Agent override body/response: `null` = inherit global for that field; `0` = unlimited override.
+ */
 export interface RetentionPolicy {
   keylog_days: number | null;
   window_days: number | null;
@@ -178,7 +182,12 @@ export interface StorageTableUsage {
 }
 
 export interface StorageUsage {
+  /** `pg_database_size(current database)` — full on-disk size for this DB (tables, indexes, TOAST, etc.). */
   database_bytes: number;
+  /** Sum of `pg_total_relation_size` for listed `public` relations (see server; excludes partition children). */
+  public_tables_bytes: number;
+  /** Remainder: system catalogs (`pg_catalog`, etc.), internal structures not tied to a `public` rel. */
+  other_bytes: number;
   tables: StorageTableUsage[];
 }
 
@@ -197,11 +206,24 @@ export interface LocalUiPasswordAgentState {
 
 export type DashboardRole = "admin" | "operator" | "viewer";
 
+/** Human-readable role for UI (nav, labels). */
+export function dashboardRoleLabel(role: DashboardRole): string {
+  switch (role) {
+    case "admin":
+      return "Administrator";
+    case "operator":
+      return "Operator";
+    case "viewer":
+      return "Viewer";
+  }
+}
+
 /** Session user from `GET /api/me` (includes CSRF for mutating API calls). */
 export interface DashboardSessionUser {
   id: string;
   username: string;
   role: DashboardRole;
+  /** Lucide key (`icon:lucide:Name`), small JPEG/PNG/WebP/GIF data URL, or legacy short glyph. */
   display_icon?: string | null;
   csrf_token?: string;
 }
@@ -213,7 +235,7 @@ export interface DashboardUser {
   id: string;
   username: string;
   role: DashboardRole;
-  /** Optional emoji or short glyph shown in the dashboard; initials are used when unset. */
+  /** Lucide icon key, photo data URL, or legacy short glyph; initials when unset. */
   display_icon?: string | null;
   created_at: string;
 }

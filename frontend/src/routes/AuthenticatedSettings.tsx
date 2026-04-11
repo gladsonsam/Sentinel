@@ -13,7 +13,6 @@ interface Props {
   onOpenActivityLog: () => void;
   onOpenUsers: () => void;
   onOpenNotifications?: () => void;
-  onOpenAgentGroups?: () => void;
   onGoHome: () => void;
   currentUser?: DashboardNavUser | null;
   notifications: NotificationItem[];
@@ -31,7 +30,6 @@ export function AuthenticatedSettings({
   onOpenActivityLog,
   onOpenUsers,
   onOpenNotifications,
-  onOpenAgentGroups,
   onGoHome,
   currentUser = null,
   notifications,
@@ -41,13 +39,19 @@ export function AuthenticatedSettings({
 }: Props) {
   return (
     <DashboardLayout
-      content={<SettingsPage themeMode={themeMode} onThemeChange={onThemeChange} onBack={onBack} />}
+      content={
+        <SettingsPage
+          themeMode={themeMode}
+          onThemeChange={onThemeChange}
+          onBack={onBack}
+          currentUser={currentUser}
+        />
+      }
       onLogout={onLogout}
       onShowPreferences={onShowPreferences}
       onOpenActivityLog={onOpenActivityLog}
       onOpenUsers={onOpenUsers}
       onOpenNotifications={onOpenNotifications}
-      onOpenAgentGroups={onOpenAgentGroups}
       onGoHome={onGoHome}
       contentType="default"
       currentUser={currentUser}

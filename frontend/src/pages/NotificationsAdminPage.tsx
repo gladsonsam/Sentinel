@@ -107,7 +107,7 @@ const SCOPE_KIND_OPTIONS = [
   { label: "Single agent", value: "agent" },
 ];
 
-type MainTabId = "groups" | "rules" | "history";
+type AlertsTabId = "rules" | "history";
 
 // ─── Screenshot Preview Modal ─────────────────────────────────────────────────
 
@@ -207,20 +207,19 @@ function ScreenshotCell({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-function parseMainTab(v: string | null): MainTabId {
-  if (v === "groups" || v === "rules" || v === "history") return v;
-  return "groups";
+function parseAlertsTab(v: string | null): AlertsTabId {
+  return v === "history" ? "history" : "rules";
 }
 
-export function NotificationsAdminPage() {
+export function NotificationsAdminPage({ mode }: { mode: "groups" | "alerts" }) {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const isNarrow = useMediaQuery("(max-width: 768px)");
 
-  const mainTab = parseMainTab(searchParams.get("tab"));
+  const alertsTab = mode === "alerts" ? parseAlertsTab(searchParams.get("tab")) : "rules";
 
-  const setMainTab = useCallback(
-    (id: MainTabId) => {
+  const setAlertsTab = useCallback(
+    (id: AlertsTabId) => {
       setSearchParams(
         (prev) => {
           const n = new URLSearchParams(prev);
@@ -234,18 +233,19 @@ export function NotificationsAdminPage() {
   );
 
   useEffect(() => {
+    if (mode !== "alerts") return;
     const t = searchParams.get("tab");
-    if (t === null || t === "") {
+    if (t !== "rules" && t !== "history") {
       setSearchParams(
         (prev) => {
           const n = new URLSearchParams(prev);
-          n.set("tab", "groups");
+          n.set("tab", "rules");
           return n;
         },
         { replace: true },
       );
     }
-  }, [searchParams, setSearchParams]);
+  }, [mode, searchParams, setSearchParams]);
   const [groups, setGroups] = useState<AgentGroup[] | null>(null);
   const [rules, setRules] = useState<AlertRule[] | null>(null);
   const [agentsList, setAgentsList] = useState<Agent[]>([]);
@@ -298,14 +298,21 @@ export function NotificationsAdminPage() {
     setLoading(true);
     setError(null);
     try {
-      const [g, r, a] = await Promise.all([
-        api.agentGroupsList(),
-        api.alertRulesList(),
-        api.agents(),
-      ]);
-      setGroups(g.groups);
-      setRules(r.rules);
-      setAgentsList(a.agents);
+      if (mode === "groups") {
+        const [g, a] = await Promise.all([api.agentGroupsList(), api.agents()]);
+        setGroups(g.groups);
+        setRules(null);
+        setAgentsList(a.agents);
+      } else {
+        const [g, r, a] = await Promise.all([
+          api.agentGroupsList(),
+          api.alertRulesList(),
+          api.agents(),
+        ]);
+        setGroups(g.groups);
+        setRules(r.rules);
+        setAgentsList(a.agents);
+      }
     } catch (e: unknown) {
       setError(String((e as Error)?.message ?? e));
       setGroups(null);
@@ -313,7 +320,7 @@ export function NotificationsAdminPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [mode]);
 
   useEffect(() => {
     void load();
@@ -364,10 +371,10 @@ export function NotificationsAdminPage() {
   }, []);
 
   useEffect(() => {
-    if (mainTab === "history" && rules !== null) {
+    if (mode === "alerts" && alertsTab === "history" && rules !== null) {
       void fetchGlobalHistory(rules);
     }
-  }, [mainTab, rules, fetchGlobalHistory]);
+  }, [mode, alertsTab, rules, fetchGlobalHistory]);
 
   // ── Per-rule history ───────────────────────────────────────────────────────
   const fetchRuleHistory = useCallback(async (rule: AlertRule) => {
@@ -611,7 +618,7 @@ export function NotificationsAdminPage() {
       scopes: [{ kind: "group", group_id: groupId, agent_id: "" }],
     });
     setRuleModal({ mode: "create" });
-    setMainTab("rules");
+    if (mode === "alerts") setAlertsTab("rules");
   };
 
   const openEditRule = (rule: AlertRule) => {
@@ -769,9 +776,9 @@ export function NotificationsAdminPage() {
   const mobileToolbar = (
     <div className="sentinel-users-toolbar-mobile">
       {headerActions}
-      {mainTab === "groups" ? (
+      {mode === "groups" ? (
         <Button onClick={openCreateGroup}>Create group</Button>
-      ) : mainTab === "rules" ? (
+      ) : alertsTab === "rules" ? (
         <Button variant="primary" onClick={openCreateRule}>
           Create alert rule
         </Button>
@@ -1099,25 +1106,60 @@ export function NotificationsAdminPage() {
           <Box variant="p" color="text-body-secondary">
             {globalHistoryLoading
               ? "Loading…"
-              : "No alert rules have fired yet. Create rules under Alert rules and they will appear here."}
+              : "No alert rules have fired yet. Create rules under the Alert rules tab and they will appear here."}
           </Box>
         </Box>
       }
     />
   );
 
+  const pageHeader =
+    mode === "groups" ? (
+      <Header
+        variant="h1"
+        description="Create groups and assign agents. On the overview, use Actions → Add selected to group for bulk membership."
+        actions={isNarrow ? undefined : headerActions}
+      >
+        Agent groups
+      </Header>
+    ) : (
+      <Header
+        variant="h1"
+        description="Attach URL or keystroke rules to all agents, a group, or one computer. Review fired notifications under History."
+        actions={isNarrow ? undefined : headerActions}
+      >
+        Alerts
+      </Header>
+    );
+
+  const alertsMain =
+    mode === "alerts" && isNarrow ? (
+      <SpaceBetween size="m">
+        <SegmentedControl
+          className="sentinel-notify-view-toggle"
+          label="View"
+          selectedId={alertsTab}
+          options={[
+            { id: "rules", text: "Alert rules" },
+            { id: "history", text: "History" },
+          ]}
+          onChange={({ detail }) => setAlertsTab(detail.selectedId as AlertsTabId)}
+        />
+        {alertsTab === "rules" ? rulesPanel : globalHistoryPanel}
+      </SpaceBetween>
+    ) : mode === "alerts" ? (
+      <Tabs
+        activeTabId={alertsTab}
+        onChange={({ detail }) => setAlertsTab(detail.activeTabId as AlertsTabId)}
+        tabs={[
+          { label: "Alert rules", id: "rules", content: rulesPanel },
+          { label: "History", id: "history", content: globalHistoryPanel },
+        ]}
+      />
+    ) : null;
+
   return (
-    <ContentLayout
-      header={
-        <Header
-          variant="h1"
-          description="Organize agents into groups, attach URL/keystroke alert rules (all agents, per group, or one computer), and review fired notifications. Use the account menu for quick access to groups vs rules."
-          actions={isNarrow ? undefined : headerActions}
-        >
-          Groups &amp; notifications
-        </Header>
-      }
-    >
+    <ContentLayout header={pageHeader}>
       <div className="sentinel-notify-page">
         <SpaceBetween size="l">
           {error && (
@@ -1128,36 +1170,7 @@ export function NotificationsAdminPage() {
 
           {isNarrow && mobileToolbar}
 
-          {isNarrow ? (
-            <SpaceBetween size="m">
-              <SegmentedControl
-                className="sentinel-notify-view-toggle"
-                label="View"
-                selectedId={mainTab}
-                options={[
-                  { id: "groups", text: "Agent groups" },
-                  { id: "rules", text: "Alert rules" },
-                  { id: "history", text: "History" },
-                ]}
-                onChange={({ detail }) => setMainTab(detail.selectedId as MainTabId)}
-              />
-              {mainTab === "groups"
-                ? groupsPanel
-                : mainTab === "rules"
-                  ? rulesPanel
-                  : globalHistoryPanel}
-            </SpaceBetween>
-          ) : (
-            <Tabs
-              activeTabId={mainTab}
-              onChange={({ detail }) => setMainTab(detail.activeTabId as MainTabId)}
-              tabs={[
-                { label: "Agent groups", id: "groups", content: groupsPanel },
-                { label: "Alert rules", id: "rules", content: rulesPanel },
-                { label: "History", id: "history", content: globalHistoryPanel },
-              ]}
-            />
-          )}
+          {mode === "groups" ? groupsPanel : alertsMain}
         </SpaceBetween>
 
       {/* ── Group modal ───────────────────────────────────────── */}

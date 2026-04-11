@@ -49,7 +49,7 @@ fn emit_audit_tracing_line(actor: &str, action: &str, status: &str, client_ip: O
 
 // ─── Retention policy ─────────────────────────────────────────────────────────
 
-/// Global retention: `None` / NULL = keep forever (no automatic deletion).
+/// Global retention: `None` / NULL = keep forever (no automatic deletion). `Some(0)` is never stored (API normalizes to `None`).
 #[derive(Debug, Clone, Serialize)]
 pub struct RetentionPolicy {
     pub keylog_days: Option<i32>,
@@ -58,6 +58,7 @@ pub struct RetentionPolicy {
 }
 
 /// Per-agent override. Each `None` means “use global default for that category”.
+/// `Some(0)` means unlimited for that stream (no prune), regardless of global.
 #[derive(Debug, Clone, Serialize)]
 pub struct RetentionAgentOverride {
     pub keylog_days: Option<i32>,
@@ -1028,43 +1029,47 @@ pub async fn query_top_windows(
         .collect())
 }
 
+/// Disk usage for the connected database (`pg_database_size`) plus a per-relation breakdown
+/// for the `public` schema. Partition children are omitted — their storage is counted on the
+/// parent (`pg_total_relation_size` on a partitioned table includes all partitions).
 pub async fn query_database_storage(pool: &PgPool) -> Result<serde_json::Value> {
-    let db_size_bytes: i64 = sqlx::query_scalar("SELECT pg_database_size(current_database())")
+    let db_size_bytes: i64 = sqlx::query_scalar("SELECT pg_database_size(current_database())::bigint")
         .fetch_one(pool)
-        .await
-        .unwrap_or(0);
+        .await?;
 
     let table_rows = sqlx::query(
         r#"
         SELECT
-            relname::text AS name,
+            c.relname::text AS name,
             pg_total_relation_size(c.oid)::bigint AS bytes
         FROM pg_class c
-        JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE c.relkind = 'r'
-          AND n.nspname = 'public'
-          AND relname IN (
-            'window_events', 'key_sessions', 'url_visits', 'activity_log',
-            'url_top_stats', 'window_top_stats', 'audit_log', 'agent_info'
-          )
+        INNER JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'public'
+          AND c.relkind IN ('r', 'p', 'm')
+          AND NOT c.relispartition
         ORDER BY bytes DESC
-        "#
+        "#,
     )
     .fetch_all(pool)
     .await?;
 
+    let mut public_tables_bytes: i64 = 0;
     let tables = table_rows
         .iter()
         .map(|r| {
-            serde_json::json!({
-                "name": r.try_get::<String, _>("name").unwrap_or_default(),
-                "bytes": r.try_get::<i64, _>("bytes").unwrap_or_default(),
-            })
+            let name = r.try_get::<String, _>("name").unwrap_or_default();
+            let bytes = r.try_get::<i64, _>("bytes").unwrap_or_default();
+            public_tables_bytes += bytes;
+            serde_json::json!({ "name": name, "bytes": bytes })
         })
         .collect::<Vec<_>>();
 
+    let other_bytes = (db_size_bytes - public_tables_bytes).max(0);
+
     Ok(serde_json::json!({
         "database_bytes": db_size_bytes,
+        "public_tables_bytes": public_tables_bytes,
+        "other_bytes": other_bytes,
         "tables": tables
     }))
 }
@@ -1330,41 +1335,47 @@ pub async fn prune_telemetry_by_retention(pool: &PgPool) -> Result<()> {
         let url_d = ov.url_days.or(global.url_days);
 
         if let Some(days) = key_d {
-            sqlx::query(
-                "DELETE FROM key_sessions WHERE agent_id = $1 AND updated_at < NOW() - ($2::bigint * INTERVAL '1 day')",
-            )
-            .bind(aid)
-            .bind(days as i64)
-            .execute(pool)
-            .await?;
+            if days > 0 {
+                sqlx::query(
+                    "DELETE FROM key_sessions WHERE agent_id = $1 AND updated_at < NOW() - ($2::bigint * INTERVAL '1 day')",
+                )
+                .bind(aid)
+                .bind(days as i64)
+                .execute(pool)
+                .await?;
+            }
         }
 
         if let Some(days) = win_d {
-            sqlx::query(
-                "DELETE FROM window_events WHERE agent_id = $1 AND ts < NOW() - ($2::bigint * INTERVAL '1 day')",
-            )
-            .bind(aid)
-            .bind(days as i64)
-            .execute(pool)
-            .await?;
+            if days > 0 {
+                sqlx::query(
+                    "DELETE FROM window_events WHERE agent_id = $1 AND ts < NOW() - ($2::bigint * INTERVAL '1 day')",
+                )
+                .bind(aid)
+                .bind(days as i64)
+                .execute(pool)
+                .await?;
 
-            sqlx::query(
-                "DELETE FROM activity_log WHERE agent_id = $1 AND ts < NOW() - ($2::bigint * INTERVAL '1 day')",
-            )
-            .bind(aid)
-            .bind(days as i64)
-            .execute(pool)
-            .await?;
+                sqlx::query(
+                    "DELETE FROM activity_log WHERE agent_id = $1 AND ts < NOW() - ($2::bigint * INTERVAL '1 day')",
+                )
+                .bind(aid)
+                .bind(days as i64)
+                .execute(pool)
+                .await?;
+            }
         }
 
         if let Some(days) = url_d {
-            sqlx::query(
-                "DELETE FROM url_visits WHERE agent_id = $1 AND ts < NOW() - ($2::bigint * INTERVAL '1 day')",
-            )
-            .bind(aid)
-            .bind(days as i64)
-            .execute(pool)
-            .await?;
+            if days > 0 {
+                sqlx::query(
+                    "DELETE FROM url_visits WHERE agent_id = $1 AND ts < NOW() - ($2::bigint * INTERVAL '1 day')",
+                )
+                .bind(aid)
+                .bind(days as i64)
+                .execute(pool)
+                .await?;
+            }
         }
     }
 

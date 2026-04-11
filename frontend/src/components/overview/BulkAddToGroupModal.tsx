@@ -104,7 +104,7 @@ export function BulkAddToGroupModal({
             options={options}
             placeholder="Choose a group"
             disabled={groups === null || options.length === 0}
-            empty="No groups yet — open Agent groups under Notifications to create one."
+            empty="No groups yet — open Agent groups from the overview or the Groups page to create one."
           />
         </FormField>
       </SpaceBetween>
