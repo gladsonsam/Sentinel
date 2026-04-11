@@ -1,4 +1,9 @@
+import { useEffect, useState } from "react";
 import TopNavigation from "@cloudscape-design/components/top-navigation";
+import Badge from "@cloudscape-design/components/badge";
+import { api } from "../../lib/api";
+
+const VERSION_POLL_MS = 30 * 60 * 1000;
 
 interface TopNavProps {
   onLogout: () => void;
@@ -24,8 +29,67 @@ export function TopNav({
   onGoHome,
   currentUser = null,
 }: TopNavProps) {
+  const [versionLine, setVersionLine] = useState<{
+    label: string;
+    updateAvailable: boolean;
+    releasesUrl: string;
+    remoteVersion?: string;
+  } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = () => {
+      void api
+        .settingsVersionGet()
+        .then((v) => {
+          if (cancelled) return;
+          setVersionLine({
+            label: v.server_version,
+            updateAvailable: v.server_update_available,
+            releasesUrl: v.releases_url,
+            remoteVersion: v.latest_server_release ?? undefined,
+          });
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setVersionLine(null);
+        });
+    };
+
+    load();
+    const id = window.setInterval(load, VERSION_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
+
   return (
     <div id="sentinel-top-nav" className="sentinel-top-nav">
+      {versionLine && (
+        <div
+          className="sentinel-top-nav__meta"
+          aria-label={`Server version ${versionLine.label}`}
+        >
+          <span className="sentinel-top-nav__version">v{versionLine.label}</span>
+          {versionLine.updateAvailable ? (
+            <a
+              className="sentinel-top-nav__update"
+              href={versionLine.releasesUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={
+                versionLine.remoteVersion
+                  ? `Version ${versionLine.remoteVersion} is available on GitHub`
+                  : "A newer release may be available on GitHub"
+              }
+            >
+              <Badge color="blue">Update</Badge>
+            </a>
+          ) : null}
+        </div>
+      )}
       <TopNavigation
         identity={{
           href: "#",

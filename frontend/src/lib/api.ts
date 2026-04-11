@@ -307,8 +307,13 @@ export const api = {
   agentUpdateNow: (id: string): Promise<{ ok: boolean }> =>
     postEmpty(`/agents/${id}/update-now`),
 
-  settingsVersionGet: (): Promise<{ server_version: string; latest_agent_version: string | null }> =>
-    get("/settings/version"),
+  settingsVersionGet: (): Promise<{
+    server_version: string;
+    latest_server_release: string | null;
+    server_update_available: boolean;
+    latest_agent_version: string | null;
+    releases_url: string;
+  }> => get("/settings/version"),
 
   storageUsage: (): Promise<StorageUsage> => get("/settings/storage"),
 

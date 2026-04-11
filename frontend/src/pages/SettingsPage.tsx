@@ -37,7 +37,7 @@ export function SettingsPage({ themeMode, onThemeChange, onBack }: SettingsPageP
   const [settings] = useState<ServerSettings>(getServerSettings);
   const [retention, setRetention] = useState({ keylog_days: 30, window_days: 30, url_days: 30 });
   const [storage, setStorage] = useState<{ database_bytes: number; tables: { name: string; bytes: number }[] } | null>(null);
-  const [versions, setVersions] = useState<{ server_version: string; latest_agent_version: string | null } | null>(null);
+  const [versions, setVersions] = useState<Awaited<ReturnType<typeof api.settingsVersionGet>> | null>(null);
   const [loadingMeta, setLoadingMeta] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -205,6 +205,22 @@ export function SettingsPage({ themeMode, onThemeChange, onBack }: SettingsPageP
             <Box>
               <Box variant="awsui-key-label">Server version</Box>
               <div>{versions?.server_version ?? "—"}</div>
+            </Box>
+            <Box>
+              <Box variant="awsui-key-label">Latest GitHub release</Box>
+              <div>
+                {versions?.latest_server_release ?? "—"}
+                {versions?.releases_url ? (
+                  <Box fontSize="body-s" margin={{ top: "xs" }} color="text-body-secondary">
+                    <a href={versions.releases_url} target="_blank" rel="noopener noreferrer">
+                      Releases &amp; Docker (ghcr.io/gladsonsam/sentinel/server)
+                    </a>
+                    {versions.server_update_available ? (
+                      <span> — newer than this server</span>
+                    ) : null}
+                  </Box>
+                ) : null}
+              </div>
             </Box>
             <Box>
               <Box variant="awsui-key-label">Latest agent version</Box>

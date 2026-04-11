@@ -51,7 +51,13 @@ export function PageHeader({
   };
 
   const isAfk = agent.online && liveStatus?.activity === "afk";
-  const showInferredIdle = !isAfk && inferredIdleSeconds != null && inferredIdleSeconds >= 60;
+  /** Live "active" from WS must win over a stale activity_log–based inference. */
+  const liveSaysActive = agent.online && liveStatus?.activity === "active";
+  const showInferredIdle =
+    !isAfk &&
+    !liveSaysActive &&
+    inferredIdleSeconds != null &&
+    inferredIdleSeconds >= 60;
   const effectiveAfkIdleSecs =
     isAfk && typeof liveStatus?.idleSinceMs === "number"
       ? Math.max(0, Math.floor((nowMs - liveStatus.idleSinceMs) / 1000))

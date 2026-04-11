@@ -87,6 +87,7 @@ export function AgentDetailPage({
   }, [activeTab]);
 
   // Seed AFK/idle indicator from stored activity_log (so agent header can show it even before live WS events arrive).
+  // If keys/windows/URLs exist newer than that AFK row, the user has been active since — do not infer idle from stale AFK.
   useEffect(() => {
     let cancelled = false;
     const loadLastActivity = async () => {
@@ -104,11 +105,67 @@ export function AgentDetailPage({
         }
         const idleAtTransition = Number(row?.idle_secs ?? row?.idle_seconds ?? 0);
         const tsRaw = String(row?.ts ?? row?.timestamp ?? "");
-        const ts = parseTimestamp(tsRaw);
-        if (!ts) return;
+        const afkTs = parseTimestamp(tsRaw);
+        if (!afkTs) return;
+
+        const cred = { credentials: "include" as const };
+        const [keysRes, winRes, urlRes] = await Promise.all([
+          fetch(apiUrl(`/agents/${agent.id}/keys?limit=1&offset=0`), cred),
+          fetch(apiUrl(`/agents/${agent.id}/windows?limit=1&offset=0`), cred),
+          fetch(apiUrl(`/agents/${agent.id}/urls?limit=1&offset=0`), cred),
+        ]);
+
+        const newestAfterAfk = (body: unknown, tsKeys: string[]): Date | null => {
+          const arr = Array.isArray((body as { rows?: unknown })?.rows)
+            ? (body as { rows: Record<string, unknown>[] }).rows
+            : Array.isArray(body)
+              ? (body as Record<string, unknown>[])
+              : [];
+          const r = arr[0];
+          if (!r) return null;
+          for (const k of tsKeys) {
+            const d = parseTimestamp(String(r[k] ?? ""));
+            if (d && d.getTime() > afkTs.getTime()) return d;
+          }
+          return null;
+        };
+
+        let hasNewerTelemetry = false;
+        if (keysRes.ok) {
+          try {
+            hasNewerTelemetry ||= newestAfterAfk(await keysRes.json(), [
+              "updated_at",
+              "timestamp",
+              "ts",
+              "started_at",
+            ]) != null;
+          } catch {
+            /* ignore */
+          }
+        }
+        if (!hasNewerTelemetry && winRes.ok) {
+          try {
+            hasNewerTelemetry ||= newestAfterAfk(await winRes.json(), ["timestamp", "ts", "created"]) != null;
+          } catch {
+            /* ignore */
+          }
+        }
+        if (!hasNewerTelemetry && urlRes.ok) {
+          try {
+            hasNewerTelemetry ||= newestAfterAfk(await urlRes.json(), ["timestamp", "ts"]) != null;
+          } catch {
+            /* ignore */
+          }
+        }
+
+        if (hasNewerTelemetry) {
+          if (!cancelled) setInferredIdleSeconds(null);
+          return;
+        }
+
         const nowMs = Date.now();
         const base = Number.isFinite(idleAtTransition) && idleAtTransition > 0 ? idleAtTransition : 0;
-        const extra = Math.max(0, Math.floor((nowMs - ts.getTime()) / 1000));
+        const extra = Math.max(0, Math.floor((nowMs - afkTs.getTime()) / 1000));
         if (!cancelled) setInferredIdleSeconds(base + extra);
       } catch {
         // Ignore; header just won't show inferred idle.
@@ -118,6 +175,26 @@ export function AgentDetailPage({
     return () => {
       cancelled = true;
     };
+  }, [agent.id]);
+
+  useEffect(() => {
+    if (liveStatus?.activity === "active") {
+      setInferredIdleSeconds(null);
+    }
+  }, [liveStatus?.activity]);
+
+  useEffect(() => {
+    const clearsInferred = new Set(["active", "keys", "window_focus", "url"]);
+    const onWs = (e: Event) => {
+      const d = (e as CustomEvent<{ agent_id?: string; event?: string }>).detail;
+      if (!d || d.agent_id !== agent.id) return;
+      const ev = String(d.event ?? "");
+      if (clearsInferred.has(ev)) {
+        setInferredIdleSeconds(null);
+      }
+    };
+    window.addEventListener("sentinel-ws-event", onWs as EventListener);
+    return () => window.removeEventListener("sentinel-ws-event", onWs as EventListener);
   }, [agent.id]);
 
   useEffect(() => {

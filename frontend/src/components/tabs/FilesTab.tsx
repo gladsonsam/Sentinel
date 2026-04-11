@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef, type ChangeEvent } from "react";
 import Table from "@cloudscape-design/components/table";
 import Box from "@cloudscape-design/components/box";
 import Header from "@cloudscape-design/components/header";
@@ -28,6 +28,16 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
   const [downloading, setDownloading] = useState<string | null>(null);
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [, setChunksByPath] = useState<Record<string, string[]>>({});
+  const [uploading, setUploading] = useState<string | null>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadMessage, setUploadMessage] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const uploadWaiterRef = useRef<{
+    destPath: string;
+    resolve: (outcome: { ok: boolean; error?: string }) => void;
+  } | null>(null);
+
+  const RAW_UPLOAD_CHUNK = 32 * 1024;
 
   useEffect(() => {
     loadDirectory(currentPath);
@@ -62,6 +72,21 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
           setItems(data.data.items || []);
           setLoading(false);
         }
+      }
+
+      if (data.event === "file_upload_result") {
+        if (data.agent_id !== agentId) return;
+        const p = data.data?.path;
+        const w = uploadWaiterRef.current;
+        if (!w || !p) return;
+        if (p.toLowerCase() === w.destPath.toLowerCase()) {
+          w.resolve({
+            ok: !!data.data.ok,
+            error: typeof data.data.error === "string" ? data.data.error : undefined,
+          });
+          uploadWaiterRef.current = null;
+        }
+        return;
       }
 
       if (data.event === "file_chunk") {
@@ -110,6 +135,10 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
     setDownloading(null);
     setDownloadProgress(0);
     setChunksByPath({});
+    setUploading(null);
+    setUploadProgress(0);
+    setUploadMessage(null);
+    uploadWaiterRef.current = null;
   }, [agentId]);
 
   const navigateTo = (path: string) => {
@@ -159,6 +188,84 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
     return breadcrumbs;
   };
 
+  const canUpload =
+    Boolean(currentPath) &&
+    currentPath !== DRIVES_PATH;
+
+  const uint8ToBase64 = (bytes: Uint8Array): string => {
+    let binary = "";
+    const step = 8192;
+    for (let i = 0; i < bytes.length; i += step) {
+      binary += String.fromCharCode(...bytes.subarray(i, i + step));
+    }
+    return btoa(binary);
+  };
+
+  const runUpload = async (file: File) => {
+    if (!canUpload) return;
+    const destPath = currentPath.endsWith("\\")
+      ? currentPath + file.name
+      : currentPath + "\\" + file.name;
+    const totalChunks = Math.max(1, Math.ceil(file.size / RAW_UPLOAD_CHUNK));
+    setUploadMessage(null);
+    setUploading(destPath);
+    setUploadProgress(0);
+
+    const done = new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      uploadWaiterRef.current = { destPath, resolve };
+    });
+    const timeoutMs = Math.min(600_000, 30_000 + totalChunks * 2000);
+    const timeout = new Promise<{ ok: boolean; error?: string }>((resolve) => {
+      setTimeout(
+        () => resolve({ ok: false, error: "Upload timed out waiting for the agent." }),
+        timeoutMs,
+      );
+    });
+
+    try {
+      for (let i = 0; i < totalChunks; i++) {
+        const start = i * RAW_UPLOAD_CHUNK;
+        const end = Math.min(start + RAW_UPLOAD_CHUNK, file.size);
+        const slice = file.slice(start, end);
+        const buf = new Uint8Array(await slice.arrayBuffer());
+        const b64 = uint8ToBase64(buf);
+        sendWsMessage({
+          type: "control",
+          agent_id: agentId,
+          cmd: {
+            type: "WriteFileChunk",
+            path: destPath,
+            chunk_index: i,
+            total_chunks: totalChunks,
+            data: b64,
+          },
+        });
+        setUploadProgress(Math.round(((i + 1) / totalChunks) * 100));
+      }
+
+      const outcome = await Promise.race([done, timeout]);
+      uploadWaiterRef.current = null;
+      if (outcome.ok) {
+        setUploadMessage("Upload finished.");
+        loadDirectory(currentPath);
+      } else {
+        setUploadMessage(outcome.error?.trim() || "Upload failed.");
+      }
+    } catch {
+      setUploadMessage("Upload failed.");
+      uploadWaiterRef.current = null;
+    } finally {
+      setUploading(null);
+      setUploadProgress(0);
+    }
+  };
+
+  const onFileInputChange = (e: ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (f) void runUpload(f);
+  };
+
   const formatFileSize = (bytes: number): string => {
     if (bytes === 0) return "0 B";
     const k = 1024;
@@ -190,6 +297,27 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
           description={downloading}
         />
       )}
+
+      {uploading && (
+        <ProgressBar
+          value={uploadProgress}
+          label="Uploading file"
+          description={uploading}
+        />
+      )}
+
+      {uploadMessage && (
+        <Box color={uploadMessage.includes("failed") || uploadMessage.includes("timed out") || uploadMessage.includes("rejected") ? "text-status-error" : "text-status-success"}>
+          {uploadMessage}
+        </Box>
+      )}
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        style={{ display: "none" }}
+        onChange={onFileInputChange}
+      />
 
       <Table
         loading={loading}
@@ -234,7 +362,7 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
                   iconName="download"
                   variant="inline-icon"
                   onClick={() => handleDownload(item)}
-                  disabled={downloading !== null}
+                  disabled={downloading !== null || uploading !== null}
                 />
               ),
             width: 100,
@@ -243,7 +371,20 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
         items={items}
         variant="container"
         stickyHeader
-        header={<Header>File Browser</Header>}
+        header={
+          <Header
+            actions={
+              <Button
+                disabled={!canUpload || loading || downloading !== null || uploading !== null}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                Upload
+              </Button>
+            }
+          >
+            File Browser
+          </Header>
+        }
         empty={
           <Box textAlign="center" color="inherit">
             <Box variant="p" color="inherit">

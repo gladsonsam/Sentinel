@@ -69,6 +69,16 @@ mod url_scraper;
 mod win_icons;
 mod window_tracker;
 
+/// Single in-flight chunked upload from the dashboard (`WriteFileChunk`).
+struct FileUploadSession {
+    path: String,
+    next_expected_chunk: usize,
+    total_chunks: usize,
+    bytes_written: u64,
+}
+
+static FILE_UPLOAD_SESSION: Mutex<Option<FileUploadSession>> = Mutex::new(None);
+
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
@@ -1152,6 +1162,148 @@ fn handle_server_command(
                     tokio::time::sleep(std::time::Duration::from_millis(25)).await;
                 }
             });
+        }
+        "WriteFileChunk" => {
+            const MAX_FILE_PATH_CHARS: usize = 2048;
+            const MAX_FILE_BYTES: u64 = 100 * 1024 * 1024;
+            use base64::{engine::general_purpose, Engine as _};
+            use std::io::Write;
+
+            let path: String = val["path"]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .chars()
+                .take(MAX_FILE_PATH_CHARS)
+                .collect();
+            let total_chunks = val["total_chunks"].as_u64().unwrap_or(0) as usize;
+            let chunk_index = val["chunk_index"].as_u64().unwrap_or(0) as usize;
+            let data_b64 = val["data"].as_str().unwrap_or("");
+
+            let push_result =
+                |path_s: String, ok: bool, err: String, out: mpsc::Sender<Message>| {
+                    let payload = serde_json::json!({
+                        "type": "file_upload_result",
+                        "path": path_s,
+                        "ok": ok,
+                        "error": err,
+                    })
+                    .to_string();
+                    tokio::spawn(async move {
+                        let _ = out.send(Message::Text(payload)).await;
+                    });
+                };
+
+            if path.is_empty() || total_chunks == 0 || chunk_index >= total_chunks {
+                push_result(
+                    path,
+                    false,
+                    "invalid upload parameters".to_string(),
+                    out_tx.clone(),
+                );
+                return;
+            }
+
+            let decoded = match general_purpose::STANDARD.decode(data_b64) {
+                Ok(b) => b,
+                Err(e) => {
+                    let mut g = FILE_UPLOAD_SESSION.lock().unwrap();
+                    *g = None;
+                    push_result(
+                        path,
+                        false,
+                        format!("base64 decode: {e}"),
+                        out_tx.clone(),
+                    );
+                    return;
+                }
+            };
+
+            let mut g = FILE_UPLOAD_SESSION.lock().unwrap();
+            if chunk_index == 0 {
+                *g = Some(FileUploadSession {
+                    path: path.clone(),
+                    next_expected_chunk: 0,
+                    total_chunks,
+                    bytes_written: 0,
+                });
+            }
+            let session = match g.as_mut() {
+                Some(s) => s,
+                None => {
+                    drop(g);
+                    push_result(
+                        path,
+                        false,
+                        "missing upload session; send chunk 0 first".to_string(),
+                        out_tx.clone(),
+                    );
+                    return;
+                }
+            };
+            if session.path != path
+                || session.next_expected_chunk != chunk_index
+                || session.total_chunks != total_chunks
+            {
+                *g = None;
+                drop(g);
+                push_result(
+                    path,
+                    false,
+                    "upload chunk out of sequence or path mismatch".to_string(),
+                    out_tx.clone(),
+                );
+                return;
+            }
+
+            let new_total = session.bytes_written.saturating_add(decoded.len() as u64);
+            if new_total > MAX_FILE_BYTES {
+                *g = None;
+                drop(g);
+                push_result(
+                    path,
+                    false,
+                    "file exceeds maximum size (100 MiB)".to_string(),
+                    out_tx.clone(),
+                );
+                return;
+            }
+
+            let write_res = (|| {
+                if chunk_index == 0 {
+                    let mut f = std::fs::OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .truncate(true)
+                        .open(&path)?;
+                    f.write_all(&decoded)?;
+                    f.sync_all()?;
+                } else {
+                    let mut f = std::fs::OpenOptions::new().append(true).open(&path)?;
+                    f.write_all(&decoded)?;
+                    f.sync_all()?;
+                }
+                Ok::<(), std::io::Error>(())
+            })();
+
+            if let Err(e) = write_res {
+                *g = None;
+                drop(g);
+                push_result(path, false, e.to_string(), out_tx.clone());
+                return;
+            }
+
+            session.bytes_written = new_total;
+            session.next_expected_chunk = chunk_index + 1;
+            let done = chunk_index + 1 == total_chunks;
+            if done {
+                *g = None;
+            }
+            drop(g);
+
+            if done {
+                push_result(path, true, String::new(), out_tx.clone());
+            }
         }
         _ => {
             if let Err(e) = controller.handle_command(text) {

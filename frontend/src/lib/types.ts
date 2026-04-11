@@ -145,6 +145,11 @@ export type WsEvent =
       event: "file_chunk";
       agent_id: string;
       data: { path: string; data: string; chunk_index: number; total_chunks: number; is_error: boolean };
+    }
+  | {
+      event: "file_upload_result";
+      agent_id: string;
+      data: { path: string; ok: boolean; error?: string };
     };
 
 /** Server-side telemetry retention; `null` = keep forever. */

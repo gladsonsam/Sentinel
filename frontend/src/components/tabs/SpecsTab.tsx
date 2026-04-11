@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Container from "@cloudscape-design/components/container";
 import Header from "@cloudscape-design/components/header";
 import ColumnLayout from "@cloudscape-design/components/column-layout";
@@ -10,6 +10,58 @@ import ExpandableSection from "@cloudscape-design/components/expandable-section"
 import ProgressBar from "@cloudscape-design/components/progress-bar";
 import { apiUrl } from "../../lib/api";
 import type { AgentInfo } from "../../lib/types";
+import { copyToClipboard } from "../../lib/utils";
+
+function isIpv4Address(ip: string): boolean {
+  const t = ip.trim();
+  if (!t || t.includes(":")) return false;
+  return /^(?:\d{1,3}\.){3}\d{1,3}$/.test(t);
+}
+
+/** IPv4 first, then IPv6; stable order within each group. */
+function sortIpAddressesV4First(ips: string[]): string[] {
+  const v4: string[] = [];
+  const v6: string[] = [];
+  for (const ip of ips) {
+    (isIpv4Address(ip) ? v4 : v6).push(ip);
+  }
+  return [...v4, ...v6];
+}
+
+function CopyableInline({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, []);
+
+  const onActivate = async () => {
+    const ok = await copyToClipboard(text);
+    if (!ok) return;
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    setCopied(true);
+    timeoutRef.current = setTimeout(() => {
+      setCopied(false);
+      timeoutRef.current = null;
+    }, 1200);
+  };
+
+  return (
+    <button
+      type="button"
+      onClick={onActivate}
+      title="Copy to clipboard"
+      aria-label={`Copy ${text} to clipboard`}
+      className="sentinel-copyable-inline"
+      data-copied={copied ? "true" : undefined}
+    >
+      {copied ? "Copied" : text}
+    </button>
+  );
+}
 
 interface SpecsTabProps {
   agentId: string;
@@ -149,14 +201,23 @@ export function SpecsTab({ agentId, cachedInfo, agentOnline = true }: SpecsTabPr
           items={[
             {
               label: "MAC Address",
-              value: adapter.mac || "—",
+              value: adapter.mac?.trim() ? <CopyableInline text={adapter.mac.trim()} /> : "—",
             },
             {
               label: "IP Addresses",
               value:
-                adapter.ips && adapter.ips.length > 0
-                  ? adapter.ips.join(", ")
-                  : "—",
+                adapter.ips && adapter.ips.length > 0 ? (
+                  <span>
+                    {sortIpAddressesV4First(adapter.ips).map((ip, idx) => (
+                      <span key={`${ip}-${idx}`}>
+                        {idx > 0 ? ", " : null}
+                        <CopyableInline text={ip.trim()} />
+                      </span>
+                    ))}
+                  </span>
+                ) : (
+                  "—"
+                ),
             },
           ]}
         />

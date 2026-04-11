@@ -357,7 +357,7 @@ async fn dispatch_text(text: &str, agent_id: uuid::Uuid, name: &str, state: &Arc
             }
             Ok(())
         }
-        "dir_list" | "file_chunk" => Ok(()),
+        "dir_list" | "file_chunk" | "file_upload_result" => Ok(()),
         other => {
             warn!("Unknown event type '{other}' from {agent_id}");
             Ok(())
