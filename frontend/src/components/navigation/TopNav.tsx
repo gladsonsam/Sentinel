@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import TopNavigation from "@cloudscape-design/components/top-navigation";
-import Badge from "@cloudscape-design/components/badge";
 import { api } from "../../lib/api";
 
 const VERSION_POLL_MS = 30 * 60 * 1000;
@@ -65,35 +64,15 @@ export function TopNav({
     };
   }, []);
 
+  const identityTitle =
+    versionLine != null ? `Sentinel | v${versionLine.label}` : "Sentinel";
+
   return (
     <div id="sentinel-top-nav" className="sentinel-top-nav">
-      {versionLine && (
-        <div
-          className="sentinel-top-nav__meta"
-          aria-label={`Server version ${versionLine.label}`}
-        >
-          <span className="sentinel-top-nav__version">v{versionLine.label}</span>
-          {versionLine.updateAvailable ? (
-            <a
-              className="sentinel-top-nav__update"
-              href={versionLine.releasesUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              title={
-                versionLine.remoteVersion
-                  ? `Version ${versionLine.remoteVersion} is available on GitHub`
-                  : "A newer release may be available on GitHub"
-              }
-            >
-              <Badge color="blue">Update</Badge>
-            </a>
-          ) : null}
-        </div>
-      )}
       <TopNavigation
         identity={{
           href: "#",
-          title: "Sentinel",
+          title: identityTitle,
           logo: {
             src: `${import.meta.env.BASE_URL}favicon.svg`,
             alt: "Sentinel",
@@ -111,6 +90,24 @@ export function TopNav({
                   text: "Back to overview",
                   iconName: "angle-left" as const,
                   onClick: onBackToOverview,
+                },
+              ]
+            : []),
+          ...(versionLine?.updateAvailable
+            ? [
+                {
+                  type: "button" as const,
+                  variant: "link" as const,
+                  text: "Update",
+                  title:
+                    versionLine.remoteVersion != null
+                      ? `Version ${versionLine.remoteVersion} is available on GitHub`
+                      : "A newer release may be available on GitHub",
+                  href: versionLine.releasesUrl,
+                  target: "_blank",
+                  rel: "noopener noreferrer",
+                  external: true,
+                  externalIconAriaLabel: "Opens in a new tab",
                 },
               ]
             : []),

@@ -200,47 +200,6 @@
   max-inline-size: none;
 }
 
-/* Server version + GitHub update hint (positioned after product title in TopNavigation). */
-#sentinel-top-nav.sentinel-top-nav {
-  position: relative;
-}
-
-#sentinel-top-nav.sentinel-top-nav .sentinel-top-nav__meta {
-  position: absolute;
-  left: 0;
-  top: 0;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  height: 100%;
-  padding-left: 9.25rem;
-  pointer-events: none;
-  max-width: min(40vw, 22rem);
-}
-
-#sentinel-top-nav.sentinel-top-nav .sentinel-top-nav__version {
-  font-size: 0.6875rem;
-  line-height: 1.2;
-  font-weight: 400;
-  letter-spacing: 0.01em;
-  color: var(--awsui-color-text-body-secondary, #9ba7b4);
-  white-space: nowrap;
-}
-
-#sentinel-top-nav.sentinel-top-nav .sentinel-top-nav__update {
-  pointer-events: auto;
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-}
-
-#sentinel-top-nav.sentinel-top-nav .sentinel-top-nav__update:focus-visible {
-  outline: 2px solid var(--awsui-color-border-item-focused, #0972d3);
-  outline-offset: 2px;
-  border-radius: 4px;
-}
-
 /* Custom component styles */
 .sentinel-agent-card {
   transition: all 0.2s ease;
@@ -553,26 +512,27 @@
   font-size: 0.875rem;
 }
 
-/* Click-to-copy values (Specs network details, etc.) */
+/* Click-to-copy values (Specs network details, etc.) — plain text until hover */
 button.sentinel-copyable-inline {
   display: inline;
   margin: 0;
-  padding: 0;
+  padding: 0.0625rem 0.125rem;
   border: none;
+  border-radius: 2px;
   background: none;
   font: inherit;
   color: inherit;
   cursor: pointer;
   text-align: inherit;
-  text-decoration: underline dotted;
-  text-underline-offset: 2px;
+  text-decoration: none;
   max-width: 100%;
   word-break: break-all;
   vertical-align: baseline;
 }
 
-button.sentinel-copyable-inline:hover {
+button.sentinel-copyable-inline:hover:not([data-copied="true"]) {
   color: var(--awsui-color-text-link-default);
+  background: color-mix(in srgb, var(--awsui-color-text-link-default) 14%, transparent);
 }
 
 button.sentinel-copyable-inline:focus-visible {
@@ -581,7 +541,6 @@ button.sentinel-copyable-inline:focus-visible {
 }
 
 button.sentinel-copyable-inline[data-copied="true"] {
-  text-decoration: none;
   color: var(--sentinel-success);
 }
 

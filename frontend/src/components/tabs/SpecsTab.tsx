@@ -18,14 +18,27 @@ function isIpv4Address(ip: string): boolean {
   return /^(?:\d{1,3}\.){3}\d{1,3}$/.test(t);
 }
 
-/** IPv4 first, then IPv6; stable order within each group. */
-function sortIpAddressesV4First(ips: string[]): string[] {
+/** Split addresses into IPv4 and IPv6 lists (original order preserved in each). */
+function partitionIpAddresses(ips: string[]): { v4: string[]; v6: string[] } {
   const v4: string[] = [];
   const v6: string[] = [];
   for (const ip of ips) {
     (isIpv4Address(ip) ? v4 : v6).push(ip);
   }
-  return [...v4, ...v6];
+  return { v4, v6 };
+}
+
+function CopyableAddressList({ ips }: { ips: string[] }) {
+  return (
+    <>
+      {ips.map((ip, idx) => (
+        <span key={`${ip}-${idx}`}>
+          {idx > 0 ? ", " : null}
+          <CopyableInline text={ip.trim()} />
+        </span>
+      ))}
+    </>
+  );
 }
 
 function CopyableInline({ text }: { text: string }) {
@@ -205,19 +218,24 @@ export function SpecsTab({ agentId, cachedInfo, agentOnline = true }: SpecsTabPr
             },
             {
               label: "IP Addresses",
-              value:
-                adapter.ips && adapter.ips.length > 0 ? (
-                  <span>
-                    {sortIpAddressesV4First(adapter.ips).map((ip, idx) => (
-                      <span key={`${ip}-${idx}`}>
-                        {idx > 0 ? ", " : null}
-                        <CopyableInline text={ip.trim()} />
-                      </span>
-                    ))}
-                  </span>
-                ) : (
-                  "—"
-                ),
+              value: (() => {
+                if (!adapter.ips?.length) return "—";
+                const { v4, v6 } = partitionIpAddresses(adapter.ips);
+                return (
+                  <Box variant="div">
+                    {v4.length > 0 ? (
+                      <Box variant="div" margin={{ bottom: v6.length > 0 ? "xs" : undefined }}>
+                        <CopyableAddressList ips={v4} />
+                      </Box>
+                    ) : null}
+                    {v6.length > 0 ? (
+                      <Box variant="div">
+                        <CopyableAddressList ips={v6} />
+                      </Box>
+                    ) : null}
+                  </Box>
+                );
+              })(),
             },
           ]}
         />
