@@ -4,7 +4,7 @@ import Button from "@cloudscape-design/components/button";
 import ButtonDropdown from "@cloudscape-design/components/button-dropdown";
 import type { ButtonDropdownProps } from "@cloudscape-design/components/button-dropdown";
 
-const BULK_ACTION_ITEMS: ButtonDropdownProps.ItemOrGroup[] = [
+const BULK_ACTION_BASE: ButtonDropdownProps.ItemOrGroup[] = [
   { id: "wake", text: "Wake selected" },
   { id: "script", text: "Run script on selected" },
   { id: "restart", text: "Restart selected" },
@@ -19,6 +19,8 @@ interface FullPageHeaderProps {
   onBulkScript: () => void;
   onRestartSelected: () => void;
   onShutdownSelected: () => void;
+  /** Admin: add all selected agents to an agent group (opens group picker from overview). */
+  onBulkAddToGroup?: () => void;
 }
 
 export function FullPageHeader({
@@ -29,7 +31,16 @@ export function FullPageHeader({
   onBulkScript,
   onRestartSelected,
   onShutdownSelected,
+  onBulkAddToGroup,
 }: FullPageHeaderProps) {
+  const bulkItems: ButtonDropdownProps.ItemOrGroup[] =
+    onBulkAddToGroup != null
+      ? [
+          ...BULK_ACTION_BASE,
+          { id: "add_group", text: "Add selected to group" },
+        ]
+      : BULK_ACTION_BASE;
+
   const onBulkActionClick: ButtonDropdownProps["onItemClick"] = ({ detail }) => {
     switch (detail.id) {
       case "wake":
@@ -43,6 +54,9 @@ export function FullPageHeader({
         break;
       case "shutdown":
         onShutdownSelected();
+        break;
+      case "add_group":
+        onBulkAddToGroup?.();
         break;
       default:
         break;
@@ -60,7 +74,7 @@ export function FullPageHeader({
           </Button>
           {selectedCount > 0 && (
             <ButtonDropdown
-              items={BULK_ACTION_ITEMS}
+              items={bulkItems}
               onItemClick={onBulkActionClick}
               variant="normal"
               ariaLabel={`Bulk actions for ${selectedCount} selected agent${selectedCount === 1 ? "" : "s"}`}

@@ -2,20 +2,24 @@
 
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
-use std::sync::mpsc;
+use std::sync::{mpsc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use tracing::{error, info, warn};
 use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::LUID;
-use windows::Win32::Foundation::{CloseHandle, HANDLE};
+use windows::Win32::Foundation::{CloseHandle, LocalFree, HANDLE, HLOCAL};
+use windows::Win32::Security::Authorization::{
+    ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+};
 use windows::Win32::Security::{
     AdjustTokenPrivileges, DuplicateTokenEx, LookupPrivilegeValueW, SecurityImpersonation,
-    TokenPrimary, SE_PRIVILEGE_ENABLED, TOKEN_ACCESS_MASK, TOKEN_ADJUST_DEFAULT,
-    TOKEN_ADJUST_PRIVILEGES, TOKEN_ADJUST_SESSIONID, TOKEN_ASSIGN_PRIMARY, TOKEN_DUPLICATE,
-    TOKEN_PRIVILEGES, TOKEN_QUERY,
+    TokenPrimary, PSECURITY_DESCRIPTOR, SE_PRIVILEGE_ENABLED, TOKEN_ACCESS_MASK,
+    TOKEN_ADJUST_DEFAULT, TOKEN_ADJUST_PRIVILEGES, TOKEN_ADJUST_SESSIONID, TOKEN_ASSIGN_PRIMARY,
+    TOKEN_DUPLICATE, TOKEN_PRIVILEGES, TOKEN_QUERY, SECURITY_ATTRIBUTES,
 };
+use windows::core::w;
 use windows::Win32::System::Environment::{CreateEnvironmentBlock, DestroyEnvironmentBlock};
 use windows::Win32::System::RemoteDesktop::{WTSGetActiveConsoleSessionId, WTSQueryUserToken};
 use windows::Win32::System::Threading::{
@@ -26,11 +30,141 @@ use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 use windows_service::service::{
     ServiceControl, ServiceControlAccept, ServiceExitCode, ServiceState, ServiceStatus, ServiceType,
 };
-use windows_service::service_control_handler::{self, ServiceControlHandlerResult};
+use windows_service::service_control_handler::{
+    self, ServiceControlHandlerResult, ServiceStatusHandle,
+};
 use windows_service::service_dispatcher;
+
+use std::sync::OnceLock;
+
+/// `std::process::exit` does not run `Drop`; `tracing_appender::non_blocking` only flushes when its
+/// `WorkerGuard` is dropped. Register the guard from `--service` `main` so we can drop it before
+/// `process::exit` during MSI self-update.
+static SERVICE_LOG_GUARD: Mutex<Option<tracing_appender::non_blocking::WorkerGuard>> =
+    Mutex::new(None);
+
+pub fn set_service_log_guard(guard: tracing_appender::non_blocking::WorkerGuard) {
+    let mut slot = SERVICE_LOG_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    *slot = Some(guard);
+}
+
+fn flush_service_logs_before_exit() {
+    let mut slot = SERVICE_LOG_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    slot.take();
+}
+
+/// Windows Installer / SCM may wait until the service reports `SERVICE_STOPPED` before continuing.
+static SERVICE_STATUS_HANDLE_FOR_MSI_EXIT: OnceLock<ServiceStatusHandle> = OnceLock::new();
+
+fn report_service_stopped_to_scm_before_process_exit() {
+    if let Some(h) = SERVICE_STATUS_HANDLE_FOR_MSI_EXIT.get() {
+        let status = ServiceStatus {
+            service_type: ServiceType::OWN_PROCESS,
+            current_state: ServiceState::Stopped,
+            controls_accepted: ServiceControlAccept::empty(),
+            exit_code: ServiceExitCode::Win32(0),
+            checkpoint: 0,
+            wait_hint: Duration::default(),
+            process_id: None,
+        };
+        match h.set_service_status(status) {
+            Ok(()) => info!("Updater: reported SERVICE_STOPPED to SCM."),
+            Err(e) => warn!("Updater: could not report SERVICE_STOPPED before exit ({e:#}); MSI may appear idle."),
+        }
+    }
+}
+
+fn exit_service_process_for_msi_update() -> ! {
+    report_service_stopped_to_scm_before_process_exit();
+    flush_service_logs_before_exit();
+    // Allow the non-blocking worker to finish writing after the guard shutdown signal.
+    std::thread::sleep(Duration::from_millis(200));
+    std::process::exit(0);
+}
 
 const SERVICE_NAME: &str = "SentinelAgentService";
 windows_service::define_windows_service!(ffi_service_main, service_main);
+
+/// Must match `PIPE_NAME` in `updater_client.rs`.
+const UPDATER_PIPE_NAME: &str = r"\\.\pipe\SentinelAgentUpdater";
+
+/// Max bytes for one updater JSON line (see `updater_client::pipe_request_line`).
+const MAX_UPDATER_PIPE_LINE: usize = 256 * 1024;
+
+/// Responses must end with `\n` so the user-session client can `read_until` without waiting for EOF.
+fn updater_pipe_reply(json: serde_json::Value) -> String {
+    let mut s = json.to_string();
+    s.push('\n');
+    s
+}
+
+/// Serialize installer work so concurrent pipe requests do not overlap `msiexec` / downloads.
+fn updater_job_mutex() -> &'static tokio::sync::Mutex<()> {
+    static M: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    M.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
+/// Default named-pipe DACL only allows the creator (LocalSystem). The user-session agent
+/// connects without elevation — grant authenticated users read/write so `update_via_service` works.
+fn create_sentinel_updater_pipe_server(
+) -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
+    use std::ffi::c_void;
+    use std::io;
+    use tokio::net::windows::named_pipe::ServerOptions;
+
+    let mut p_sd = PSECURITY_DESCRIPTOR(std::ptr::null_mut());
+    unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            w!("D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)"),
+            SDDL_REVISION_1,
+            &mut p_sd,
+            None,
+        )
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("updater pipe SDDL: {e}")))?;
+    }
+
+    let mut sa = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: p_sd.0,
+        bInheritHandle: false.into(),
+    };
+
+    let server = unsafe {
+        ServerOptions::new().create_with_security_attributes_raw(
+            UPDATER_PIPE_NAME,
+            &mut sa as *mut SECURITY_ATTRIBUTES as *mut c_void,
+        )
+    };
+
+    unsafe {
+        if !p_sd.0.is_null() {
+            let _ = LocalFree(Some(HLOCAL(p_sd.0)));
+        }
+    }
+
+    server
+}
+
+/// Create a listening pipe instance, blocking until it succeeds.
+///
+/// Must stay **synchronous** (no `.await`) when replacing the listener after a client connects:
+/// otherwise the current-thread runtime spends whole minutes inside a pipe handler
+/// without ever polling `connect()` on the new instance → clients see error 231 (pipe busy).
+fn ensure_sentinel_updater_pipe_server() -> tokio::net::windows::named_pipe::NamedPipeServer {
+    let mut attempts = 0u32;
+    loop {
+        match create_sentinel_updater_pipe_server() {
+            Ok(s) => return s,
+            Err(e) => {
+                attempts += 1;
+                if attempts == 1 || attempts.is_multiple_of(25) {
+                    warn!("Failed to create named pipe (attempt {attempts}): {e}");
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    }
+}
 
 pub fn run_windows_service() -> windows_service::Result<()> {
     service_dispatcher::start(SERVICE_NAME, ffi_service_main)
@@ -61,6 +195,7 @@ fn run_service() -> windows_service::Result<()> {
             ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
             _ => ServiceControlHandlerResult::NotImplemented,
         })?;
+    let _ = SERVICE_STATUS_HANDLE_FOR_MSI_EXIT.set(status_handle);
 
     status_handle.set_service_status(ServiceStatus {
         service_type: ServiceType::OWN_PROCESS,
@@ -75,20 +210,20 @@ fn run_service() -> windows_service::Result<()> {
     info!("Service started; waiting for user sessions and update requests.");
     let mut launched_for_session: Option<u32> = None;
 
-    // Run updater pipe + periodic updates on a small Tokio runtime.
-    let rt = tokio::runtime::Builder::new_current_thread()
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
         .enable_all()
         .build()
         .map_err(|e| windows_service::Error::Winapi(e.into()))?;
 
     rt.block_on(async move {
         use std::os::windows::process::CommandExt;
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        use tokio::net::windows::named_pipe::ServerOptions;
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
         use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 
-        let mut update_interval = tokio::time::interval(Duration::from_secs(60 * 60 * 6));
-        update_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        // Create the next pipe instance synchronously after each accept so another client never
+        // hits ERROR_PIPE_BUSY (231) while a long handler runs.
+        let mut server = ensure_sentinel_updater_pipe_server();
 
         loop {
             // Stop requested?
@@ -112,43 +247,152 @@ fn run_service() -> windows_service::Result<()> {
                 }
             }
 
-            // Pipe: accept quick "update_now" requests.
-            let server = match ServerOptions::new().create(r"\\.\pipe\SentinelAgentUpdater") {
-                Ok(s) => s,
-                Err(e) => {
-                    warn!("Failed to create named pipe: {e}");
-                    tokio::time::sleep(Duration::from_millis(250)).await;
-                    continue;
-                }
-            };
-
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_millis(250)) => {}
                 res = server.connect() => {
                     if let Err(e) = res {
                         warn!("Named pipe connect failed: {e}");
                     } else {
-                        let mut pipe = server;
-                        let mut buf = Vec::with_capacity(16 * 1024);
-                        if pipe.read_to_end(&mut buf).await.is_ok() && !buf.is_empty() {
-                            let action = serde_json::from_slice::<serde_json::Value>(&buf)
-                                .ok()
-                                .and_then(|v| v.get("action").and_then(|x| x.as_str()).map(|s| s.to_string()))
-                                .unwrap_or_default();
-                            if action == "update_now" {
-                                let r = update_and_install_latest().await;
-                                let resp = match r {
-                                    Ok(()) => serde_json::json!({"ok": true}).to_string(),
-                                    Err(e) => serde_json::json!({"ok": false, "error": format!("{e:#}")}).to_string(),
-                                };
+                        let pipe = server;
+                        server = ensure_sentinel_updater_pipe_server();
+
+                        tokio::spawn(async move {
+                            let mut reader = BufReader::new(pipe);
+                            let mut buf = Vec::new();
+                            match reader.read_until(b'\n', &mut buf).await {
+                                Ok(0) => {
+                                    warn!("Updater pipe: EOF before request line");
+                                    let mut pipe = reader.into_inner();
+                                    let resp = updater_pipe_reply(serde_json::json!({
+                                        "ok": false,
+                                        "error": "empty updater pipe request",
+                                    }));
+                                    let _ = pipe.write_all(resp.as_bytes()).await;
+                                    let _ = pipe.flush().await;
+                                    return;
+                                }
+                                Ok(_) => {}
+                                Err(e) => {
+                                    warn!("Updater pipe: read failed: {e:#}");
+                                    let mut pipe = reader.into_inner();
+                                    let resp = updater_pipe_reply(serde_json::json!({
+                                        "ok": false,
+                                        "error": format!("pipe read: {e:#}"),
+                                    }));
+                                    let _ = pipe.write_all(resp.as_bytes()).await;
+                                    let _ = pipe.flush().await;
+                                    return;
+                                }
+                            }
+                            while matches!(buf.last().copied(), Some(b'\n' | b'\r')) {
+                                buf.pop();
+                            }
+                            if buf.is_empty() {
+                                warn!("Updater pipe: empty request line");
+                                let mut pipe = reader.into_inner();
+                                let resp = updater_pipe_reply(serde_json::json!({
+                                    "ok": false,
+                                    "error": "empty updater pipe request",
+                                }));
                                 let _ = pipe.write_all(resp.as_bytes()).await;
                                 let _ = pipe.flush().await;
+                                return;
                             }
-                        }
+                            if buf.len() > MAX_UPDATER_PIPE_LINE {
+                                warn!("Updater pipe: request line too large ({})", buf.len());
+                                let mut pipe = reader.into_inner();
+                                let resp = updater_pipe_reply(serde_json::json!({
+                                    "ok": false,
+                                    "error": "updater pipe request too large",
+                                }));
+                                let _ = pipe.write_all(resp.as_bytes()).await;
+                                let _ = pipe.flush().await;
+                                return;
+                            }
+
+                            let v: serde_json::Value = match serde_json::from_slice(&buf) {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    let mut pipe = reader.into_inner();
+                                    let resp = updater_pipe_reply(serde_json::json!({
+                                        "ok": false,
+                                        "error": format!("invalid JSON on updater pipe: {e}"),
+                                    }));
+                                    let _ = pipe.write_all(resp.as_bytes()).await;
+                                    let _ = pipe.flush().await;
+                                    return;
+                                }
+                            };
+                            let mut pipe = reader.into_inner();
+                            let action = v
+                                .get("action")
+                                .and_then(|x| x.as_str())
+                                .unwrap_or("")
+                                .to_string();
+
+                            let _job = updater_job_mutex().lock().await;
+
+                            // Reply on the pipe before starting msiexec so StopServices cannot tear
+                            // down the runtime before the client reads the line.
+                            let mut msi_to_run_after_reply: Option<std::path::PathBuf> = None;
+
+                            let resp = if action == "install_msi" {
+                                match v.get("msi_path").and_then(|x| x.as_str()) {
+                                    None | Some("") => serde_json::json!({
+                                        "ok": false,
+                                        "error": "install_msi requires msi_path",
+                                    })
+                                    .to_string(),
+                                    Some(path_str) => {
+                                        let p = std::path::PathBuf::from(path_str);
+                                        match trusted_staged_msi_path(&p) {
+                                            Ok(canon) => {
+                                                msi_to_run_after_reply = Some(canon);
+                                                serde_json::json!({
+                                                    "ok": true,
+                                                    "status": "install_started",
+                                                })
+                                                .to_string()
+                                            }
+                                            Err(e) => serde_json::json!({"ok": false, "error": format!("{e:#}")})
+                                                .to_string(),
+                                        }
+                                    }
+                                }
+                            } else {
+                                serde_json::json!({
+                                    "ok": false,
+                                    "error": format!("unknown pipe action: {action:?} (expected install_msi)"),
+                                })
+                                .to_string()
+                            };
+
+                            let mut resp = resp;
+                            if !resp.ends_with('\n') {
+                                resp.push('\n');
+                            }
+                            let _ = pipe.write_all(resp.as_bytes()).await;
+                            let _ = pipe.flush().await;
+                            if msi_to_run_after_reply.is_some() {
+                                info!("Updater: pipe reply flushed; starting msiexec");
+                            }
+
+                            if let Some(msi_path) = msi_to_run_after_reply {
+                                match launch_msi_detached(&msi_path) {
+                                    Ok(()) => {
+                                        kill_sentinel_user_processes_best_effort();
+                                        info!("Updater: exiting service process for MSI install");
+                                        exit_service_process_for_msi_update();
+                                    }
+                                    Err(e) => {
+                                        warn!(
+                                            "Updater: msiexec spawn failed after pipe reply; client may have exited ({e:#})"
+                                        );
+                                    }
+                                }
+                            }
+                        });
                     }
-                }
-                _ = update_interval.tick() => {
-                    let _ = update_and_install_latest().await;
                 }
             }
 
@@ -272,63 +516,85 @@ pub(crate) fn to_wide_z(s: &str) -> Vec<u16> {
         .collect()
 }
 
-async fn update_and_install_latest() -> Result<()> {
-    use futures_util::StreamExt;
+/// Only MSIs under the user’s `%LOCALAPPDATA%\\…\\sentinel\\updates` (same tree the agent stages).
+fn trusted_staged_msi_path(path: &std::path::Path) -> Result<std::path::PathBuf> {
+    use anyhow::bail;
+    let meta = std::fs::metadata(path)
+        .with_context(|| format!("MSI not found at {}", path.display()))?;
+    if !meta.is_file() {
+        bail!("MSI path is not a regular file");
+    }
+    let canon = path
+        .canonicalize()
+        .with_context(|| format!("could not canonicalize {}", path.display()))?;
+    if !msi_path_has_allowed_staging_prefix(&canon) {
+        bail!(
+            "refusing msiexec outside staging dirs: {}",
+            canon.display()
+        );
+    }
+    Ok(canon)
+}
+
+/// `canonicalize()` yields a `\\?\` verbatim path; `msiexec` is happier with a normal `C:\...` string.
+fn msi_path_for_msiexec_argument(canon: &std::path::Path) -> std::path::PathBuf {
+    let lossy = canon.as_os_str().to_string_lossy();
+    if let Some(rest) = lossy.strip_prefix(r"\\?\") {
+        std::path::PathBuf::from(rest)
+    } else {
+        canon.to_path_buf()
+    }
+}
+
+fn msi_path_has_allowed_staging_prefix(canon: &std::path::Path) -> bool {
+    let mut s = canon.as_os_str().to_string_lossy().to_ascii_lowercase();
+    if let Some(rest) = s.strip_prefix(r"\\?\") {
+        s = rest.to_string();
+    }
+    let s = s.replace('/', "\\");
+    s.ends_with(".msi")
+        && !s.contains("..")
+        && s.contains("\\appdata\\local\\sentinel\\updates\\")
+}
+
+/// After the pipe reply is flushed; do not run while the updater client is still blocked on read.
+/// Uses `spawn` without waiting so a wedged `taskkill` cannot block the service exit path.
+fn kill_sentinel_user_processes_best_effort() {
     use std::os::windows::process::CommandExt;
-    use tokio::io::AsyncWriteExt;
     use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 
-    let latest = crate::updater_manifest::fetch_latest_info().await?;
-    info!("Updater: latest agent version reported as {}", latest.version);
-
-    let current = env!("CARGO_PKG_VERSION");
-    if latest.version.trim_start_matches('v') == current.trim_start_matches('v') {
-        return Ok(());
-    }
-
-    let dir = program_data_path("updates");
-    let _ = tokio::fs::create_dir_all(&dir).await;
-    let msi_path = dir.join(format!("SentinelAgent_{}.msi", latest.version));
-    let tmp_path = dir.join(format!("SentinelAgent_{}.msi.part", latest.version));
-
-    let res = reqwest::Client::new()
-        .get(&latest.url)
-        .timeout(Duration::from_secs(300))
-        .send()
-        .await?
-        .error_for_status()?;
-    let mut stream = res.bytes_stream();
-    let mut f = tokio::fs::File::create(&tmp_path).await?;
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk?;
-        f.write_all(&chunk).await?;
-    }
-    f.flush().await?;
-
-    let bytes = tokio::fs::read(&tmp_path).await?;
-    crate::updater_client::verify_msi_signature(&bytes, &latest.signature)?;
-    if msi_path.exists() {
-        let _ = tokio::fs::remove_file(&msi_path).await;
-    }
-    tokio::fs::rename(&tmp_path, &msi_path).await?;
-
-    info!("Updater: installing MSI {}", msi_path.display());
     let _ = std::process::Command::new("taskkill")
         .creation_flags(CREATE_NO_WINDOW.0)
         .args(["/F", "/IM", "Sentinel Agent.exe"])
-        .status();
+        .spawn();
     let _ = std::process::Command::new("taskkill")
         .creation_flags(CREATE_NO_WINDOW.0)
         .args(["/F", "/IM", "sentinel-agent.exe"])
-        .status();
+        .spawn();
+}
 
-    let status = std::process::Command::new("msiexec.exe")
+/// Spawn `%SystemRoot%\\System32\\msiexec.exe /i … /qn /norestart` (no wait on this thread).
+/// Call only after the pipe reply is flushed; caller then exits the service process.
+fn launch_msi_detached(msi_path: &std::path::Path) -> Result<()> {
+    use std::os::windows::process::CommandExt;
+    use windows::Win32::System::Threading::CREATE_NO_WINDOW;
+
+    let msi_arg = msi_path_for_msiexec_argument(msi_path);
+    info!("Updater: launching MSI {}", msi_arg.display());
+
+    let system_root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+    let msiexec = std::path::Path::new(&system_root)
+        .join("System32")
+        .join("msiexec.exe");
+
+    let _child = std::process::Command::new(&msiexec)
         .creation_flags(CREATE_NO_WINDOW.0)
-        .args(["/i", &msi_path.to_string_lossy(), "/qn", "/norestart"])
-        .status()?;
-    if !status.success() {
-        anyhow::bail!("msiexec exit={}", status.code().unwrap_or(-1));
-    }
+        .arg("/i")
+        .arg(&msi_arg)
+        .args(["/qn", "/norestart"])
+        .spawn()
+        .context("msiexec spawn")?;
+    info!("Updater: msiexec process started");
     Ok(())
 }
 

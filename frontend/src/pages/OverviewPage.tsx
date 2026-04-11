@@ -3,6 +3,7 @@ import ContentLayout from "@cloudscape-design/components/content-layout";
 import type { Agent, AgentInfo, AgentLiveStatus } from "../lib/types";
 import { AgentCard } from "../components/overview/AgentCard";
 import { BulkScriptModal } from "../components/overview/BulkScriptModal";
+import { BulkAddToGroupModal } from "../components/overview/BulkAddToGroupModal";
 import { LoadingAgentsState, NoAgentsState } from "../components/common/EmptyState";
 
 interface OverviewPageProps {
@@ -17,6 +18,8 @@ interface OverviewPageProps {
   onBatchWake: (agentIds: string[]) => void;
   onBatchRestart: (agentIds: string[]) => void;
   onBatchShutdown: (agentIds: string[]) => void;
+  /** Admin: show “Add selected to group” in bulk actions. */
+  adminBulkGroupAssignment?: boolean;
 }
 
 export function OverviewPage({
@@ -31,9 +34,11 @@ export function OverviewPage({
   onBatchWake,
   onBatchRestart,
   onBatchShutdown,
+  adminBulkGroupAssignment,
 }: OverviewPageProps) {
   const hasAgents = Object.keys(agents).length > 0;
   const [bulkScriptIds, setBulkScriptIds] = useState<string[] | null>(null);
+  const [bulkGroupIds, setBulkGroupIds] = useState<string[] | null>(null);
 
   return (
     <ContentLayout>
@@ -52,12 +57,18 @@ export function OverviewPage({
           onBulkScript={(ids) => setBulkScriptIds(ids)}
           onBatchRestart={onBatchRestart}
           onBatchShutdown={onBatchShutdown}
+          onBulkAddToGroup={
+            adminBulkGroupAssignment ? (ids) => setBulkGroupIds(ids) : undefined
+          }
         />
       ) : (
         <NoAgentsState />
       )}
       {bulkScriptIds && bulkScriptIds.length > 0 && (
         <BulkScriptModal agentIds={bulkScriptIds} onDismiss={() => setBulkScriptIds(null)} />
+      )}
+      {bulkGroupIds && bulkGroupIds.length > 0 && (
+        <BulkAddToGroupModal agentIds={bulkGroupIds} onDismiss={() => setBulkGroupIds(null)} />
       )}
     </ContentLayout>
   );

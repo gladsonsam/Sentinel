@@ -197,10 +197,24 @@ export interface LocalUiPasswordAgentState {
 
 export type DashboardRole = "admin" | "operator" | "viewer";
 
+/** Session user from `GET /api/me` (includes CSRF for mutating API calls). */
+export interface DashboardSessionUser {
+  id: string;
+  username: string;
+  role: DashboardRole;
+  display_icon?: string | null;
+  csrf_token?: string;
+}
+
+/** Subset passed into the shell / top navigation. */
+export type DashboardNavUser = Pick<DashboardSessionUser, "username" | "role" | "display_icon">;
+
 export interface DashboardUser {
   id: string;
   username: string;
   role: DashboardRole;
+  /** Optional emoji or short glyph shown in the dashboard; initials are used when unset. */
+  display_icon?: string | null;
   created_at: string;
 }
 
@@ -223,6 +237,13 @@ export interface AgentGroup {
   description: string;
   created_at: string;
   member_count: number;
+}
+
+/** Subset returned for one agent’s group memberships (no counts or timestamps). */
+export interface AgentGroupMembership {
+  id: string;
+  name: string;
+  description: string;
 }
 
 export type AlertRuleScopeKind = "all" | "group" | "agent";

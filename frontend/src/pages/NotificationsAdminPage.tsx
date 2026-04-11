@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import ContentLayout from "@cloudscape-design/components/content-layout";
 import Header from "@cloudscape-design/components/header";
 import SpaceBetween from "@cloudscape-design/components/space-between";
@@ -207,10 +207,45 @@ function ScreenshotCell({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
+function parseMainTab(v: string | null): MainTabId {
+  if (v === "groups" || v === "rules" || v === "history") return v;
+  return "groups";
+}
+
 export function NotificationsAdminPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const isNarrow = useMediaQuery("(max-width: 768px)");
-  const [mainTab, setMainTab] = useState<MainTabId>("rules");
+
+  const mainTab = parseMainTab(searchParams.get("tab"));
+
+  const setMainTab = useCallback(
+    (id: MainTabId) => {
+      setSearchParams(
+        (prev) => {
+          const n = new URLSearchParams(prev);
+          n.set("tab", id);
+          return n;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
+
+  useEffect(() => {
+    const t = searchParams.get("tab");
+    if (t === null || t === "") {
+      setSearchParams(
+        (prev) => {
+          const n = new URLSearchParams(prev);
+          n.set("tab", "groups");
+          return n;
+        },
+        { replace: true },
+      );
+    }
+  }, [searchParams, setSearchParams]);
   const [groups, setGroups] = useState<AgentGroup[] | null>(null);
   const [rules, setRules] = useState<AlertRule[] | null>(null);
   const [agentsList, setAgentsList] = useState<Agent[]>([]);
@@ -222,6 +257,8 @@ export function NotificationsAdminPage() {
 
   const [membersModal, setMembersModal] = useState<null | { group: AgentGroup; memberIds: string[] }>(null);
   const [addAgentId, setAddAgentId] = useState<string>("");
+  type AddableMemberRow = { agentId: string; label: string };
+  const [membersAddSelection, setMembersAddSelection] = useState<AddableMemberRow[]>([]);
 
   const [ruleModal, setRuleModal] = useState<null | { mode: "create" } | { mode: "edit"; rule: AlertRule }>(null);
   const [ruleForm, setRuleForm] = useState({
@@ -473,6 +510,7 @@ export function NotificationsAdminPage() {
       const { agent_ids } = await api.agentGroupMembers(g.id);
       setMembersModal({ group: g, memberIds: agent_ids });
       setAddAgentId("");
+      setMembersAddSelection([]);
     } catch (e: unknown) {
       setError(String((e as Error)?.message ?? e));
     }
@@ -485,6 +523,32 @@ export function NotificationsAdminPage() {
       await api.agentGroupMembersAdd(membersModal.group.id, { agent_ids: [addAgentId] });
       const { agent_ids } = await api.agentGroupMembers(membersModal.group.id);
       setMembersModal({ ...membersModal, memberIds: agent_ids });
+      setAddAgentId("");
+      setMembersAddSelection([]);
+      await load();
+    } catch (e: unknown) {
+      setError(String((e as Error)?.message ?? e));
+    }
+  };
+
+  const addableMemberRows: AddableMemberRow[] = useMemo(() => {
+    if (!membersModal) return [];
+    const set = new Set(membersModal.memberIds);
+    return agentOptions
+      .filter((o) => !set.has(o.value))
+      .map((o) => ({ agentId: o.value, label: o.label }));
+  }, [membersModal, agentOptions]);
+
+  const addSelectedMembers = async () => {
+    if (!membersModal || membersAddSelection.length === 0) return;
+    setError(null);
+    try {
+      await api.agentGroupMembersAdd(membersModal.group.id, {
+        agent_ids: membersAddSelection.map((r) => r.agentId),
+      });
+      const { agent_ids } = await api.agentGroupMembers(membersModal.group.id);
+      setMembersModal({ ...membersModal, memberIds: agent_ids });
+      setMembersAddSelection([]);
       setAddAgentId("");
       await load();
     } catch (e: unknown) {
@@ -499,6 +563,7 @@ export function NotificationsAdminPage() {
       await api.agentGroupMemberRemove(membersModal.group.id, agentId);
       const { agent_ids } = await api.agentGroupMembers(membersModal.group.id);
       setMembersModal({ ...membersModal, memberIds: agent_ids });
+      setMembersAddSelection([]);
       await load();
     } catch (e: unknown) {
       setError(String((e as Error)?.message ?? e));
@@ -531,6 +596,22 @@ export function NotificationsAdminPage() {
       scopes: [emptyScopeRow()],
     });
     setRuleModal({ mode: "create" });
+  };
+
+  const openCreateRuleForGroup = (groupId: string, groupName: string) => {
+    setRuleForm({
+      name: groupName ? `${groupName} — ` : "",
+      channel: "url",
+      pattern: "",
+      match_mode: "substring",
+      case_insensitive: true,
+      cooldown_secs: 300,
+      enabled: true,
+      take_screenshot: false,
+      scopes: [{ kind: "group", group_id: groupId, agent_id: "" }],
+    });
+    setRuleModal({ mode: "create" });
+    setMainTab("rules");
   };
 
   const openEditRule = (rule: AlertRule) => {
@@ -645,9 +726,10 @@ export function NotificationsAdminPage() {
   }, [membersModal, agentOptions]);
 
   const groupRowActions = (): ButtonDropdownProps.ItemOrGroup[] => [
-    { id: "members", text: "Members" },
-    { id: "rename", text: "Rename" },
-    { id: "delete", text: "Delete" },
+    { id: "members", text: "Manage members" },
+    { id: "rule", text: "New alert rule for group" },
+    { id: "rename", text: "Edit name & description" },
+    { id: "delete", text: "Delete group" },
   ];
 
   const ruleRowActions = (): ButtonDropdownProps.ItemOrGroup[] => [
@@ -658,6 +740,7 @@ export function NotificationsAdminPage() {
 
   const onGroupAction = (g: AgentGroup, id: string) => {
     if (id === "members") void openMembers(g);
+    else if (id === "rule") openCreateRuleForGroup(g.id, g.name);
     else if (id === "rename") openEditGroup(g);
     else if (id === "delete") setDeleteGroup(g);
   };
@@ -779,8 +862,10 @@ export function NotificationsAdminPage() {
   const groupsPanel = (
     <SpaceBetween size="l">
       <Box variant="p" color="text-body-secondary">
-        Create groups of agents, then attach alert rules to <b>all agents</b>, a <b>group</b>, or a{" "}
-        <b>single agent</b> under Alert rules. Matches surface in the dashboard when telemetry arrives.
+        Use groups to target many computers with the same URL or keystroke rules. Click a group name to manage
+        members, use <b>New alert rule for group</b> to pre-fill scope, or add several agents at once inside the
+        members dialog. You can also assign from each computer&apos;s <b>Settings</b> tab or bulk-add from the
+        overview.
       </Box>
       {!isNarrow && <Button onClick={openCreateGroup}>Create group</Button>}
       {isNarrow ? (
@@ -794,7 +879,9 @@ export function NotificationsAdminPage() {
               <Box key={g.id} variant="div" className="sentinel-users-mobile-card">
                 <SpaceBetween size="s">
                   <Box variant="h3" tagOverride="div" fontSize="heading-m">
-                    {g.name}
+                    <Button variant="inline-link" onClick={() => void openMembers(g)}>
+                      {g.name}
+                    </Button>
                   </Box>
                   <Box color="text-body-secondary">{g.description || "—"}</Box>
                   <Box color="text-body-secondary" fontSize="body-s">
@@ -818,7 +905,15 @@ export function NotificationsAdminPage() {
       ) : (
         <Table
           columnDefinitions={[
-            { id: "name", header: "Name", cell: (g) => g.name },
+            {
+              id: "name",
+              header: "Name",
+              cell: (g) => (
+                <Button variant="inline-link" onClick={() => void openMembers(g)}>
+                  {g.name}
+                </Button>
+              ),
+            },
             { id: "desc", header: "Description", cell: (g) => g.description || "—" },
             { id: "n", header: "Members", cell: (g) => String(g.member_count) },
             {
@@ -1016,10 +1111,10 @@ export function NotificationsAdminPage() {
       header={
         <Header
           variant="h1"
-          description="URL and keystroke patterns that trigger in-dashboard notifications. Scoped globally, by agent group, or per agent."
+          description="Organize agents into groups, attach URL/keystroke alert rules (all agents, per group, or one computer), and review fired notifications. Use the account menu for quick access to groups vs rules."
           actions={isNarrow ? undefined : headerActions}
         >
-          Notifications
+          Groups &amp; notifications
         </Header>
       }
     >
@@ -1040,9 +1135,9 @@ export function NotificationsAdminPage() {
                 label="View"
                 selectedId={mainTab}
                 options={[
+                  { id: "groups", text: "Agent groups" },
                   { id: "rules", text: "Alert rules" },
                   { id: "history", text: "History" },
-                  { id: "groups", text: "Agent groups" },
                 ]}
                 onChange={({ detail }) => setMainTab(detail.selectedId as MainTabId)}
               />
@@ -1057,9 +1152,9 @@ export function NotificationsAdminPage() {
               activeTabId={mainTab}
               onChange={({ detail }) => setMainTab(detail.activeTabId as MainTabId)}
               tabs={[
+                { label: "Agent groups", id: "groups", content: groupsPanel },
                 { label: "Alert rules", id: "rules", content: rulesPanel },
                 { label: "History", id: "history", content: globalHistoryPanel },
-                { label: "Agent groups", id: "groups", content: groupsPanel },
               ]}
             />
           )}
@@ -1133,6 +1228,34 @@ export function NotificationsAdminPage() {
               </SpaceBetween>
             </div>
           </FormField>
+          {addableMemberRows.length > 0 && (
+            <SpaceBetween size="s">
+              <Header variant="h3">Add several agents</Header>
+              <Table
+                trackBy="agentId"
+                variant="embedded"
+                selectionType="multi"
+                selectedItems={membersAddSelection}
+                onSelectionChange={({ detail }) =>
+                  setMembersAddSelection((detail.selectedItems ?? []) as AddableMemberRow[])
+                }
+                columnDefinitions={[
+                  {
+                    id: "agent",
+                    header: "Agent",
+                    cell: (r: AddableMemberRow) => r.label,
+                  },
+                ]}
+                items={addableMemberRows}
+              />
+              <Button
+                disabled={membersAddSelection.length === 0}
+                onClick={() => void addSelectedMembers()}
+              >
+                Add selected ({membersAddSelection.length})
+              </Button>
+            </SpaceBetween>
+          )}
           {isNarrow ? (
             (membersModal?.memberIds.length ?? 0) === 0 ? (
               <Box color="text-body-secondary">No members in this group.</Box>

@@ -699,6 +699,35 @@ button.sentinel-copyable-inline.sentinel-copyable-inline--flash {
   min-width: 96px;
 }
 
+/* ── Dashboard user avatars (team page + top nav) ─────────────────────────── */
+
+.sentinel-user-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  flex-shrink: 0;
+  line-height: 1;
+  box-sizing: border-box;
+  border: 1px solid var(--awsui-color-border-divider-default, rgba(0, 0, 0, 0.15));
+  overflow: hidden;
+  user-select: none;
+}
+
+.sentinel-user-avatar--glyph {
+  background: var(--awsui-color-background-container-content, #fff);
+}
+
+.sentinel-user-avatar--initials {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.sentinel-top-nav-account-avatar {
+  margin-inline-end: 6px;
+  vertical-align: middle;
+}
+
 /* ── Users page (narrow viewports) ───────────────────────────────────────── */
 
 .sentinel-users-page,

@@ -2,6 +2,7 @@ import { DashboardLayout } from "../layouts/DashboardLayout";
 import { SettingsPage } from "../pages/SettingsPage";
 import type { NotificationItem } from "../hooks/useNotifications";
 import type { ThemeMode } from "../hooks/useTheme";
+import type { DashboardNavUser } from "../lib/types";
 
 interface Props {
   themeMode: ThemeMode;
@@ -12,8 +13,9 @@ interface Props {
   onOpenActivityLog: () => void;
   onOpenUsers: () => void;
   onOpenNotifications?: () => void;
+  onOpenAgentGroups?: () => void;
   onGoHome: () => void;
-  currentUser?: { username: string; role: "admin" | "operator" | "viewer" } | null;
+  currentUser?: DashboardNavUser | null;
   notifications: NotificationItem[];
   onDismissNotification: (id: string) => void;
   toolsOpen: boolean;
@@ -29,6 +31,7 @@ export function AuthenticatedSettings({
   onOpenActivityLog,
   onOpenUsers,
   onOpenNotifications,
+  onOpenAgentGroups,
   onGoHome,
   currentUser = null,
   notifications,
@@ -44,6 +47,7 @@ export function AuthenticatedSettings({
       onOpenActivityLog={onOpenActivityLog}
       onOpenUsers={onOpenUsers}
       onOpenNotifications={onOpenNotifications}
+      onOpenAgentGroups={onOpenAgentGroups}
       onGoHome={onGoHome}
       contentType="default"
       currentUser={currentUser}

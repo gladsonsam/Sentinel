@@ -44,10 +44,10 @@ pub struct Config {
     #[serde(default = "empty_password_hash")]
     pub ui_password_hash: String,
 
-    /// Whether the agent should auto-update itself via Tauri updater.
-    ///
-    /// This can be toggled locally in the agent UI and can also be enforced by the server
-    /// via a push command.
+    /// When true, checks for updates ~45s after startup and every 6 hours (default off).
+    /// Windows: silent MSI via `update_via_service`; other platforms: Tauri updater. Server
+    /// `update_now` and the **Agent | v…** link still work regardless. Toggle locally or via
+    /// `set_auto_update`.
     #[serde(default = "default_auto_update_enabled")]
     pub auto_update_enabled: bool,
 }
@@ -61,7 +61,7 @@ fn empty_password_hash() -> String {
 }
 
 fn default_auto_update_enabled() -> bool {
-    true
+    false
 }
 
 impl Default for Config {
@@ -183,6 +183,29 @@ pub fn save_config(config: &Config) -> anyhow::Result<()> {
     let _ = std::fs::remove_file(old_path);
 
     Ok(())
+}
+
+// ─── Settings UI reopen after MSI update (from "Download and install" in the webview) ─────
+
+fn reopen_settings_ui_marker_path() -> PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("sentinel")
+        .join("reopen_settings_ui.marker")
+}
+
+/// Call before exiting for an update started from the settings UI so the next launch shows the window.
+pub fn request_reopen_settings_ui_after_restart() {
+    let path = reopen_settings_ui_marker_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::File::create(&path);
+}
+
+/// If the marker exists, remove it and return true (next launch should show settings).
+pub fn take_reopen_settings_ui_after_restart() -> bool {
+    std::fs::remove_file(reopen_settings_ui_marker_path()).is_ok()
 }
 
 // ─── Agent status ─────────────────────────────────────────────────────────────

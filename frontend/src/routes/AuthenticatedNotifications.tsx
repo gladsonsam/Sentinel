@@ -1,6 +1,7 @@
 import { DashboardLayout } from "../layouts/DashboardLayout";
 import { NotificationsAdminPage } from "../pages/NotificationsAdminPage";
 import type { NotificationItem } from "../hooks/useNotifications";
+import type { DashboardNavUser } from "../lib/types";
 
 interface Props {
   onLogout: () => void;
@@ -8,8 +9,9 @@ interface Props {
   onOpenActivityLog: () => void;
   onOpenUsers: () => void;
   onOpenNotifications?: () => void;
+  onOpenAgentGroups?: () => void;
   onGoHome: () => void;
-  currentUser?: { username: string; role: "admin" | "operator" | "viewer" } | null;
+  currentUser?: DashboardNavUser | null;
   notifications: NotificationItem[];
   onDismissNotification: (id: string) => void;
   toolsOpen: boolean;
@@ -22,6 +24,7 @@ export function AuthenticatedNotifications({
   onOpenActivityLog,
   onOpenUsers,
   onOpenNotifications,
+  onOpenAgentGroups,
   onGoHome,
   currentUser = null,
   notifications,
@@ -37,6 +40,7 @@ export function AuthenticatedNotifications({
       onOpenActivityLog={onOpenActivityLog}
       onOpenUsers={onOpenUsers}
       onOpenNotifications={onOpenNotifications}
+      onOpenAgentGroups={onOpenAgentGroups}
       onGoHome={onGoHome}
       contentType="default"
       currentUser={currentUser}

@@ -156,13 +156,14 @@
                     ErrorControl="normal"
                     Account="LocalSystem"
                     Arguments="--service" />
+                <!-- Wait=no avoids blocking on service-stop handshakes; the service reports STOPPED before ExitProcess. -->
                 <ServiceControl
                     Id="SvcControlSentinel"
                     Name="SentinelAgentService"
                     Start="install"
                     Stop="both"
                     Remove="uninstall"
-                    Wait="yes" />
+                    Wait="no" />
                 {{#each file_associations as |association| ~}}
                 {{#each association.ext as |ext| ~}}
                 <ProgId Id="{{../../product_name}}.{{ext}}" Advertise="yes" Description="{{association.description}}">

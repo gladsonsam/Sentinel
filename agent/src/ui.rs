@@ -22,6 +22,8 @@
 //! | `verify_ui_password` | `()` or Err              | Check UI password                    |
 //! | `hide_window`        | `()`                     | Hide the settings window             |
 //! | `exit_agent`         | never                    | Kill the process                     |
+//! | `check_manual_update`| `ManualUpdateCheckResponse` | Compare build to `latest.json` (Windows) |
+//! | `apply_manual_update`| `ManualApplyUpdateResponse` | Download + service `msiexec` (Windows) |
 
 use std::sync::{Arc, Mutex};
 use std::sync::OnceLock;
@@ -30,11 +32,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 #[cfg(not(target_os = "windows"))]
 use tauri_plugin_updater::UpdaterExt;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::config::{AgentStatus, Config};
-#[cfg(target_os = "windows")]
-use crate::updater_client;
 
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
@@ -73,7 +73,20 @@ pub struct SaveConfigPayload {
 }
 
 fn default_auto_update_enabled() -> bool {
-    true
+    false
+}
+
+#[derive(serde::Serialize)]
+pub struct ManualUpdateCheckResponse {
+    pub update_available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub published_version: Option<String>,
+    pub running_version: String,
+}
+
+#[derive(serde::Serialize)]
+pub struct ManualApplyUpdateResponse {
+    pub outcome: String,
 }
 
 // ─── Tauri commands ────────────────────────────────────────────────────────────
@@ -181,6 +194,54 @@ fn exit_agent() {
     std::process::exit(0);
 }
 
+#[cfg(target_os = "windows")]
+#[tauri::command]
+async fn check_manual_update() -> Result<ManualUpdateCheckResponse, String> {
+    let r = crate::updater_client::check_manual_update_available()
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+    Ok(ManualUpdateCheckResponse {
+        update_available: r.update_available,
+        published_version: r.published_version,
+        running_version: r.running_version,
+    })
+}
+
+#[cfg(target_os = "windows")]
+#[tauri::command]
+async fn apply_manual_update() -> Result<ManualApplyUpdateResponse, String> {
+    use crate::updater_client::{exit_for_update, update_via_service, UpdateViaServiceOutcome};
+    use std::time::Duration;
+    match update_via_service().await {
+        Ok(UpdateViaServiceOutcome::UpToDate) => Ok(ManualApplyUpdateResponse {
+            outcome: "up_to_date".into(),
+        }),
+        Ok(UpdateViaServiceOutcome::InstallStarted) => {
+            crate::config::request_reopen_settings_ui_after_restart();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                exit_for_update();
+            });
+            Ok(ManualApplyUpdateResponse {
+                outcome: "install_started".into(),
+            })
+        }
+        Err(e) => Err(format!("{e:#}")),
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+async fn check_manual_update() -> Result<ManualUpdateCheckResponse, String> {
+    Err("Sentinel MSI update checks are only supported on Windows.".into())
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+async fn apply_manual_update() -> Result<ManualApplyUpdateResponse, String> {
+    Err("Sentinel MSI installs from the settings UI are only supported on Windows.".into())
+}
+
 // ─── Public entry point ────────────────────────────────────────────────────────
 
 /// Build and run the Tauri event loop.  **Blocks the calling thread forever**
@@ -219,84 +280,97 @@ pub fn run_tauri(
             verify_ui_password,
             hide_window,
             exit_agent,
+            check_manual_update,
+            apply_manual_update,
         ])
         // ── Setup ────────────────────────────────────────────────────────────
         .setup(move |app| {
             let _ = APP_HANDLE.set(app.handle().clone());
 
-            // Check for updates in the background (if enabled).
-            //
-            // If an update is found, we download + install it (Windows will exit
-            // before running the installer due to platform limitations).
-            let _handle_for_updates = app.handle().clone();
-            let stored_cfg = app
-                .state::<StoredConfig>()
-                .0
-                .clone();
-            tauri::async_runtime::spawn(async move {
-                // Never crash the agent over updater issues; just log.
-                let result: Result<(), String> = async {
-                    // Re-check periodically so server/local toggles apply without restart.
-                    let mut interval =
-                        tokio::time::interval(std::time::Duration::from_secs(60 * 60 * 6));
-                    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            // When `auto_update_enabled` is true (default off): check shortly after app startup,
+            // then every 6 hours. Windows uses `update_via_service` + MSI; other OSes use Tauri updater.
+            const AUTO_UPDATE_STARTUP_DELAY_SECS: u64 = 45;
+            const AUTO_UPDATE_INTERVAL_SECS: u64 = 60 * 60 * 6;
 
+            #[cfg(target_os = "windows")]
+            {
+                use crate::updater_client::{update_via_service, UpdateViaServiceOutcome};
+                let stored_cfg = app.state::<StoredConfig>().0.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(AUTO_UPDATE_STARTUP_DELAY_SECS))
+                        .await;
                     loop {
-                        // Run immediately, then every interval.
                         let enabled = stored_cfg
                             .lock()
                             .map(|c| c.auto_update_enabled)
-                            .unwrap_or(true);
-                        if !enabled {
-                            interval.tick().await;
-                            continue;
+                            .unwrap_or(false);
+                        if enabled {
+                            match update_via_service().await {
+                                Ok(UpdateViaServiceOutcome::InstallStarted) => {
+                                    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                                    crate::updater_client::exit_for_update();
+                                }
+                                Ok(UpdateViaServiceOutcome::UpToDate) => {}
+                                Err(e) => warn!("Auto-update (Windows): {e:#}"),
+                            }
                         }
+                        tokio::time::sleep(std::time::Duration::from_secs(AUTO_UPDATE_INTERVAL_SECS))
+                            .await;
+                    }
+                });
+            }
 
-                    #[cfg(target_os = "windows")]
-                    {
-                        // Machine-wide silent updates are performed by the elevated updater service.
-                        // We download + verify in user mode, then ask the service to install.
-                        if let Err(e) = updater_client::update_via_service().await {
-                            error!("Updater error (service mode): {e:#}");
-                            interval.tick().await;
-                            continue;
+            #[cfg(not(target_os = "windows"))]
+            {
+                let handle_for_updates = app.handle().clone();
+                let stored_cfg = app.state::<StoredConfig>().0.clone();
+                tauri::async_runtime::spawn(async move {
+                    let result: Result<(), String> = async {
+                        tokio::time::sleep(std::time::Duration::from_secs(
+                            AUTO_UPDATE_STARTUP_DELAY_SECS,
+                        ))
+                        .await;
+                        loop {
+                            let enabled = stored_cfg
+                                .lock()
+                                .map(|c| c.auto_update_enabled)
+                                .unwrap_or(false);
+                            if enabled {
+                                let update = handle_for_updates
+                                    .updater_builder()
+                                    .build()
+                                    .map_err(|e| e.to_string())?
+                                    .check()
+                                    .await
+                                    .map_err(|e| e.to_string())?;
+
+                                if let Some(update) = update {
+                                    info!(
+                                        "Update available: {} ({:?})",
+                                        update.version, update.date
+                                    );
+                                    update
+                                        .download_and_install(
+                                            |_downloaded, _content_length| {},
+                                            || {},
+                                        )
+                                        .await
+                                        .map_err(|e| format!("{e:?}"))?;
+                                }
+                            }
+                            tokio::time::sleep(std::time::Duration::from_secs(
+                                AUTO_UPDATE_INTERVAL_SECS,
+                            ))
+                            .await;
                         }
-                        updater_client::exit_for_update();
                     }
+                    .await;
 
-                    #[cfg(not(target_os = "windows"))]
-                    {
-                        let update = handle_for_updates
-                            .updater_builder()
-                            .build()
-                            .map_err(|e| e.to_string())?
-                            .check()
-                            .await
-                            .map_err(|e| e.to_string())?;
-
-                        let Some(update) = update else {
-                            interval.tick().await;
-                            continue;
-                        };
-
-                        info!(
-                            "Update available: {} ({:?})",
-                            update.version, update.date
-                        );
-                        update
-                            .download_and_install(|_downloaded, _content_length| {}, || {})
-                            .await
-                            .map_err(|e| format!("{e:?}"))?;
-                        interval.tick().await;
+                    if let Err(e) = result {
+                        error!("Updater error: {e}");
                     }
-                    }
-                }
-                .await;
-
-                if let Err(e) = result {
-                    error!("Updater error: {e}");
-                }
-            });
+                });
+            }
 
             let win = app.get_webview_window("main").expect("main window missing");
 

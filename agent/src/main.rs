@@ -60,6 +60,8 @@ mod service;
 #[cfg(target_os = "windows")]
 mod updater_client;
 #[cfg(target_os = "windows")]
+use crate::updater_client::UpdateViaServiceOutcome;
+#[cfg(target_os = "windows")]
 mod updater_manifest;
 mod software_inventory;
 mod system_info;
@@ -224,7 +226,10 @@ fn main() {
 
     #[cfg(target_os = "windows")]
     if args.iter().any(|a| a == "--service") {
-        let _log_guard = init_logging(Some(program_data_log_path("service.log")));
+        let log_guard = init_logging(Some(program_data_log_path("service.log")));
+        if let Some(g) = log_guard {
+            service::set_service_log_guard(g);
+        }
         info!("Sentinel agent v{}", env!("CARGO_PKG_VERSION"));
         info!("Starting in Windows service mode.");
         if let Err(e) = service::run_windows_service() {
@@ -274,7 +279,8 @@ fn main() {
                     "1" | "true" | "TRUE" | "yes" | "YES" | "on" | "ON"
                 )
             })
-            .unwrap_or(false);
+            .unwrap_or(false)
+        || crate::config::take_reopen_settings_ui_after_restart();
 
     // Allow disabling the UI entirely (headless mode). Useful when running the
     // agent as a scheduled task / service where a window surface cannot be created.
@@ -875,8 +881,7 @@ fn handle_server_command(
                 let tx = out_tx.clone();
                 tokio::spawn(async move {
                     match crate::updater_client::update_via_service().await {
-                        Ok(()) => {
-                            // Let the server know we're exiting for update.
+                        Ok(UpdateViaServiceOutcome::InstallStarted) => {
                             let _ = tx
                                 .send(Message::Text(
                                     serde_json::json!({
@@ -889,8 +894,20 @@ fn handle_server_command(
                                 .await;
                             crate::updater_client::exit_for_update();
                         }
+                        Ok(UpdateViaServiceOutcome::UpToDate) => {
+                            let _ = tx
+                                .send(Message::Text(
+                                    serde_json::json!({
+                                        "type": "notify",
+                                        "level": "info",
+                                        "message": "Already running the latest published version (no install needed)."
+                                    })
+                                    .to_string(),
+                                ))
+                                .await;
+                        }
                         Err(e) => {
-                            warn!("Update-now via service failed: {e:#}");
+                            warn!("Update via service failed: {e:#}");
                         }
                     }
                 });

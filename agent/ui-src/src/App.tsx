@@ -9,6 +9,8 @@
  *   get_status()  -> { status: "Connected"|"Connecting"|"Disconnected"|"Error", message?: string }
  *   exit_agent()  -> never
  *   hide_window() -> void
+ *   check_manual_update() -> { update_available, published_version?, running_version }
+ *   apply_manual_update() -> { outcome: "up_to_date" | "install_started" }
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -48,6 +50,24 @@ interface StatusResponse {
   status: ConnectionStatus;
   message?: string;
 }
+
+interface ManualUpdateCheckResponse {
+  update_available: boolean;
+  published_version?: string;
+  running_version: string;
+}
+
+interface ManualApplyUpdateResponse {
+  outcome: string;
+}
+
+type UpdateDialogState =
+  | null
+  | { phase: "checking" }
+  | { phase: "uptodate" }
+  | { phase: "available"; publishedVersion: string }
+  | { phase: "error"; message: string }
+  | { phase: "installing" };
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -209,7 +229,7 @@ function SettingsPanel() {
     agent_name: "",
     agent_password: "",
     ui_password_hash: "",
-    auto_update_enabled: true,
+    auto_update_enabled: false,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -219,6 +239,7 @@ function SettingsPanel() {
   const [pwOpen, setPwOpen] = useState(false);
   const [newPw, setNewPw] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
+  const [updateDialog, setUpdateDialog] = useState<UpdateDialogState>(null);
 
   const saveMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -290,6 +311,44 @@ function SettingsPanel() {
     invoke("exit_agent").catch(() => {});
   }, []);
 
+  const openUpdateCheck = useCallback(async () => {
+    setUpdateDialog({ phase: "checking" });
+    try {
+      const r = await invoke<ManualUpdateCheckResponse>("check_manual_update");
+      if (r.update_available && r.published_version) {
+        setUpdateDialog({ phase: "available", publishedVersion: r.published_version });
+      } else {
+        setUpdateDialog({ phase: "uptodate" });
+      }
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      setUpdateDialog({ phase: "error", message });
+    }
+  }, []);
+
+  const applyManualUpdate = useCallback(async () => {
+    setUpdateDialog({ phase: "installing" });
+    try {
+      const r = await invoke<ManualApplyUpdateResponse>("apply_manual_update");
+      if (r.outcome === "install_started") {
+        return;
+      }
+      if (r.outcome === "up_to_date") {
+        setUpdateDialog({ phase: "uptodate" });
+      }
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      setUpdateDialog({ phase: "error", message });
+    }
+  }, []);
+
+  const closeUpdateDialog = useCallback(() => {
+    setUpdateDialog((d) => {
+      if (d?.phase === "installing") return d;
+      return null;
+    });
+  }, []);
+
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-bg">
@@ -304,10 +363,26 @@ function SettingsPanel() {
         <div className="sentinel-agent-topnav-identity">
           <img src="/favicon.svg" alt="" width={22} height={22} />
           <span className="sentinel-agent-topnav-title">Sentinel</span>
-          <span className="sentinel-agent-topnav-tag">Agent</span>
-          {appVersion ? (
-            <span className="sentinel-agent-topnav-version">v{appVersion}</span>
-          ) : null}
+          <div className="sentinel-agent-topnav-agent-row" title="Check for updates">
+            <span className="sentinel-agent-topnav-agent-label">Agent</span>
+            {appVersion ? (
+              <>
+                <span className="sentinel-agent-topnav-agent-sep" aria-hidden>
+                  |
+                </span>
+                <button
+                  type="button"
+                  className="sentinel-agent-topnav-version-btn"
+                  onClick={() => void openUpdateCheck()}
+                  disabled={
+                    updateDialog?.phase === "checking" || updateDialog?.phase === "installing"
+                  }
+                >
+                  v{appVersion}
+                </button>
+              </>
+            ) : null}
+          </div>
         </div>
         <StatusBadge
           status={status.status}
@@ -360,7 +435,6 @@ function SettingsPanel() {
             </FormGroup>
 
             <FormGroup>
-              <Label htmlFor="auto-update-enabled">Auto updates</Label>
               <label className="sentinel-agent-toggle">
                 <input
                   id="auto-update-enabled"
@@ -370,9 +444,7 @@ function SettingsPanel() {
                     setConfig((c) => ({ ...c, auto_update_enabled: e.target.checked }))
                   }
                 />
-                <span>
-                  Automatically download and install updates (recommended)
-                </span>
+                <span>Auto updates</span>
               </label>
             </FormGroup>
             
@@ -468,6 +540,94 @@ function SettingsPanel() {
           Reopen anytime: <kbd className="sentinel-kbd">Ctrl+Shift+F12</kbd>
         </p>
       </main>
+
+      {updateDialog !== null && (
+        <div
+          className="sentinel-agent-modal-backdrop"
+          onClick={closeUpdateDialog}
+          role="presentation"
+        >
+          <div
+            className="sentinel-agent-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="update-dialog-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {updateDialog.phase === "checking" && (
+              <>
+                <h2 id="update-dialog-title" className="text-base font-semibold mb-3">
+                  Checking for updates
+                </h2>
+                <div className="flex items-center gap-2 text-sm text-muted">
+                  <Loader2 size={18} className="animate-spin shrink-0" />
+                  Contacting update server…
+                </div>
+              </>
+            )}
+
+            {updateDialog.phase === "uptodate" && (
+              <>
+                <h2 id="update-dialog-title" className="text-base font-semibold mb-2">
+                  You&apos;re up to date
+                </h2>
+                <p className="text-sm text-muted mb-4">
+                  This build matches the latest published Sentinel agent version.
+                </p>
+                <button type="button" className="sentinel-btn-primary" onClick={closeUpdateDialog}>
+                  OK
+                </button>
+              </>
+            )}
+
+            {updateDialog.phase === "available" && (
+              <>
+                <h2 id="update-dialog-title" className="text-base font-semibold mb-2">
+                  Update available
+                </h2>
+                <p className="text-sm mb-4">
+                  Version <strong>{updateDialog.publishedVersion}</strong> is available. The agent
+                  will download the installer and restart. When the update finishes, this settings
+                  window opens again automatically.
+                </p>
+                <div className="flex flex-wrap gap-2 justify-end">
+                  <button type="button" className="sentinel-btn-secondary" onClick={closeUpdateDialog}>
+                    Not now
+                  </button>
+                  <button type="button" className="sentinel-btn-primary" onClick={() => void applyManualUpdate()}>
+                    Download and install
+                  </button>
+                </div>
+              </>
+            )}
+
+            {updateDialog.phase === "installing" && (
+              <>
+                <h2 id="update-dialog-title" className="text-base font-semibold mb-3">
+                  Installing update
+                </h2>
+                <div className="flex items-center gap-2 text-sm text-muted">
+                  <Loader2 size={18} className="animate-spin shrink-0" />
+                  Downloading and starting the installer. This window will close briefly, then reopen
+                  after the update completes.
+                </div>
+              </>
+            )}
+
+            {updateDialog.phase === "error" && (
+              <>
+                <h2 id="update-dialog-title" className="text-base font-semibold mb-2 text-danger">
+                  Update check failed
+                </h2>
+                <p className="text-sm text-muted mb-4 break-words">{updateDialog.message}</p>
+                <button type="button" className="sentinel-btn-primary" onClick={closeUpdateDialog}>
+                  OK
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

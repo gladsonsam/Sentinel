@@ -5,6 +5,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import type { NotificationItem } from "../hooks/useNotifications";
 import { ToolsContent } from "../components/detail/ToolsContent";
+import type { DashboardNavUser } from "../lib/types";
 
 interface DashboardLayoutProps {
   navigation?: ReactNode;
@@ -15,9 +16,11 @@ interface DashboardLayoutProps {
   onOpenUsers?: () => void;
   /** Admin: URL / keystroke alert rules UI. */
   onOpenNotifications?: () => void;
+  /** Admin: agent groups & membership (same area as alert rules). */
+  onOpenAgentGroups?: () => void;
   onBackToOverview?: () => void;
   onGoHome: () => void;
-  currentUser?: { username: string; role: "admin" | "operator" | "viewer" } | null;
+  currentUser?: DashboardNavUser | null;
   contentType?: "default" | "table" | "form" | "cards";
   notifications: NotificationItem[];
   onDismissNotification: (id: string) => void;
@@ -34,6 +37,7 @@ export function DashboardLayout({
   onOpenActivityLog,
   onOpenUsers,
   onOpenNotifications,
+  onOpenAgentGroups,
   onBackToOverview,
   onGoHome,
   currentUser = null,
@@ -54,6 +58,7 @@ export function DashboardLayout({
         onOpenActivityLog={onOpenActivityLog}
         onOpenUsers={onOpenUsers}
         onOpenNotifications={onOpenNotifications}
+        onOpenAgentGroups={onOpenAgentGroups}
         onBackToOverview={onBackToOverview}
         onGoHome={onGoHome}
         currentUser={currentUser}

@@ -13,9 +13,11 @@ import type {
   LocalUiPasswordGlobalState,
   LocalUiPasswordAgentState,
   DashboardUser,
+  DashboardSessionUser,
   DashboardIdentity,
   DashboardRole,
   AgentGroup,
+  AgentGroupMembership,
   AlertRule,
 } from "./types";
 import { buildApiUrl } from "./serverSettings";
@@ -139,8 +141,7 @@ export const api = {
     setDashboardCsrfToken(null);
   },
 
-  me: (): Promise<{ id: string; username: string; role: "admin" | "operator" | "viewer" }> =>
-    get("/me"),
+  me: (): Promise<DashboardSessionUser> => get("/me"),
 
   // ── Dashboard data ────────────────────────────────────────────────────────
 
@@ -153,6 +154,10 @@ export const api = {
 
   agentIconPut: (id: string, icon: string | null): Promise<{ icon: string | null }> =>
     putJson(`/agents/${id}/icon`, { icon }),
+
+  /** Admin: groups this agent belongs to. */
+  agentGroupsForAgent: (id: string): Promise<{ groups: AgentGroupMembership[] }> =>
+    get(`/agents/${id}/groups`),
 
   windows: (
     id: string,
@@ -368,6 +373,12 @@ export const api = {
 
   userSetRole: (id: string, role: DashboardRole): Promise<{ ok: boolean }> =>
     postJsonRes(`/users/${id}/role`, { role }),
+
+  userUpdateProfile: (
+    id: string,
+    body: { username?: string; display_icon?: string | null },
+  ): Promise<{ ok: boolean; id: string; username: string; display_icon: string | null }> =>
+    postJsonRes(`/users/${id}/profile`, body),
 
   userDelete: (id: string): Promise<{ ok: boolean }> =>
     postEmpty(`/users/${id}/delete`),

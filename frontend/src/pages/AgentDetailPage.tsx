@@ -15,7 +15,7 @@ import {
   AGENT_TAB_META,
   type AgentSectionId,
 } from "../lib/agentTabNav";
-import type { TabKey } from "../lib/types";
+import type { TabKey, DashboardRole } from "../lib/types";
 import { SpecsTab } from "../components/tabs/SpecsTab";
 import { ScreenTab } from "../components/tabs/ScreenTab";
 import { KeysTab } from "../components/tabs/KeysTab";
@@ -54,6 +54,10 @@ interface AgentDetailPageProps {
   onOpenHelp: () => void;
   /** ISO timestamp to scroll to + highlight in the activity timeline */
   highlightTimestamp?: string | null;
+  isAdmin?: boolean;
+  onOpenAgentGroups?: () => void;
+  /** Current dashboard role; used to explain screen/script permission limits. */
+  dashboardRole?: DashboardRole | null;
 }
 
 export function AgentDetailPage({
@@ -69,6 +73,9 @@ export function AgentDetailPage({
   onBackToOverview,
   highlightTimestamp,
   onOpenHelp,
+  isAdmin = false,
+  onOpenAgentGroups,
+  dashboardRole = null,
 }: AgentDetailPageProps) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(false);
@@ -411,7 +418,7 @@ export function AgentDetailPage({
       case "specs":
         return <SpecsTab agentId={agent.id} cachedInfo={resolvedInfo} agentOnline={agent.online} />;
       case "screen":
-        return <ScreenTab agentId={agent.id} sendWsMessage={sendWsMessage} />;
+        return <ScreenTab agentId={agent.id} sendWsMessage={sendWsMessage} dashboardRole={dashboardRole} />;
       case "software":
         return (
           <SoftwareTab
@@ -421,7 +428,7 @@ export function AgentDetailPage({
           />
         );
       case "scripts":
-        return <ScriptsTab agentId={agent.id} />;
+        return <ScriptsTab agentId={agent.id} dashboardRole={dashboardRole} />;
       case "keys":
         return <KeysTab agentId={agent.id} />;
       case "windows":
@@ -454,6 +461,8 @@ export function AgentDetailPage({
             agentName={agent.name}
             agentOnline={agent.online}
             agentVersion={resolvedInfo?.agent_version ?? null}
+            isAdmin={isAdmin}
+            onOpenAgentGroups={onOpenAgentGroups}
           />
         );
       default:

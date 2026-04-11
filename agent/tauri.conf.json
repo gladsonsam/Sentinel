@@ -1,10 +1,13 @@
 {
   "productName": "Sentinel Agent",
   "mainBinaryName": "Sentinel Agent",
-  "version": "0.1.0",
+  "version": "0.1.6",
   "identifier": "com.sentinel.agent",
   "build": {
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": {
+      "script": "npm install && npm run build",
+      "cwd": "ui-src"
+    },
     "frontendDist": "./ui-src/dist"
   },
   "app": {

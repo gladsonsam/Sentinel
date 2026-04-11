@@ -36,6 +36,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/agents/:id/icon", get(agent_icon_get).put(agent_icon_put))
         .route("/users", get(users_list).post(users_create))
         .route("/users/:id/password", post(user_set_password))
+        .route("/users/:id/profile", post(user_profile_update))
         .route("/users/:id/role", post(user_set_role))
         .route("/users/:id/delete", post(user_delete))
         .route("/users/:id/identities", get(user_identities))
@@ -46,6 +47,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/agents/:id/windows", get(agent_windows))
         .route("/agents/:id/keys", get(agent_keys))
         .route("/agents/:id/alert-rule-events", get(agent_alert_rule_events))
+        .route("/agents/:id/groups", get(agent_agent_groups_for_agent_h))
         .route("/alert-rule-events/:id/screenshot", get(alert_rule_event_screenshot))
         .route("/agents/:id/urls", get(agent_urls))
         .route("/agents/:id/activity", get(agent_activity))
@@ -393,6 +395,7 @@ async fn me(Extension(user): Extension<auth::AuthUser>) -> Response {
         "id": user.user_id,
         "username": user.username,
         "role": user.role,
+        "display_icon": user.display_icon,
         "csrf_token": user.csrf_token,
     }))
     .into_response()
@@ -586,6 +589,150 @@ async fn users_create(
 #[derive(Deserialize)]
 struct PasswordBody {
     password: String,
+}
+
+#[derive(Deserialize)]
+struct UserProfileBody {
+    #[serde(default)]
+    username: Option<String>,
+    /// `None` = field omitted (no change). `Some(None)` = JSON null (clear icon). `Some(Some(s))` = set.
+    #[serde(default)]
+    display_icon: Option<Option<String>>,
+}
+
+fn normalize_profile_username(raw: &str) -> Result<String, &'static str> {
+    let t = raw.trim();
+    if t.is_empty() {
+        return Err("username must not be empty");
+    }
+    if t.len() > 128 {
+        return Err("username must be at most 128 characters");
+    }
+    if t.chars().any(|c| c.is_control()) {
+        return Err("username may not contain control characters");
+    }
+    Ok(t.to_string())
+}
+
+fn normalize_profile_display_icon_set(raw: &str) -> Result<String, &'static str> {
+    let t = raw.trim();
+    if t.is_empty() {
+        return Err("icon must not be blank (omit the field or send null to clear)");
+    }
+    if t.len() > 32 {
+        return Err("icon must be at most 32 characters");
+    }
+    if t.chars().any(|c| c.is_control()) {
+        return Err("icon may not contain control characters");
+    }
+    Ok(t.to_string())
+}
+
+async fn user_profile_update(
+    Path(id): Path<Uuid>,
+    State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(body): Json<UserProfileBody>,
+) -> Response {
+    if user.user_id != id && !user.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
+
+    if body.username.is_none() && body.display_icon.is_none() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Provide username and/or display_icon to update" })),
+        )
+            .into_response();
+    }
+
+    let profile_before = match db::dashboard_user_get_profile_bits(&s.db, id).await {
+        Ok(v) => v,
+        Err(e) => return err500(e),
+    };
+    let Some((current_username, _current_icon)) = profile_before else {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "user not found" }))).into_response();
+    };
+
+    let ip = audit_ip(&headers, addr);
+
+    if let Some(raw_username) = body.username {
+        let new_name = match normalize_profile_username(&raw_username) {
+            Ok(v) => v,
+            Err(msg) => {
+                return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+            }
+        };
+        if new_name != current_username {
+            match db::dashboard_username_taken_by_other(&s.db, &new_name, id).await {
+                Ok(true) => {
+                    return (
+                        StatusCode::CONFLICT,
+                        Json(serde_json::json!({ "error": "That username is already taken" })),
+                    )
+                        .into_response();
+                }
+                Ok(false) => {}
+                Err(e) => return err500(e),
+            }
+            if let Err(e) = db::dashboard_user_set_username(&s.db, id, &new_name).await {
+                return err500(e);
+            }
+            let _ = db::insert_audit_log(
+                &s.db,
+                user.username.as_str(),
+                None,
+                "user_set_username",
+                "ok",
+                &serde_json::json!({ "user_id": id, "new_username": new_name }),
+                ip.as_deref(),
+            )
+            .await;
+        }
+    }
+
+    if let Some(icon_outer) = body.display_icon {
+        let icon_val: Option<String> = match icon_outer {
+            None => None,
+            Some(s) => match normalize_profile_display_icon_set(&s) {
+                Ok(v) => Some(v),
+                Err(msg) => {
+                    return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+                }
+            },
+        };
+        if let Err(e) = db::dashboard_user_set_display_icon(&s.db, id, icon_val.as_deref()).await {
+            return err500(e);
+        }
+        let _ = db::insert_audit_log(
+            &s.db,
+            user.username.as_str(),
+            None,
+            "user_set_display_icon",
+            "ok",
+            &serde_json::json!({ "user_id": id, "cleared": icon_val.is_none() }),
+            ip.as_deref(),
+        )
+        .await;
+    }
+
+    let profile_after = match db::dashboard_user_get_profile_bits(&s.db, id).await {
+        Ok(v) => v,
+        Err(e) => return err500(e),
+    };
+    let Some((username, display_icon)) = profile_after else {
+        return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "user not found" }))).into_response();
+    };
+
+    Json(serde_json::json!({
+        "ok": true,
+        "id": id,
+        "username": username,
+        "display_icon": display_icon,
+    }))
+    .into_response()
 }
 
 async fn user_set_password(
@@ -1011,6 +1158,21 @@ async fn agent_alert_rule_events(
             .await;
             Json(serde_json::json!({ "rows": rows })).into_response()
         }
+        Err(e) => err500(e),
+    }
+}
+
+/// List agent groups that include this agent (admin only; used by dashboard membership UI).
+async fn agent_agent_groups_for_agent_h(
+    Path(agent_id): Path<Uuid>,
+    State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+) -> Response {
+    if !user.is_admin() {
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+    }
+    match db::agent_groups_for_agent(&s.db, agent_id).await {
+        Ok(groups) => Json(serde_json::json!({ "groups": groups })).into_response(),
         Err(e) => err500(e),
     }
 }
@@ -2035,7 +2197,7 @@ async fn agent_run_script(
     Json(body): Json<RunScriptBody>,
 ) -> Response {
     let ip = audit_ip(&headers, addr);
-    if !user.is_admin() {
+    if !user.is_operator() {
         return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
     }
     if !s.allow_remote_script {
@@ -2104,7 +2266,7 @@ async fn agents_bulk_script(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(body): Json<BulkScriptBody>,
 ) -> Response {
-    if !user.is_admin() {
+    if !user.is_operator() {
         return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
     }
     if !s.allow_remote_script {

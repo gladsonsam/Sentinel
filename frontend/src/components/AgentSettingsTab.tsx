@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
@@ -10,9 +10,11 @@ import Input from "@cloudscape-design/components/input";
 import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
 import Modal from "@cloudscape-design/components/modal";
 import SpaceBetween from "@cloudscape-design/components/space-between";
+import Select from "@cloudscape-design/components/select";
 import Spinner from "@cloudscape-design/components/spinner";
+import Table from "@cloudscape-design/components/table";
 import Toggle from "@cloudscape-design/components/toggle";
-import type { RetentionPolicy } from "../lib/types";
+import type { AgentGroup, AgentGroupMembership, RetentionPolicy } from "../lib/types";
 import { api } from "../lib/api";
 import { AGENT_ICON_DEFS, AGENT_ICON_MAP, type AgentIconKey, isAgentIconKey } from "../lib/agentIcons";
 import {
@@ -27,6 +29,8 @@ interface Props {
   agentName: string;
   agentOnline: boolean;
   agentVersion: string | null;
+  isAdmin?: boolean;
+  onOpenAgentGroups?: () => void;
 }
 
 const OVERRIDE_DEFAULT_DAYS = 30;
@@ -117,7 +121,14 @@ function RetentionOverrideField({
 /**
  * Per-computer retention and local UI lock overrides (Settings tab on an agent).
  */
-export function AgentSettingsTab({ agentId, agentName, agentOnline, agentVersion }: Props) {
+export function AgentSettingsTab({
+  agentId,
+  agentName,
+  agentOnline,
+  agentVersion,
+  isAdmin = false,
+  onOpenAgentGroups,
+}: Props) {
   const [agentIcon, setAgentIcon] = useState<AgentIconKey>("monitor");
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
   const [iconLoad, setIconLoad] = useState(true);
@@ -151,6 +162,77 @@ export function AgentSettingsTab({ agentId, agentName, agentOnline, agentVersion
   const [updNow, setUpdNow] = useState(false);
   const [updNowErr, setUpdNowErr] = useState<string | null>(null);
   const [updNowOk, setUpdNowOk] = useState<string | null>(null);
+
+  const [memberGroups, setMemberGroups] = useState<AgentGroupMembership[] | null>(null);
+  const [allGroupsPick, setAllGroupsPick] = useState<AgentGroup[]>([]);
+  const [grpLoad, setGrpLoad] = useState(false);
+  const [grpErr, setGrpErr] = useState<string | null>(null);
+  const [grpOk, setGrpOk] = useState<string | null>(null);
+  const [addGroupPick, setAddGroupPick] = useState<string>("");
+  const [grpBusy, setGrpBusy] = useState(false);
+
+  const refreshAgentGroups = useCallback(() => {
+    if (!isAdmin) return;
+    setGrpErr(null);
+    setGrpLoad(true);
+    Promise.all([api.agentGroupsForAgent(agentId), api.agentGroupsList()])
+      .then(([mem, all]) => {
+        setMemberGroups(mem.groups);
+        setAllGroupsPick(all.groups);
+      })
+      .catch((e) => {
+        setMemberGroups(null);
+        setGrpErr(String(e));
+      })
+      .finally(() => setGrpLoad(false));
+  }, [agentId, isAdmin]);
+
+  useEffect(() => {
+    if (!isAdmin) {
+      setMemberGroups(null);
+      setAllGroupsPick([]);
+      return;
+    }
+    refreshAgentGroups();
+  }, [isAdmin, refreshAgentGroups]);
+
+  const addableGroupOptions = useMemo(() => {
+    const inSet = new Set((memberGroups ?? []).map((g) => g.id));
+    return [...allGroupsPick]
+      .filter((g) => !inSet.has(g.id))
+      .sort((a, b) => a.name.localeCompare(b.name))
+      .map((g) => ({ label: g.name, value: g.id }));
+  }, [allGroupsPick, memberGroups]);
+
+  const addAgentToSelectedGroup = () => {
+    if (!addGroupPick) return;
+    setGrpErr(null);
+    setGrpOk(null);
+    setGrpBusy(true);
+    api
+      .agentGroupMembersAdd(addGroupPick, { agent_ids: [agentId] })
+      .then(() => {
+        setGrpOk("Added to group.");
+        setAddGroupPick("");
+        refreshAgentGroups();
+      })
+      .catch((e) => setGrpErr(String(e)))
+      .finally(() => setGrpBusy(false));
+  };
+
+  const removeAgentFromGroup = (groupId: string) => {
+    setGrpErr(null);
+    setGrpOk(null);
+    setGrpBusy(true);
+    api
+      .agentGroupMemberRemove(groupId, agentId)
+      .then(() => {
+        setGrpOk("Removed from group.");
+        refreshAgentGroups();
+      })
+      .catch((e) => setGrpErr(String(e)))
+      .finally(() => setGrpBusy(false));
+  };
 
   const parsedKey = useMemo(() => parseRetentionField(agKey), [agKey]);
   const parsedWin = useMemo(() => parseRetentionField(agWin), [agWin]);
@@ -507,6 +589,110 @@ export function AgentSettingsTab({ agentId, agentName, agentOnline, agentVersion
           })}
         </div>
       </Modal>
+
+      {isAdmin && (
+        <Container
+          header={
+            <Header
+              variant="h2"
+              description={`Alert rules can target all agents, specific groups, or one computer. ${agentName} inherits rules for each group below.`}
+              actions={
+                onOpenAgentGroups ? (
+                  <Button onClick={() => onOpenAgentGroups()} disabled={grpBusy}>
+                    All groups & alert rules
+                  </Button>
+                ) : undefined
+              }
+            >
+              Agent groups
+            </Header>
+          }
+        >
+          <SpaceBetween size="m">
+            {grpErr && (
+              <Alert type="error" dismissible onDismiss={() => setGrpErr(null)}>
+                {grpErr}
+              </Alert>
+            )}
+            {grpOk && (
+              <Alert type="success" dismissible onDismiss={() => setGrpOk(null)}>
+                {grpOk}
+              </Alert>
+            )}
+            {grpLoad && memberGroups === null ? (
+              <Box textAlign="center" padding="m">
+                <Spinner />
+              </Box>
+            ) : (
+              <>
+                <Table
+                  variant="embedded"
+                  loading={grpLoad}
+                  loadingText="Loading groups"
+                  columnDefinitions={[
+                    {
+                      id: "name",
+                      header: "Group",
+                      cell: (g: AgentGroupMembership) => g.name,
+                    },
+                    {
+                      id: "desc",
+                      header: "Description",
+                      cell: (g: AgentGroupMembership) => g.description?.trim() || "—",
+                    },
+                    {
+                      id: "rm",
+                      header: "",
+                      width: 100,
+                      cell: (g: AgentGroupMembership) => (
+                        <Button
+                          variant="link"
+                          disabled={grpBusy}
+                          onClick={() => removeAgentFromGroup(g.id)}
+                        >
+                          Remove
+                        </Button>
+                      ),
+                    },
+                  ]}
+                  items={memberGroups ?? []}
+                  empty={
+                    <Box color="text-body-secondary">
+                      Not in any group yet. Add this computer below or use bulk actions on the overview.
+                    </Box>
+                  }
+                />
+                <FormField label="Add to group">
+                  <SpaceBetween direction="horizontal" size="xs">
+                    <Select
+                      selectedOption={
+                        addGroupPick
+                          ? addableGroupOptions.find((o) => o.value === addGroupPick) ?? null
+                          : null
+                      }
+                      onChange={({ detail }) => {
+                        const v = detail.selectedOption?.value;
+                        setAddGroupPick(typeof v === "string" ? v : "");
+                      }}
+                      options={addableGroupOptions}
+                      placeholder="Choose a group"
+                      disabled={grpBusy || addableGroupOptions.length === 0}
+                      filteringType="auto"
+                      empty="No more groups — create one from All groups & alert rules."
+                    />
+                    <Button
+                      disabled={!addGroupPick || grpBusy}
+                      onClick={() => addAgentToSelectedGroup()}
+                    >
+                      Add
+                    </Button>
+                  </SpaceBetween>
+                </FormField>
+              </>
+            )}
+          </SpaceBetween>
+        </Container>
+      )}
 
       <Container
         header={

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import TopNavigation from "@cloudscape-design/components/top-navigation";
 import { api } from "../../lib/api";
+import type { DashboardNavUser } from "../../lib/types";
 
 const VERSION_POLL_MS = 30 * 60 * 1000;
 
@@ -12,10 +13,12 @@ interface TopNavProps {
   onOpenUsers?: () => void;
   /** Admin: alert rules / notification patterns. */
   onOpenNotifications?: () => void;
+  /** Admin: agent groups (membership + rules scoped to groups). */
+  onOpenAgentGroups?: () => void;
   onBackToOverview?: () => void;
   /** Clicking the Sentinel logo/title returns here (usually agent overview). */
   onGoHome: () => void;
-  currentUser?: { username: string; role: "admin" | "operator" | "viewer" } | null;
+  currentUser?: DashboardNavUser | null;
 }
 
 export function TopNav({
@@ -24,6 +27,7 @@ export function TopNav({
   onOpenActivityLog,
   onOpenUsers,
   onOpenNotifications,
+  onOpenAgentGroups,
   onBackToOverview,
   onGoHome,
   currentUser = null,
@@ -114,15 +118,20 @@ export function TopNav({
           {
             type: "menu-dropdown" as const,
             iconName: "user-profile" as const,
-            text: currentUser ? `${currentUser.username} (${currentUser.role})` : "Account",
+            text: currentUser
+              ? `${currentUser.display_icon?.trim() ? `${currentUser.display_icon.trim()} ` : ""}${currentUser.username} (${currentUser.role})`
+              : "Account",
             title: "Account",
             ariaLabel: "Account",
             items: [
               ...(onOpenUsers
-                ? [{ id: "users", text: "Users" }]
+                ? [{ id: "users", text: "Team & profile" }]
+                : []),
+              ...(onOpenAgentGroups
+                ? [{ id: "agent_groups", text: "Agent groups" }]
                 : []),
               ...(onOpenNotifications
-                ? [{ id: "notifications", text: "Notifications" }]
+                ? [{ id: "notifications", text: "Alert rules" }]
                 : []),
               ...(onOpenActivityLog
                 ? [{ id: "activity_log", text: "Activity log" }]
@@ -132,6 +141,7 @@ export function TopNav({
             ],
             onItemClick: ({ detail }) => {
               if (detail.id === "users") onOpenUsers?.();
+              else if (detail.id === "agent_groups") onOpenAgentGroups?.();
               else if (detail.id === "notifications") onOpenNotifications?.();
               else if (detail.id === "activity_log") onOpenActivityLog?.();
               else if (detail.id === "settings") onShowPreferences();

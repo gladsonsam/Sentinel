@@ -1,7 +1,7 @@
 import { DashboardLayout } from "../layouts/DashboardLayout";
 import { SideNav } from "../components/navigation/SideNav";
 import { AgentDetailPage } from "../pages/AgentDetailPage";
-import type { Agent, AgentInfo, AgentLiveStatus, TabKey } from "../lib/types";
+import type { Agent, AgentInfo, AgentLiveStatus, TabKey, DashboardNavUser, DashboardRole } from "../lib/types";
 import type { NotificationItem } from "../hooks/useNotifications";
 
 interface Props {
@@ -21,8 +21,11 @@ interface Props {
   onOpenActivityLog: () => void;
   onOpenUsers: () => void;
   onOpenNotifications?: () => void;
+  onOpenAgentGroups?: () => void;
   onGoHome: () => void;
-  currentUser?: { username: string; role: "admin" | "operator" | "viewer" } | null;
+  currentUser?: DashboardNavUser | null;
+  /** Used to hide or explain tabs that require operator/admin on the server. */
+  dashboardRole?: DashboardRole | null;
   notifications: NotificationItem[];
   onDismissNotification: (id: string) => void;
   toolsOpen: boolean;
@@ -48,8 +51,10 @@ export function AuthenticatedAgentDetail({
   onOpenActivityLog,
   onOpenUsers,
   onOpenNotifications,
+  onOpenAgentGroups,
   onGoHome,
   currentUser = null,
+  dashboardRole = null,
   notifications,
   onDismissNotification,
   toolsOpen,
@@ -79,6 +84,9 @@ export function AuthenticatedAgentDetail({
           onBackToOverview={onBackToOverview}
           onOpenHelp={onOpenHelp}
           highlightTimestamp={highlightTimestamp}
+          isAdmin={currentUser?.role === "admin"}
+          onOpenAgentGroups={onOpenAgentGroups}
+          dashboardRole={dashboardRole}
         />
       }
       onLogout={onLogout}
@@ -86,6 +94,7 @@ export function AuthenticatedAgentDetail({
       onOpenActivityLog={onOpenActivityLog}
       onOpenUsers={onOpenUsers}
       onOpenNotifications={onOpenNotifications}
+      onOpenAgentGroups={onOpenAgentGroups}
       onGoHome={onGoHome}
       onBackToOverview={onBackToOverview}
       contentType="default"

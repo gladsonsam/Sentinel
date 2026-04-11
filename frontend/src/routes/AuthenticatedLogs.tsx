@@ -1,6 +1,7 @@
 import { DashboardLayout } from "../layouts/DashboardLayout";
 import { LogsPage } from "../pages/LogsPage";
 import type { NotificationItem } from "../hooks/useNotifications";
+import type { DashboardNavUser } from "../lib/types";
 
 interface Props {
   onBack: () => void;
@@ -8,8 +9,9 @@ interface Props {
   onShowPreferences: () => void;
   onOpenUsers: () => void;
   onOpenNotifications?: () => void;
+  onOpenAgentGroups?: () => void;
   onGoHome: () => void;
-  currentUser?: { username: string; role: "admin" | "operator" | "viewer" } | null;
+  currentUser?: DashboardNavUser | null;
   notifications: NotificationItem[];
   onDismissNotification: (id: string) => void;
   toolsOpen: boolean;
@@ -22,6 +24,7 @@ export function AuthenticatedLogs({
   onShowPreferences,
   onOpenUsers,
   onOpenNotifications,
+  onOpenAgentGroups,
   onGoHome,
   currentUser = null,
   notifications,
@@ -36,6 +39,7 @@ export function AuthenticatedLogs({
       onShowPreferences={onShowPreferences}
       onOpenUsers={onOpenUsers}
       onOpenNotifications={onOpenNotifications}
+      onOpenAgentGroups={onOpenAgentGroups}
       onGoHome={onGoHome}
       onBackToOverview={onBack}
       contentType="default"

@@ -9,7 +9,7 @@
 
 [package]
 name        = "sentinel-agent"
-version     = "0.1.0"
+version     = "0.1.6"
 edition     = "2021"
 description = "Sentinel – Windows monitoring agent: screen capture, keyboard capture, URL tracking, and remote control over WebSocket"
 
@@ -53,6 +53,7 @@ enigo = "0.2"
 windows = { version = "0.62", features = [
     "Win32_Foundation",
     "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_System_RemoteDesktop",
     "Win32_System_Environment",
     "Win32_System_IO",

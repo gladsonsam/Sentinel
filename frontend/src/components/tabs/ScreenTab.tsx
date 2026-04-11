@@ -10,13 +10,16 @@ import Modal from "@cloudscape-design/components/modal";
 import Input from "@cloudscape-design/components/input";
 import { apiUrl } from "../../lib/api";
 import { StreamStatus } from "../common/StatusIndicator";
+import Alert from "@cloudscape-design/components/alert";
+import type { DashboardRole } from "../../lib/types";
 
 interface ScreenTabProps {
   agentId: string;
   sendWsMessage: (msg: any) => void;
+  dashboardRole?: DashboardRole | null;
 }
 
-export function ScreenTab({ agentId, sendWsMessage }: ScreenTabProps) {
+export function ScreenTab({ agentId, sendWsMessage, dashboardRole = null }: ScreenTabProps) {
   const [streaming, setStreaming] = useState(false);
   const [remoteControl, setRemoteControl] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
@@ -27,6 +30,7 @@ export function ScreenTab({ agentId, sendWsMessage }: ScreenTabProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   const streamUrl = apiUrl(`/agents/${agentId}/mjpeg`);
+  const blockedByRole = dashboardRole === "viewer";
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!remoteControl || !imgRef.current) return;
@@ -138,6 +142,7 @@ export function ScreenTab({ agentId, sendWsMessage }: ScreenTabProps) {
                 <Box padding={{ top: "xs" }}>
                   <Toggle
                     checked={remoteControl}
+                    disabled={blockedByRole}
                     onChange={({ detail }) => setRemoteControl(detail.checked)}
                   >
                     Remote control
@@ -145,12 +150,14 @@ export function ScreenTab({ agentId, sendWsMessage }: ScreenTabProps) {
                 </Box>
                 <Button
                   iconName="notification"
+                  disabled={blockedByRole}
                   onClick={() => setShowNotificationModal(true)}
                 >
                   Send notification
                 </Button>
                 <Button
                   iconName={fullscreen ? "close" : "expand"}
+                  disabled={blockedByRole}
                   onClick={toggleFullscreen}
                 >
                   {fullscreen ? "Exit" : "Fullscreen"}
@@ -162,6 +169,14 @@ export function ScreenTab({ agentId, sendWsMessage }: ScreenTabProps) {
           </Header>
         }
       >
+        {blockedByRole ? (
+          <Box margin={{ bottom: "m" }}>
+            <Alert type="info" header="Operator role required">
+              Live screen viewing requires the <strong>operator</strong> or <strong>admin</strong> role. Viewers can still
+              use keys, windows, URLs, and other telemetry tabs.
+            </Alert>
+          </Box>
+        ) : null}
         <div
           ref={containerRef}
           className={`sentinel-screen-viewer${fullscreen ? " sentinel-screen-viewer-fullscreen" : ""}`}
@@ -170,7 +185,7 @@ export function ScreenTab({ agentId, sendWsMessage }: ScreenTabProps) {
           <div className="sentinel-screen-frame">
             <img
               ref={imgRef}
-              src={streamUrl}
+              src={blockedByRole ? "" : streamUrl}
               alt="Agent screen"
               className="sentinel-screen-image"
               onLoad={() => setStreaming(true)}
@@ -191,7 +206,7 @@ export function ScreenTab({ agentId, sendWsMessage }: ScreenTabProps) {
           </div>
         </div>
 
-        {!streaming && (
+        {!streaming && !blockedByRole && (
           <Box textAlign="center" padding="xxl">
             <Box variant="p" color="text-body-secondary">
               Screen stream not available. Ensure the agent is connected and screen capture is enabled.

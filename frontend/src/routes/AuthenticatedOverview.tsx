@@ -1,6 +1,6 @@
 import { DashboardLayout } from "../layouts/DashboardLayout";
 import { OverviewPage } from "../pages/OverviewPage";
-import type { Agent, AgentInfo, AgentLiveStatus } from "../lib/types";
+import type { Agent, AgentInfo, AgentLiveStatus, DashboardNavUser } from "../lib/types";
 import type { NotificationItem } from "../hooks/useNotifications";
 
 interface Props {
@@ -20,8 +20,9 @@ interface Props {
   onOpenActivityLog: () => void;
   onOpenUsers: () => void;
   onOpenNotifications?: () => void;
+  onOpenAgentGroups?: () => void;
   onGoHome: () => void;
-  currentUser?: { username: string; role: "admin" | "operator" | "viewer" } | null;
+  currentUser?: DashboardNavUser | null;
   notifications: NotificationItem[];
   onDismissNotification: (id: string) => void;
   toolsOpen: boolean;
@@ -46,6 +47,7 @@ export function AuthenticatedOverview({
   onOpenActivityLog,
   onOpenUsers,
   onOpenNotifications,
+  onOpenAgentGroups,
   onGoHome,
   currentUser = null,
   notifications,
@@ -68,6 +70,7 @@ export function AuthenticatedOverview({
           onBatchWake={onBatchWake}
           onBatchRestart={onBatchRestart}
           onBatchShutdown={onBatchShutdown}
+          adminBulkGroupAssignment={currentUser?.role === "admin"}
         />
       }
       onLogout={onLogout}
@@ -75,6 +78,7 @@ export function AuthenticatedOverview({
       onOpenActivityLog={onOpenActivityLog}
       onOpenUsers={onOpenUsers}
       onOpenNotifications={onOpenNotifications}
+      onOpenAgentGroups={onOpenAgentGroups}
       onGoHome={onGoHome}
       contentType="cards"
       currentUser={currentUser}

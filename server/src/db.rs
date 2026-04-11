@@ -101,6 +101,7 @@ pub struct DashboardUserRow {
     pub id: Uuid,
     pub username: String,
     pub role: String,
+    pub display_icon: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -152,6 +153,40 @@ pub async fn dashboard_user_is_admin(pool: &PgPool, user_id: Uuid) -> Result<boo
     Ok(v.as_deref() == Some("admin"))
 }
 
+/// Returns `(username, display_icon)` when the row exists.
+pub async fn dashboard_username_taken_by_other(
+    pool: &PgPool,
+    username: &str,
+    exclude_id: Uuid,
+) -> Result<bool> {
+    let n: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM dashboard_users WHERE lower(username) = lower($1) AND id <> $2",
+    )
+    .bind(username)
+    .bind(exclude_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(n > 0)
+}
+
+pub async fn dashboard_user_get_profile_bits(
+    pool: &PgPool,
+    user_id: Uuid,
+) -> Result<Option<(String, Option<String>)>> {
+    let row = sqlx::query("SELECT username, display_icon FROM dashboard_users WHERE id = $1")
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.map(|r| {
+        (
+            r.try_get::<String, _>("username")
+                .unwrap_or_else(|_| "".to_string()),
+            r.try_get::<Option<String>, _>("display_icon")
+                .unwrap_or(None),
+        )
+    }))
+}
+
 pub async fn dashboard_user_get_by_username(
     pool: &PgPool,
     username: &str,
@@ -176,9 +211,11 @@ pub async fn dashboard_user_get_by_username(
 }
 
 pub async fn dashboard_user_list(pool: &PgPool) -> Result<Vec<DashboardUserRow>> {
-    let rows = sqlx::query("SELECT id, username, role, created_at FROM dashboard_users ORDER BY lower(username) ASC")
-        .fetch_all(pool)
-        .await?;
+    let rows = sqlx::query(
+        "SELECT id, username, role, display_icon, created_at FROM dashboard_users ORDER BY lower(username) ASC",
+    )
+    .fetch_all(pool)
+    .await?;
 
     Ok(rows
         .iter()
@@ -186,6 +223,9 @@ pub async fn dashboard_user_list(pool: &PgPool) -> Result<Vec<DashboardUserRow>>
             id: r.try_get("id").unwrap_or_default(),
             username: r.try_get("username").unwrap_or_else(|_| "".to_string()),
             role: r.try_get("role").unwrap_or_else(|_| "viewer".to_string()),
+            display_icon: r
+                .try_get::<Option<String>, _>("display_icon")
+                .unwrap_or(None),
             created_at: r
                 .try_get("created_at")
                 .unwrap_or_else(|_| Utc::now()),
@@ -278,11 +318,11 @@ pub async fn dashboard_session_touch(pool: &PgPool, token_sha256_hex: &str) -> R
 pub async fn dashboard_session_get_user(
     pool: &PgPool,
     token_sha256_hex: &str,
-) -> Result<Option<(Uuid, String, String, String)>> {
-    // Returns (user_id, username, role, csrf_token) when session exists and is not expired.
+) -> Result<Option<(Uuid, String, String, Option<String>, String)>> {
+    // Returns (user_id, username, role, display_icon, csrf_token) when session exists and is not expired.
     let row = sqlx::query(
         r#"
-        SELECT u.id AS user_id, u.username, u.role, s.csrf_token
+        SELECT u.id AS user_id, u.username, u.role, u.display_icon, s.csrf_token
         FROM dashboard_sessions s
         JOIN dashboard_users u ON u.id = s.user_id
         WHERE s.token_sha256_hex = $1
@@ -300,10 +340,42 @@ pub async fn dashboard_session_get_user(
                 .unwrap_or_else(|_| "".to_string()),
             r.try_get::<String, _>("role")
                 .unwrap_or_else(|_| "viewer".to_string()),
+            r.try_get::<Option<String>, _>("display_icon")
+                .unwrap_or(None),
             r.try_get::<String, _>("csrf_token")
                 .unwrap_or_else(|_| "".to_string()),
         )
     }))
+}
+
+pub async fn dashboard_user_set_username(pool: &PgPool, user_id: Uuid, username: &str) -> Result<()> {
+    let n = sqlx::query("UPDATE dashboard_users SET username = $2 WHERE id = $1")
+        .bind(user_id)
+        .bind(username)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    if n == 0 {
+        return Err(anyhow::anyhow!("user not found"));
+    }
+    Ok(())
+}
+
+pub async fn dashboard_user_set_display_icon(
+    pool: &PgPool,
+    user_id: Uuid,
+    display_icon: Option<&str>,
+) -> Result<()> {
+    let n = sqlx::query("UPDATE dashboard_users SET display_icon = $2 WHERE id = $1")
+        .bind(user_id)
+        .bind(display_icon)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    if n == 0 {
+        return Err(anyhow::anyhow!("user not found"));
+    }
+    Ok(())
 }
 
 pub async fn bootstrap_default_admin(pool: &PgPool, username: &str, password_plain: &str) -> Result<()> {
@@ -1760,6 +1832,39 @@ pub async fn agent_group_members(pool: &PgPool, group_id: Uuid) -> Result<Vec<Uu
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+/// Groups that include this agent (for dashboard agent detail).
+#[derive(Debug, Clone, Serialize)]
+pub struct AgentGroupForAgentRow {
+    pub id: Uuid,
+    pub name: String,
+    pub description: String,
+}
+
+pub async fn agent_groups_for_agent(pool: &PgPool, agent_id: Uuid) -> Result<Vec<AgentGroupForAgentRow>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT g.id, g.name, g.description
+        FROM agent_groups g
+        INNER JOIN agent_group_members m ON m.group_id = g.id
+        WHERE m.agent_id = $1
+        ORDER BY lower(g.name)
+        "#,
+    )
+    .bind(agent_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        out.push(AgentGroupForAgentRow {
+            id: r.try_get("id")?,
+            name: r.try_get("name")?,
+            description: r.try_get("description")?,
+        });
+    }
+    Ok(out)
 }
 
 // ─── Alert rules ──────────────────────────────────────────────────────────────

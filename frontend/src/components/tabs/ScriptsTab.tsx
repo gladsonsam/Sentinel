@@ -6,12 +6,14 @@ import Header from "@cloudscape-design/components/header";
 import Select from "@cloudscape-design/components/select";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import { api } from "../../lib/api";
+import type { DashboardRole } from "../../lib/types";
 
 interface ScriptsTabProps {
   agentId: string;
+  dashboardRole?: DashboardRole | null;
 }
 
-export function ScriptsTab({ agentId }: ScriptsTabProps) {
+export function ScriptsTab({ agentId, dashboardRole = null }: ScriptsTabProps) {
   const [remoteOk, setRemoteOk] = useState<boolean | null>(null);
   const [shell, setShell] = useState<{ label: string; value: string }>({
     label: "PowerShell",
@@ -47,6 +49,8 @@ export function ScriptsTab({ agentId }: ScriptsTabProps) {
     }
   };
 
+  const blockedByRole = dashboardRole === "viewer";
+
   return (
     <SpaceBetween size="l">
       <Header
@@ -55,6 +59,13 @@ export function ScriptsTab({ agentId }: ScriptsTabProps) {
       >
         Remote script
       </Header>
+
+      {dashboardRole === "viewer" && (
+        <Alert type="info" header="Operator role required">
+          Your account is a viewer. Ask an administrator to grant the <strong>operator</strong> role if you need to run
+          remote scripts (operators and admins may run scripts when the server enables this feature).
+        </Alert>
+      )}
 
       {remoteOk === false && (
         <Alert type="warning" header="Remote scripting disabled">
@@ -95,12 +106,17 @@ export function ScriptsTab({ agentId }: ScriptsTabProps) {
           style={{ width: "100%", fontFamily: "monospace", fontSize: "13px", padding: "8px" }}
           value={script}
           onChange={(e) => setScript(e.target.value)}
-          disabled={running || remoteOk === false}
+          disabled={running || remoteOk === false || blockedByRole}
           spellCheck={false}
         />
       </FormField>
 
-      <Button variant="primary" loading={running} disabled={remoteOk === false} onClick={() => void run()}>
+      <Button
+        variant="primary"
+        loading={running}
+        disabled={remoteOk === false || blockedByRole}
+        onClick={() => void run()}
+      >
         Run on this agent
       </Button>
 

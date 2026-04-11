@@ -29,6 +29,8 @@ interface AgentCardProps {
   onBulkScript: (agentIds: string[]) => void;
   onBatchRestart: (agentIds: string[]) => void;
   onBatchShutdown: (agentIds: string[]) => void;
+  /** Admin: opens group picker to add all selected agents to a group. */
+  onBulkAddToGroup?: (agentIds: string[]) => void;
 }
 
 export function AgentCard({
@@ -43,6 +45,7 @@ export function AgentCard({
   onBulkScript,
   onBatchRestart,
   onBatchShutdown,
+  onBulkAddToGroup,
 }: AgentCardProps) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [fallbackLastWindow, setFallbackLastWindow] = useState<Record<string, string>>({});
@@ -194,6 +197,11 @@ export function AgentCard({
               onBulkScript={() => onBulkScript(selectedItems.map((item) => item.id))}
               onRestartSelected={() => onBatchRestart(selectedItems.map((item) => item.id))}
               onShutdownSelected={() => onBatchShutdown(selectedItems.map((item) => item.id))}
+              onBulkAddToGroup={
+                onBulkAddToGroup
+                  ? () => onBulkAddToGroup(selectedItems.map((item) => item.id))
+                  : undefined
+              }
             />
           </Box>
         }

@@ -123,7 +123,7 @@ pub async fn require_auth(
 
     let token_hash = db::sha256_hex_bytes(token.as_bytes());
     let user = match db::dashboard_session_get_user(&state.db, &token_hash).await {
-        Ok(Some((user_id, username, role, csrf_token))) => {
+        Ok(Some((user_id, username, role, display_icon, csrf_token))) => {
             if request_requires_csrf_token(req.method()) {
                 let supplied = req
                     .headers()
@@ -143,6 +143,7 @@ pub async fn require_auth(
                 user_id,
                 username,
                 role,
+                display_icon,
                 csrf_token,
             }
         }
@@ -860,6 +861,8 @@ pub struct AuthUser {
     pub user_id: uuid::Uuid,
     pub username: String,
     pub role: String, // 'admin' | 'operator' | 'viewer'
+    /// Optional avatar glyph (e.g. emoji) for the dashboard UI.
+    pub display_icon: Option<String>,
     /// Per-session secret; sent to the SPA for `X-CSRF-Token` on mutating requests.
     pub csrf_token: String,
 }
