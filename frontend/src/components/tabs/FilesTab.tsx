@@ -19,6 +19,9 @@ interface FilesTabProps {
   sendWsMessage: (msg: any) => void;
 }
 
+/** Raw bytes per upload chunk — must match agent `REMOTE_FILE_CHUNK_BYTES` in `agent/src/main.rs`. */
+const REMOTE_FILE_CHUNK_BYTES = 3 * 1024 * 1024;
+
 export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
   const DRIVES_PATH = "__this_pc__";
   // Empty path means "agent default" (usually user's Documents).
@@ -36,8 +39,6 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
     destPath: string;
     resolve: (outcome: { ok: boolean; error?: string }) => void;
   } | null>(null);
-
-  const RAW_UPLOAD_CHUNK = 32 * 1024;
 
   useEffect(() => {
     loadDirectory(currentPath);
@@ -206,7 +207,7 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
     const destPath = currentPath.endsWith("\\")
       ? currentPath + file.name
       : currentPath + "\\" + file.name;
-    const totalChunks = Math.max(1, Math.ceil(file.size / RAW_UPLOAD_CHUNK));
+    const totalChunks = Math.max(1, Math.ceil(file.size / REMOTE_FILE_CHUNK_BYTES));
     setUploadMessage(null);
     setUploading(destPath);
     setUploadProgress(0);
@@ -214,7 +215,8 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
     const done = new Promise<{ ok: boolean; error?: string }>((resolve) => {
       uploadWaiterRef.current = { destPath, resolve };
     });
-    const timeoutMs = Math.min(600_000, 30_000 + totalChunks * 2000);
+    // No fixed wall-clock cap: scale with chunk count (large files need more time).
+    const timeoutMs = 30_000 + totalChunks * 2000;
     const timeout = new Promise<{ ok: boolean; error?: string }>((resolve) => {
       setTimeout(
         () => resolve({ ok: false, error: "Upload timed out waiting for the agent." }),
@@ -224,8 +226,8 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
 
     try {
       for (let i = 0; i < totalChunks; i++) {
-        const start = i * RAW_UPLOAD_CHUNK;
-        const end = Math.min(start + RAW_UPLOAD_CHUNK, file.size);
+        const start = i * REMOTE_FILE_CHUNK_BYTES;
+        const end = Math.min(start + REMOTE_FILE_CHUNK_BYTES, file.size);
         const slice = file.slice(start, end);
         const buf = new Uint8Array(await slice.arrayBuffer());
         const b64 = uint8ToBase64(buf);

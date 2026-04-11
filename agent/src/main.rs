@@ -79,6 +79,10 @@ struct FileUploadSession {
 
 static FILE_UPLOAD_SESSION: Mutex<Option<FileUploadSession>> = Mutex::new(None);
 
+/// Raw bytes per `ReadFile` read and per dashboard `WriteFileChunk` payload (before base64).
+/// Keep in sync with `REMOTE_FILE_CHUNK_BYTES` in `../../frontend/src/components/tabs/FilesTab.tsx`.
+const REMOTE_FILE_CHUNK_BYTES: usize = 3 * 1024 * 1024;
+
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
@@ -1046,8 +1050,6 @@ fn handle_server_command(
         }
         "ReadFile" => {
             const MAX_FILE_PATH_CHARS: usize = 2048;
-            const CHUNK_SIZE: usize = 1024 * 1024 * 3; // 3MB chunks
-            const MAX_FILE_BYTES: u64 = 1024 * 1024 * 100; // 100MB cap
             let path = val["path"]
                 .as_str()
                 .unwrap_or("")
@@ -1077,18 +1079,6 @@ fn handle_server_command(
                     }
                 };
                 let file_len = meta.len();
-                if file_len > MAX_FILE_BYTES {
-                    let payload = serde_json::json!({
-                        "type": "file_chunk",
-                        "path": path,
-                        "data": format!("file too large ({} bytes; max {} bytes)", file_len, MAX_FILE_BYTES),
-                        "chunk_index": 0,
-                        "total_chunks": 1,
-                        "is_error": true
-                    }).to_string();
-                    let _ = out.send(Message::Text(payload)).await;
-                    return;
-                }
 
                 let mut f = match tokio::fs::File::open(&path).await {
                     Ok(f) => f,
@@ -1110,7 +1100,7 @@ fn handle_server_command(
                 let total_chunks = if file_len == 0 {
                     1usize
                 } else {
-                    ((file_len as usize) + CHUNK_SIZE - 1) / CHUNK_SIZE
+                    ((file_len as usize) + REMOTE_FILE_CHUNK_BYTES - 1) / REMOTE_FILE_CHUNK_BYTES
                 };
 
                 if file_len == 0 {
@@ -1128,7 +1118,7 @@ fn handle_server_command(
                 }
 
                 let mut idx: usize = 0;
-                let mut buf = vec![0u8; CHUNK_SIZE];
+                let mut buf = vec![0u8; REMOTE_FILE_CHUNK_BYTES];
                 loop {
                     let n = match f.read(&mut buf).await {
                         Ok(0) => break,
@@ -1165,7 +1155,6 @@ fn handle_server_command(
         }
         "WriteFileChunk" => {
             const MAX_FILE_PATH_CHARS: usize = 2048;
-            const MAX_FILE_BYTES: u64 = 100 * 1024 * 1024;
             use base64::{engine::general_purpose, Engine as _};
             use std::io::Write;
 
@@ -1257,17 +1246,6 @@ fn handle_server_command(
             }
 
             let new_total = session.bytes_written.saturating_add(decoded.len() as u64);
-            if new_total > MAX_FILE_BYTES {
-                *g = None;
-                drop(g);
-                push_result(
-                    path,
-                    false,
-                    "file exceeds maximum size (100 MiB)".to_string(),
-                    out_tx.clone(),
-                );
-                return;
-            }
 
             let write_res = (|| {
                 if chunk_index == 0 {

@@ -36,8 +36,8 @@ use crate::state::{AppState, Broadcast};
 // This prevents large JSON objects from turning into expensive parses or
 // unbounded command payload forwarding.
 const MAX_VIEWER_TEXT_BYTES: usize = 64 * 1024;
-/// File uploads send base64 chunks; allow larger control messages only for `WriteFileChunk`.
-const MAX_VIEWER_WRITEFILE_MSG_BYTES: usize = 5 * 1024 * 1024;
+/// File uploads send base64 chunks; allow large `WriteFileChunk` payloads (no fixed file-size cap).
+const MAX_VIEWER_WRITEFILE_MSG_BYTES: usize = 256 * 1024 * 1024;
 const MAX_TYPE_TEXT_CHARS: usize = 2_000;
 const MAX_NOTIFY_TITLE_CHARS: usize = 64;
 const MAX_NOTIFY_MESSAGE_CHARS: usize = 256;
@@ -220,7 +220,6 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>, user: &AuthUser) {
         "ListDir" => true,
         "ReadFile" => val["cmd"]["path"].as_str().is_some(),
         "WriteFileChunk" => {
-            const MAX_B64_CHARS: usize = 4_400_000;
             let path_ok = val["cmd"]["path"]
                 .as_str()
                 .map(|p| !p.trim().is_empty() && p.chars().count() <= 2048)
@@ -229,10 +228,7 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>, user: &AuthUser) {
             let idx = val["cmd"]["chunk_index"].as_u64().unwrap_or(0);
             let chunks_ok = total >= 1 && idx < total;
             let dv = &val["cmd"]["data"];
-            let data_ok = dv
-                .as_str()
-                .map(|s| s.len() <= MAX_B64_CHARS)
-                .unwrap_or_else(|| dv.is_null());
+            let data_ok = dv.as_str().is_some() || dv.is_null();
             path_ok && chunks_ok && data_ok
         }
         "RequestInfo" | "RestartHost" | "ShutdownHost" | "CollectSoftware" => true,

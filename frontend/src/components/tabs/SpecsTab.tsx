@@ -42,36 +42,41 @@ function CopyableAddressList({ ips }: { ips: string[] }) {
 }
 
 function CopyableInline({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const flashClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      if (flashClearRef.current) clearTimeout(flashClearRef.current);
     };
   }, []);
 
   const onActivate = async () => {
     const ok = await copyToClipboard(text);
     if (!ok) return;
-    if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    setCopied(true);
-    timeoutRef.current = setTimeout(() => {
-      setCopied(false);
-      timeoutRef.current = null;
-    }, 1200);
+    const el = btnRef.current;
+    if (!el) return;
+    el.classList.remove("sentinel-copyable-inline--flash");
+    // Reflow so the animation can run again on repeated clicks.
+    void el.offsetWidth;
+    el.classList.add("sentinel-copyable-inline--flash");
+    if (flashClearRef.current) clearTimeout(flashClearRef.current);
+    flashClearRef.current = setTimeout(() => {
+      el.classList.remove("sentinel-copyable-inline--flash");
+      flashClearRef.current = null;
+    }, 600);
   };
 
   return (
     <button
+      ref={btnRef}
       type="button"
       onClick={onActivate}
       title="Copy to clipboard"
       aria-label={`Copy ${text} to clipboard`}
       className="sentinel-copyable-inline"
-      data-copied={copied ? "true" : undefined}
     >
-      {copied ? "Copied" : text}
+      {text}
     </button>
   );
 }

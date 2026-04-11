@@ -31,7 +31,8 @@ use crate::{alert_rules, db, state::{AppState, Frame}};
 // Conservative bounds to mitigate memory/DB-flood DoS.
 // These can be tuned later (or moved to env/config).
 const MAX_AGENT_NAME_CHARS: usize = 128;
-const MAX_AGENT_TEXT_BYTES: usize = 6 * 1024 * 1024; // JSON events (expanded for file explorer)
+/// Large enough for file-chunk base64 JSON (see agent `REMOTE_FILE_CHUNK_BYTES`); not a file-size cap.
+const MAX_AGENT_TEXT_BYTES: usize = 256 * 1024 * 1024;
 const MAX_AGENT_BINARY_BYTES: usize = 8 * 1024 * 1024; // JPEG frames
 
 const MAX_KEYS_TEXT_CHARS: usize = 4_000;

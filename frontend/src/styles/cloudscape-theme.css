@@ -530,7 +530,7 @@ button.sentinel-copyable-inline {
   vertical-align: baseline;
 }
 
-button.sentinel-copyable-inline:hover:not([data-copied="true"]) {
+button.sentinel-copyable-inline:hover {
   color: var(--awsui-color-text-link-default);
   background: color-mix(in srgb, var(--awsui-color-text-link-default) 14%, transparent);
 }
@@ -540,8 +540,17 @@ button.sentinel-copyable-inline:focus-visible {
   outline-offset: 2px;
 }
 
-button.sentinel-copyable-inline[data-copied="true"] {
-  color: var(--sentinel-success);
+@keyframes sentinel-copy-flash {
+  0% {
+    background-color: color-mix(in srgb, var(--sentinel-success) 42%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+button.sentinel-copyable-inline.sentinel-copyable-inline--flash {
+  animation: sentinel-copy-flash 0.55s ease-out;
 }
 
 /* Custom scrollbar for webkit browsers */
