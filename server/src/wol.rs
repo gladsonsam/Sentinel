@@ -34,7 +34,7 @@ pub fn parse_mac_str(s: &str) -> Option<[u8; 6]> {
         return None;
     }
     let parts: Vec<&str> = s
-        .split(|c| c == ':' || c == '-')
+        .split(|c| [':', '-'].contains(&c))
         .filter(|p| !p.is_empty())
         .collect();
     if parts.len() != 6 {

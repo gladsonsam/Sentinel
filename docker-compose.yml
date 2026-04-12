@@ -1,5 +1,8 @@
 # Copy `.env.example` → `.env`, then: docker compose up -d
-# Build from source, Traefik, etc.: https://github.com/gladsonsam/Sentinel/wiki/Deployment
+#
+# Build server from this tree: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+#
+# Traefik, etc.: https://github.com/gladsonsam/Sentinel/wiki/Deployment
 
 services:
   db:

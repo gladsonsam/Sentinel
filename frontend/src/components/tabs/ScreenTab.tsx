@@ -15,7 +15,7 @@ import type { DashboardRole } from "../../lib/types";
 
 interface ScreenTabProps {
   agentId: string;
-  sendWsMessage: (msg: any) => void;
+  sendWsMessage: (msg: unknown) => void;
   dashboardRole?: DashboardRole | null;
   /** When false, the MJPEG request is not started (tab hidden / navigated away). */
   streamActive?: boolean;
@@ -166,7 +166,7 @@ export function ScreenTab({
           <Header
             variant="h2"
             actions={
-              <SpaceBetween direction="horizontal" size="xs">
+              <SpaceBetween direction="horizontal" size="s" alignItems="center">
                 <Box padding={{ top: "xs" }}>
                   <StreamStatus streaming={streaming} />
                 </Box>

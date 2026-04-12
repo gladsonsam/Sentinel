@@ -28,6 +28,9 @@
 use std::sync::{Arc, Mutex};
 use std::sync::OnceLock;
 
+use argon2::{Argon2, PasswordHash, PasswordVerifier};
+use subtle::ConstantTimeEq;
+
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 #[cfg(not(target_os = "windows"))]
@@ -107,7 +110,7 @@ fn save_config(
             // Empty new_password → keep existing hash
             stored.0.lock().unwrap().ui_password_hash.clone()
         } else {
-            crate::config::hash_password(pw)
+            crate::config::hash_ui_password_argon2(pw)?
         }
     } else {
         config.ui_password_hash.clone()
@@ -171,8 +174,17 @@ fn has_ui_password(stored: State<StoredConfig>) -> bool {
 #[tauri::command]
 fn verify_ui_password(password: String, stored: State<StoredConfig>) -> Result<(), String> {
     let cfg = stored.0.lock().unwrap();
+    let expected = cfg.ui_password_hash.as_str();
+    if expected.starts_with("$argon2") {
+        let Ok(parsed) = PasswordHash::new(expected) else {
+            return Err("Invalid stored password hash".into());
+        };
+        return Argon2::default()
+            .verify_password(password.as_bytes(), &parsed)
+            .map_err(|_| "Wrong password".into());
+    }
     let hash = crate::config::hash_password(&password);
-    if hash == cfg.ui_password_hash {
+    if hash.as_bytes().ct_eq(expected.as_bytes()).into() {
         Ok(())
     } else {
         Err("Wrong password".into())

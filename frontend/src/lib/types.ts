@@ -150,6 +150,14 @@ export type WsEvent =
       event: "file_upload_result";
       agent_id: string;
       data: { path: string; ok: boolean; error?: string };
+    }
+  | {
+      event: "alert_rule_match";
+      agent_id?: string;
+      agent_name?: string;
+      rule_id?: number;
+      rule_name?: string;
+      snippet?: string;
     };
 
 /**

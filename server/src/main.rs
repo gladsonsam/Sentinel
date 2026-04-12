@@ -13,6 +13,7 @@ mod metrics;
 mod notify;
 mod oidc;
 mod oidc_http;
+mod secrets;
 mod state;
 mod wol;
 mod ws_agent;
@@ -236,11 +237,10 @@ async fn main() -> anyhow::Result<()> {
                 interval.tick().await;
                 m.db_pool_size.set(st.db.size() as i64);
                 m.db_pool_idle.set(st.db.num_idle() as i64);
-                m.agents_online.set(st.agents.lock().unwrap().len() as i64);
+                m.agents_online.set(st.agents.lock().len() as i64);
                 let viewers: u64 = st
                     .capture_viewers
                     .lock()
-                    .unwrap()
                     .values()
                     .map(|&c| c as u64)
                     .sum();
@@ -292,7 +292,7 @@ async fn main() -> anyhow::Result<()> {
         use tower_governor::key_extractor::SmartIpKeyExtractor;
         use tower_governor::GovernorLayer;
 
-        let n = cfg.api_rate_limit_per_second.min(500).max(1);
+        let n = cfg.api_rate_limit_per_second.clamp(1, 500);
         let burst_u = (n * 2).min(1000).max(n).min(u32::MAX as u64) as u32;
         let governor_conf = std::sync::Arc::new(
             GovernorConfigBuilder::default()
@@ -416,12 +416,10 @@ async fn record_http_metrics(
     if let Some(ref m) = state.metrics {
         let status = res.status().as_u16().to_string();
         let elapsed = start.elapsed().as_secs_f64();
-        let _ = m
-            .http_duration_seconds
+        m.http_duration_seconds
             .with_label_values(&[method.as_str()])
             .observe(elapsed);
-        let _ = m
-            .http_requests
+        m.http_requests
             .with_label_values(&[method.as_str(), &status])
             .inc();
     }

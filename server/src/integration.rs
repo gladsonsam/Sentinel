@@ -10,25 +10,16 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use subtle::ConstantTimeEq;
 use uuid::Uuid;
 
 use crate::db;
+use crate::secrets;
 use crate::state::AppState;
 
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     let auth = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
     let prefix = "Bearer ";
     auth.strip_prefix(prefix).map(str::trim)
-}
-
-fn token_ok(expected: &str, supplied: &str) -> bool {
-    let a = expected.as_bytes();
-    let b = supplied.as_bytes();
-    if a.len() != b.len() {
-        return false;
-    }
-    a.ct_eq(b).into()
 }
 
 /// `GET /api/integration/agents/live` — all agents with DB names + online flag + last live telemetry.
@@ -48,7 +39,7 @@ pub async fn agents_live(
             .into_response();
     };
 
-    if !token_ok(expected, supplied) {
+    if !secrets::ct_compare_secret(supplied, expected) {
         return (StatusCode::UNAUTHORIZED, "invalid token").into_response();
     }
 
@@ -60,8 +51,8 @@ pub async fn agents_live(
         }
     };
 
-    let agents_map = state.agents.lock().unwrap();
-    let live_map = state.agent_live.lock().unwrap();
+    let agents_map = state.agents.lock();
+    let live_map = state.agent_live.lock();
 
     let mut agents = Vec::new();
     for row in rows {

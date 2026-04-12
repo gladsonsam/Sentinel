@@ -239,7 +239,7 @@ export function AgentCard({
                 setStatusFilter("all");
                 filterProps.onChange({
                   detail: { filteringText: "" },
-                } as any)
+                } as Parameters<typeof filterProps.onChange>[0])
               }}
             />
           ) : (

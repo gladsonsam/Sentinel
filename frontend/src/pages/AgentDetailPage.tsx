@@ -16,7 +16,7 @@ import {
   AGENT_TAB_META,
   type AgentSectionId,
 } from "../lib/agentTabNav";
-import type { TabKey, DashboardRole } from "../lib/types";
+import type { TabKey, DashboardRole, WsEvent } from "../lib/types";
 import { SpecsTab } from "../components/tabs/SpecsTab";
 import { ScreenTab } from "../components/tabs/ScreenTab";
 import { KeysTab } from "../components/tabs/KeysTab";
@@ -45,7 +45,7 @@ interface AgentDetailPageProps {
   agent: Agent;
   agentInfo: AgentInfo | null;
   liveStatus?: AgentLiveStatus;
-  sendWsMessage: (msg: any) => void;
+  sendWsMessage: (msg: unknown) => void;
   onNotifyInfo: (header: string, content?: string) => void;
   onNotifyWarning: (header: string, content?: string) => void;
   onNotifyError: (header: string, content?: string) => void;
@@ -253,35 +253,36 @@ export function AgentDetailPage({
         ? await keysRes.value.json()
         : [];
 
+      type ApiRow = Record<string, unknown>;
       const windowRows = (Array.isArray(windows?.rows) ? windows.rows : Array.isArray(windows) ? windows : [])
-        .map((row: any) => ({
-          id: row.id ?? row.hwnd ?? 0,
-          window_title: row.window_title ?? row.title ?? "Unknown window",
-          exe_name: row.exe_name ?? row.app ?? "Unknown app",
-          app_display: row.app_display ?? row.exe_name ?? row.app ?? "Unknown app",
-          timestamp: row.timestamp ?? row.ts ?? row.created ?? "",
+        .map((row: ApiRow) => ({
+          id: Number(row.id ?? row.hwnd ?? 0),
+          window_title: String(row.window_title ?? row.title ?? "Unknown window"),
+          exe_name: String(row.exe_name ?? row.app ?? "Unknown app"),
+          app_display: String(row.app_display ?? row.exe_name ?? row.app ?? "Unknown app"),
+          timestamp: String(row.timestamp ?? row.ts ?? row.created ?? ""),
         }))
-        .filter((row: any) => parseTimestamp(row.timestamp));
+        .filter((row: { timestamp: string }) => parseTimestamp(row.timestamp));
 
       const urlRows = (Array.isArray(urls?.rows) ? urls.rows : Array.isArray(urls) ? urls : [])
-        .map((row: any) => ({
-          id: row.id ?? 0,
-          url: row.url ?? "",
-          browser: row.browser ?? "Unknown",
-          timestamp: row.timestamp ?? row.ts ?? "",
+        .map((row: ApiRow) => ({
+          id: Number(row.id ?? 0),
+          url: String(row.url ?? ""),
+          browser: String(row.browser ?? "Unknown"),
+          timestamp: String(row.timestamp ?? row.ts ?? ""),
         }))
-        .filter((row: any) => parseTimestamp(row.timestamp));
+        .filter((row: { timestamp: string }) => parseTimestamp(row.timestamp));
 
       const keyRows = (Array.isArray(keystrokes?.rows) ? keystrokes.rows : Array.isArray(keystrokes) ? keystrokes : [])
-        .map((row: any) => ({
-          id: row.id ?? 0,
-          window_title: row.window_title ?? row.title ?? "",
-          exe_name: row.exe_name ?? row.app ?? "",
-          app_display: row.app_display ?? row.exe_name ?? row.app ?? "",
-          keys: row.keys ?? row.text ?? "",
-          timestamp: row.timestamp ?? row.updated_at ?? row.started_at ?? "",
+        .map((row: ApiRow) => ({
+          id: Number(row.id ?? 0),
+          window_title: String(row.window_title ?? row.title ?? ""),
+          exe_name: String(row.exe_name ?? row.app ?? ""),
+          app_display: String(row.app_display ?? row.exe_name ?? row.app ?? ""),
+          keys: String(row.keys ?? row.text ?? ""),
+          timestamp: String(row.timestamp ?? row.updated_at ?? row.started_at ?? ""),
         }))
-        .filter((row: any) => parseTimestamp(row.timestamp));
+        .filter((row: { timestamp: string }) => parseTimestamp(row.timestamp));
 
       let alertEvents: SessionAlertEvent[] = [];
       if (alertsRes.status === "fulfilled" && alertsRes.value.ok) {
@@ -326,10 +327,11 @@ export function AgentDetailPage({
   useEffect(() => {
     if (activeTab !== "activity" && activeTab !== "live") return;
     const onWsEvent = (event: Event) => {
-      const detail = (event as CustomEvent<any>).detail;
-      if (!detail || detail.agent_id !== agent.id) return;
-      if (!["window_focus", "url", "keys", "afk", "active", "alert_rule_match"].includes(detail.event))
-        return;
+      const detail = (event as CustomEvent<WsEvent>).detail;
+      if (!detail || !("agent_id" in detail) || detail.agent_id !== agent.id) return;
+      if (!("event" in detail)) return;
+      const ev = detail.event;
+      if (!["window_focus", "url", "keys", "afk", "active", "alert_rule_match"].includes(ev)) return;
       if (activeTabRef.current !== "activity" && activeTabRef.current !== "live") return;
 
       if (refreshDebounceRef.current) {

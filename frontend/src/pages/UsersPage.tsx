@@ -21,7 +21,13 @@ import ExpandableSection from "@cloudscape-design/components/expandable-section"
 import Badge from "@cloudscape-design/components/badge";
 import Tabs from "@cloudscape-design/components/tabs";
 import { api } from "../lib/api";
-import { dashboardRoleLabel, type DashboardRole, type DashboardSessionUser, type DashboardUser } from "../lib/types";
+import {
+  dashboardRoleLabel,
+  type DashboardIdentity,
+  type DashboardRole,
+  type DashboardSessionUser,
+  type DashboardUser,
+} from "../lib/types";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { DashboardUserAvatar } from "../components/common/DashboardUserAvatar";
 import {
@@ -224,7 +230,7 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
   const [pwValue, setPwValue] = useState("");
 
   const [idModal, setIdModal] = useState<null | { id: string; username: string }>(null);
-  const [identities, setIdentities] = useState<any[] | null>(null);
+  const [identities, setIdentities] = useState<DashboardIdentity[] | null>(null);
   const [identityLink, setIdentityLink] = useState({ issuer: "", subject: "" });
 
   const [selfDisplayName, setSelfDisplayName] = useState("");
@@ -328,7 +334,7 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
         try {
           setActionError(null);
           const r = await api.userIdentities(id);
-          setIdentities(r.identities as any);
+          setIdentities(r.identities);
         } catch (e: unknown) {
           setActionError(String((e as { message?: string })?.message || "Failed to load identities"));
         }
@@ -864,7 +870,7 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
                         subject: identityLink.subject.trim(),
                       });
                       const r = await api.userIdentities(idModal.id);
-                      setIdentities(r.identities as any);
+                      setIdentities(r.identities);
                       setIdentityLink({ issuer: "", subject: "" });
                     } catch (e: unknown) {
                       setActionError(String((e as { message?: string })?.message || "Failed to link identity"));
@@ -894,23 +900,23 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
             </ColumnLayout>
             {identities && identities.length > 0 ? (
               <Table
-                items={identities as any}
+                items={identities}
                 wrapLines
                 columnDefinitions={[
                   {
                     id: "issuer",
                     header: "Issuer",
-                    cell: (i: any) => <Box className="sentinel-wrap-anywhere">{i.issuer}</Box>,
+                    cell: (i: DashboardIdentity) => <Box className="sentinel-wrap-anywhere">{i.issuer}</Box>,
                   },
                   {
                     id: "subject",
                     header: "Subject",
-                    cell: (i: any) => <Box className="sentinel-wrap-anywhere">{i.subject}</Box>,
+                    cell: (i: DashboardIdentity) => <Box className="sentinel-wrap-anywhere">{i.subject}</Box>,
                   },
                   {
                     id: "unlink",
                     header: "",
-                    cell: (i: any) => (
+                    cell: (i: DashboardIdentity) => (
                       <Button
                         variant="icon"
                         iconName="close"
@@ -921,7 +927,7 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
                             await api.identityUnlink(i.id);
                             if (idModal) {
                               const r = await api.userIdentities(idModal.id);
-                              setIdentities(r.identities as any);
+                              setIdentities(r.identities);
                             }
                           } catch (e: unknown) {
                             setActionError(String((e as { message?: string })?.message || "Failed to unlink identity"));

@@ -89,7 +89,7 @@ pub async fn on_url_or_keys_event(
 
         let cooldown = rule.cooldown_secs.max(0) as u64;
         if cooldown > 0 {
-            let mut map = state.alert_match_cooldowns.lock().unwrap();
+            let mut map = state.alert_match_cooldowns.lock();
             let key = (rule.id, agent_id);
             let now = Instant::now();
             if let Some(last) = map.get(&key) {
@@ -173,14 +173,13 @@ async fn capture_and_store_screenshot_for_event(
     event_id: i64,
 ) {
     // Must have an active WS connection.
-    if !state.agent_cmds.lock().unwrap().contains_key(&agent_id) {
+    if !state.agent_cmds.lock().contains_key(&agent_id) {
         return;
     }
 
     let prev_seq = state
         .frames
         .lock()
-        .unwrap()
         .get(&agent_id)
         .map(|f| f.seq)
         .unwrap_or(0);
@@ -196,7 +195,7 @@ async fn capture_and_store_screenshot_for_event(
             break;
         }
         {
-            let frames = state.frames.lock().unwrap();
+            let frames = state.frames.lock();
             if let Some(f) = frames.get(&agent_id) {
                 if f.seq > prev_seq && !f.jpeg.is_empty() {
                     jpeg = Some(f.jpeg.clone());

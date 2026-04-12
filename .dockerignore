@@ -15,3 +15,6 @@ server/static/
 .git/
 *.md
 move.sh
+
+# Optional local junk (e.g. leftover before `git pull`); the real `api` module is `server/src/api/`.
+server/src/api.rs

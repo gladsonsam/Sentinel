@@ -2,14 +2,20 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
+use parking_lot::Mutex;
 use sqlx::PgPool;
-use tokio::sync::{broadcast, mpsc::UnboundedSender, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot};
 use uuid::Uuid;
+
+/// Capacity for each agent’s command queue (viewer → server → agent). Bounded to bound memory.
+pub const AGENT_CMD_CHANNEL_CAPACITY: usize = 512;
+
+/// Bounded sender for JSON command lines to the agent WebSocket task.
+pub type AgentCmdSender = mpsc::Sender<String>;
 
 /// Online agent entry (keyed by agent id in [`AppState::agents`]).
 #[derive(Debug, Clone)]
@@ -49,7 +55,7 @@ pub struct AppState {
     pub frames: Mutex<HashMap<Uuid, Frame>>,
 
     /// Per-agent command fan-in (viewer → server → agent WebSocket).
-    pub agent_cmds: Mutex<HashMap<Uuid, UnboundedSender<String>>>,
+    pub agent_cmds: Mutex<HashMap<Uuid, AgentCmdSender>>,
 
     /// MJPEG viewer refcount per agent; drives `start_capture` / `stop_capture`.
     pub capture_viewers: Mutex<HashMap<Uuid, u32>>,
@@ -93,6 +99,7 @@ pub struct Frame {
 }
 
 impl AppState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         db: PgPool,
         allow_insecure_dashboard_open: bool,
@@ -138,7 +145,7 @@ impl AppState {
         kind: &str,
         val: &serde_json::Value,
     ) {
-        let mut map = self.agent_live.lock().unwrap();
+        let mut map = self.agent_live.lock();
         let snap = map.entry(agent_id).or_default();
         let now = Utc::now();
         match kind {
@@ -176,7 +183,7 @@ impl AppState {
     }
 
     pub fn clear_agent_live(&self, agent_id: Uuid) {
-        self.agent_live.lock().unwrap().remove(&agent_id);
+        self.agent_live.lock().remove(&agent_id);
     }
 
     /// Returns `Err(retry_after_secs)` when WoL for this agent is throttled.
@@ -184,7 +191,7 @@ impl AppState {
         if self.wol_min_interval.is_zero() {
             return Ok(());
         }
-        let map = self.wol_last_wake.lock().unwrap();
+        let map = self.wol_last_wake.lock();
         let now = Instant::now();
         if let Some(last) = map.get(&agent_id) {
             let elapsed = now.saturating_duration_since(*last);
@@ -200,23 +207,20 @@ impl AppState {
         if self.wol_min_interval.is_zero() {
             return;
         }
-        self.wol_last_wake
-            .lock()
-            .unwrap()
-            .insert(agent_id, Instant::now());
+        self.wol_last_wake.lock().insert(agent_id, Instant::now());
     }
 
     pub fn register_script_waiter(&self, id: Uuid, sender: oneshot::Sender<serde_json::Value>) {
-        self.script_waiters.lock().unwrap().insert(id, sender);
+        self.script_waiters.lock().insert(id, sender);
     }
 
     pub fn remove_script_waiter(&self, id: Uuid) {
-        self.script_waiters.lock().unwrap().remove(&id);
+        self.script_waiters.lock().remove(&id);
     }
 
     /// Deliver an agent `script_result` to a waiting HTTP request, if any.
     pub fn try_complete_script_waiter(&self, id: Uuid, payload: serde_json::Value) -> bool {
-        if let Some(tx) = self.script_waiters.lock().unwrap().remove(&id) {
+        if let Some(tx) = self.script_waiters.lock().remove(&id) {
             let _ = tx.send(payload);
             return true;
         }
@@ -230,9 +234,8 @@ impl AppState {
         };
         self.agent_cmds
             .lock()
-            .unwrap()
             .get(&agent_id)
-            .map(|tx| tx.send(s).is_ok())
+            .map(|tx| tx.try_send(s).is_ok())
             .unwrap_or(false)
     }
 

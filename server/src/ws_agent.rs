@@ -8,7 +8,7 @@
 //! dashboard viewers can send mouse/keyboard control commands back to the
 //! agent (via the server) without needing a direct connection.
 //!
-//! Screen capture is demand-driven: the MJPEG stream handler in `api.rs`
+//! Screen capture is demand-driven: the MJPEG stream handler in `api::agents_capture`
 //! sends `start_capture` / `stop_capture` based on viewer count.  The agent
 //! always stops capture when its WebSocket session ends, so each new session
 //! starts idle until explicitly asked to capture.
@@ -28,14 +28,15 @@ use tracing::{error, info, warn};
 
 use crate::{
     alert_rules, db,
-    state::{AppState, Frame},
+    secrets,
+    state::{AppState, Frame, AGENT_CMD_CHANNEL_CAPACITY},
 };
 
 // Conservative bounds to mitigate memory/DB-flood DoS.
 // These can be tuned later (or moved to env/config).
 const MAX_AGENT_NAME_CHARS: usize = 128;
-/// Large enough for file-chunk base64 JSON (see agent `REMOTE_FILE_CHUNK_BYTES`); not a file-size cap.
-const MAX_AGENT_TEXT_BYTES: usize = 256 * 1024 * 1024;
+/// ~3 MiB raw chunk → ~4.1 MiB base64 + JSON overhead (see agent `REMOTE_FILE_CHUNK_BYTES`).
+const MAX_AGENT_TEXT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_AGENT_BINARY_BYTES: usize = 8 * 1024 * 1024; // JPEG frames
 
 const MAX_KEYS_TEXT_CHARS: usize = 4_000;
@@ -59,9 +60,7 @@ pub async fn handler(
     if let Some(expected) = state.agent_secret.as_deref() {
         let provided = params.secret.as_deref().unwrap_or("");
 
-        // Secure timing attack mitigation with constant-time equality.
-        let is_equal = subtle::ConstantTimeEq::ct_eq(provided.as_bytes(), expected.as_bytes());
-        if !bool::from(is_equal) {
+        if !secrets::ct_compare_secret(provided, expected) {
             return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
         }
     } else if !state.allow_insecure_agent_auth {
@@ -106,15 +105,14 @@ async fn run(mut ws: WebSocket, name: String, state: Arc<AppState>) {
 
     // Add to in-memory agent map.
     {
-        let mut map = state.agents.lock().unwrap();
+        let mut map = state.agents.lock();
         map.insert(agent_id, crate::state::AgentConn { connected_at });
     }
 
-    let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<String>();
+    let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(AGENT_CMD_CHANNEL_CAPACITY);
     state
         .agent_cmds
         .lock()
-        .unwrap()
         .insert(agent_id, cmd_tx.clone());
 
     state.broadcast(
@@ -166,7 +164,7 @@ async fn run(mut ws: WebSocket, name: String, state: Arc<AppState>) {
                         }
 
                         // Cache the latest screenshot frame with a monotonically increasing sequence.
-                        let mut frames = state.frames.lock().unwrap();
+                        let mut frames = state.frames.lock();
                         let next_seq = frames.get(&agent_id).map(|f| f.seq.saturating_add(1)).unwrap_or(1);
                         frames.insert(
                             agent_id,
@@ -208,11 +206,11 @@ async fn run(mut ws: WebSocket, name: String, state: Arc<AppState>) {
     // ── Cleanup ───────────────────────────────────────────────────────────────
     let disconnected_at = chrono::Utc::now();
     state.clear_agent_live(agent_id);
-    state.agents.lock().unwrap().remove(&agent_id);
-    state.agent_cmds.lock().unwrap().remove(&agent_id);
+    state.agents.lock().remove(&agent_id);
+    state.agent_cmds.lock().remove(&agent_id);
     // Clear stale frame so MJPEG stream goes blank rather than serving the
     // last screenshot of a disconnected agent.
-    state.frames.lock().unwrap().remove(&agent_id);
+    state.frames.lock().remove(&agent_id);
     let _ = db::touch_agent(&state.db, agent_id).await;
     let _ = db::end_agent_session(&state.db, session_id).await;
 
@@ -238,8 +236,8 @@ pub async fn push_local_ui_password_hash_to_agent(state: &Arc<AppState>, agent_i
         "hash": hash,
     })
     .to_string();
-    if let Some(tx) = state.agent_cmds.lock().unwrap().get(&agent_id) {
-        let _ = tx.send(payload);
+    if let Some(tx) = state.agent_cmds.lock().get(&agent_id) {
+        let _ = tx.try_send(payload);
     }
 }
 
@@ -252,13 +250,13 @@ pub async fn push_auto_update_policy_to_agent(state: &Arc<AppState>, agent_id: u
         "enabled": enabled,
     })
     .to_string();
-    if let Some(tx) = state.agent_cmds.lock().unwrap().get(&agent_id) {
-        let _ = tx.send(payload);
+    if let Some(tx) = state.agent_cmds.lock().get(&agent_id) {
+        let _ = tx.try_send(payload);
     }
 }
 
 pub async fn push_auto_update_policy_to_all_connected(state: &Arc<AppState>) {
-    let ids: Vec<uuid::Uuid> = state.agents.lock().unwrap().keys().copied().collect();
+    let ids: Vec<uuid::Uuid> = state.agents.lock().keys().copied().collect();
     for id in ids {
         push_auto_update_policy_to_agent(state, id).await;
     }
@@ -266,7 +264,7 @@ pub async fn push_auto_update_policy_to_all_connected(state: &Arc<AppState>) {
 
 /// After changing the global default, notify every connected agent.
 pub async fn push_local_ui_password_to_all_connected(state: &Arc<AppState>) {
-    let ids: Vec<uuid::Uuid> = state.agents.lock().unwrap().keys().copied().collect();
+    let ids: Vec<uuid::Uuid> = state.agents.lock().keys().copied().collect();
     for id in ids {
         push_local_ui_password_hash_to_agent(state, id).await;
     }

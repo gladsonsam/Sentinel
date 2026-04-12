@@ -46,13 +46,13 @@ export function KeysTab({ agentId }: KeysTabProps) {
         const data = await response.json();
         const rows = Array.isArray(data?.rows) ? data.rows : Array.isArray(data) ? data : [];
         setItems(
-          rows.map((row: any) => ({
-            id: row.id ?? 0,
-            exe_name: row.exe_name ?? row.app ?? "—",
-            app_display: row.app_display ?? row.exe_name ?? row.app ?? "—",
-            window_title: row.window_title ?? row.title ?? "—",
-            keys: row.keys ?? row.text ?? "",
-            timestamp: row.timestamp ?? row.updated_at ?? row.started_at ?? "",
+          rows.map((row: Record<string, unknown>) => ({
+            id: Number(row.id ?? 0),
+            exe_name: String(row.exe_name ?? row.app ?? "—"),
+            app_display: String(row.app_display ?? row.exe_name ?? row.app ?? "—"),
+            window_title: String(row.window_title ?? row.title ?? "—"),
+            keys: String(row.keys ?? row.text ?? ""),
+            timestamp: String(row.timestamp ?? row.updated_at ?? row.started_at ?? ""),
           }))
         );
       }
@@ -131,7 +131,9 @@ export function KeysTab({ agentId }: KeysTabProps) {
                 <button
                   type="button"
                   onClick={() =>
-                    filterProps.onChange({ detail: { filteringText: item.exe_name ?? "" } } as any)
+                    filterProps.onChange({
+                      detail: { filteringText: item.exe_name ?? "" },
+                    } as Parameters<typeof filterProps.onChange>[0])
                   }
                   title="Filter table by this app"
                   style={{

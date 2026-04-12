@@ -69,15 +69,15 @@ export function AuditTab({
       const data = await response.json();
       const list = Array.isArray(data?.rows) ? data.rows : [];
       setRows(
-        list.map((r: any) => ({
-          id: r.id ?? 0,
-          ts: r.ts ?? r.timestamp ?? "",
-          actor: r.actor ?? "operator",
-          client_ip: r.client_ip ?? null,
-          agent_id: r.agent_id ?? null,
-          action: r.action ?? "unknown",
-          status: r.status ?? "ok",
-          detail: r.detail ?? {},
+        list.map((r: Record<string, unknown>) => ({
+          id: Number(r.id ?? 0),
+          ts: String(r.ts ?? r.timestamp ?? ""),
+          actor: String(r.actor ?? "operator"),
+          client_ip: (r.client_ip as string | null | undefined) ?? null,
+          agent_id: (r.agent_id as string | null | undefined) ?? null,
+          action: String(r.action ?? "unknown"),
+          status: String(r.status ?? "ok"),
+          detail: (r.detail as Record<string, unknown> | undefined) ?? {},
         }))
       );
     } catch (err) {

@@ -90,6 +90,8 @@ thiserror = "1"
 
 # ── Password hashing ──────────────────────────────────────────────────────────
 sha2 = "0.10"
+argon2 = "0.5"
+subtle = "2"
 
 # ── Platform directories (AppData) ───────────────────────────────────────────
 dirs = "6"

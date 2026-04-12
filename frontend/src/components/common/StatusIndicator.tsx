@@ -58,8 +58,9 @@ interface StreamStatusProps {
 
 export function StreamStatus({ streaming }: StreamStatusProps) {
   if (streaming) {
+    // Use success (calm) — not `in-progress`, which reads as warning/loading next to the Remote control toggle.
     return (
-      <StatusIndicator type="in-progress">
+      <StatusIndicator type="success">
         <span className="sentinel-pulse">Streaming</span>
       </StatusIndicator>
     );

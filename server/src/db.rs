@@ -9,6 +9,7 @@ use chrono::{DateTime, TimeZone, Utc};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
+use std::collections::HashMap;
 use std::ops::DerefMut;
 use uuid::Uuid;
 
@@ -629,6 +630,7 @@ pub async fn end_agent_session(pool: &PgPool, session_id: i64) -> Result<()> {
 }
 
 /// Returns (last_connected_at, last_disconnected_at) for an agent.
+#[allow(dead_code)] // Retained for ad-hoc use; hot paths use [`agent_last_session_times_batch`].
 pub async fn agent_last_session_times(
     pool: &PgPool,
     agent_id: Uuid,
@@ -649,6 +651,38 @@ pub async fn agent_last_session_times(
     let last_connected_at: Option<DateTime<Utc>> = row.try_get("last_connected_at").ok();
     let last_disconnected_at: Option<DateTime<Utc>> = row.try_get("last_disconnected_at").ok();
     Ok((last_connected_at, last_disconnected_at))
+}
+
+/// Batch variant of [`agent_last_session_times`] for many agents in one round-trip.
+pub async fn agent_last_session_times_batch(
+    pool: &PgPool,
+    agent_ids: &[Uuid],
+) -> Result<HashMap<Uuid, (Option<DateTime<Utc>>, Option<DateTime<Utc>>)>> {
+    if agent_ids.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let rows = sqlx::query(
+        r#"
+        SELECT agent_id,
+               MAX(connected_at)    AS last_connected_at,
+               MAX(disconnected_at) AS last_disconnected_at
+        FROM agent_sessions
+        WHERE agent_id = ANY($1)
+        GROUP BY agent_id
+        "#,
+    )
+    .bind(agent_ids)
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = HashMap::with_capacity(rows.len());
+    for row in rows {
+        let id: Uuid = row.try_get("agent_id")?;
+        let last_connected_at: Option<DateTime<Utc>> = row.try_get("last_connected_at").ok();
+        let last_disconnected_at: Option<DateTime<Utc>> = row.try_get("last_disconnected_at").ok();
+        out.insert(id, (last_connected_at, last_disconnected_at));
+    }
+    Ok(out)
 }
 
 // ─── Window events ────────────────────────────────────────────────────────────
@@ -934,6 +968,7 @@ pub async fn insert_audit_log(
 ///
 /// "Identical" means same actor/agent/action/status/detail JSON and within
 /// `dedup_window_secs` from now.
+#[allow(clippy::too_many_arguments)]
 pub async fn insert_audit_log_dedup(
     pool: &PgPool,
     actor: &str,
@@ -974,6 +1009,51 @@ pub async fn insert_audit_log_dedup(
     }
 
     Ok(())
+}
+
+/// Like [`insert_audit_log`], but emits a warning when the insert fails (HTTP handlers may still return 200).
+pub async fn insert_audit_log_traced(
+    pool: &PgPool,
+    actor: &str,
+    agent_id: Option<Uuid>,
+    action: &str,
+    status: &str,
+    detail: &serde_json::Value,
+    client_ip: Option<&str>,
+) {
+    if let Err(e) =
+        insert_audit_log(pool, actor, agent_id, action, status, detail, client_ip).await
+    {
+        tracing::warn!(error = %e, action, "audit log insert failed");
+    }
+}
+
+/// Like [`insert_audit_log_dedup`], but warns on failure.
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_audit_log_dedup_traced(
+    pool: &PgPool,
+    actor: &str,
+    agent_id: Option<Uuid>,
+    action: &str,
+    status: &str,
+    detail: &serde_json::Value,
+    dedup_window_secs: i64,
+    client_ip: Option<&str>,
+) {
+    if let Err(e) = insert_audit_log_dedup(
+        pool,
+        actor,
+        agent_id,
+        action,
+        status,
+        detail,
+        dedup_window_secs,
+        client_ip,
+    )
+    .await
+    {
+        tracing::warn!(error = %e, action, "audit log dedup insert failed");
+    }
 }
 
 pub async fn query_audit_log(
@@ -1496,9 +1576,9 @@ pub async fn prune_auxiliary_retention(
     Ok(())
 }
 
-// ─── Agent local UI password (SHA-256 hex, matches Windows agent config.rs) ───
+// ─── Agent local UI password (Argon2 PHC string; legacy SHA-256 hex still supported) ───
 
-/// SHA-256 hex digest — same algorithm as the agent `hash_password()`.
+/// SHA-256 hex digest — legacy agent UI password format (see `hash_agent_local_ui_password`).
 pub fn sha256_hex(plain: &str) -> String {
     let mut h = Sha256::new();
     h.update(plain.as_bytes());
@@ -1510,11 +1590,16 @@ pub fn empty_agent_ui_password_hash() -> String {
     sha256_hex("")
 }
 
+/// Argon2 hash for a new agent local UI password (pushed to agents as a PHC string).
+pub fn hash_agent_local_ui_password(plain: &str) -> Result<String> {
+    hash_dashboard_password(plain)
+}
+
 /// `true` if this hash means the user must type a non-empty password to open settings.
 pub fn agent_ui_password_is_set(hash: Option<&str>) -> bool {
     match hash {
         None => false,
-        Some(h) if h.is_empty() => false,
+        Some("") => false,
         Some(h) => h != empty_agent_ui_password_hash().as_str(),
     }
 }
@@ -2112,6 +2197,7 @@ async fn alert_rule_scopes_write_tx(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn alert_rule_create_with_scopes(
     pool: &PgPool,
     name: &str,
@@ -2147,6 +2233,7 @@ pub async fn alert_rule_create_with_scopes(
     Ok(id)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn alert_rule_update_with_scopes(
     pool: &PgPool,
     rule_id: i64,

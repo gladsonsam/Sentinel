@@ -80,11 +80,11 @@ export function UrlsTab({ agentId }: UrlsTabProps) {
         const data = await response.json();
         const rows = Array.isArray(data?.rows) ? data.rows : Array.isArray(data) ? data : [];
         setItems(
-          rows.map((row: any) => ({
-            id: row.id ?? 0,
-            url: row.url ?? "",
-            browser: row.browser ?? "—",
-            timestamp: row.timestamp ?? row.ts ?? "",
+          rows.map((row: Record<string, unknown>) => ({
+            id: Number(row.id ?? 0),
+            url: String(row.url ?? ""),
+            browser: String(row.browser ?? "—"),
+            timestamp: String(row.timestamp ?? row.ts ?? ""),
           }))
         );
       }
@@ -96,10 +96,10 @@ export function UrlsTab({ agentId }: UrlsTabProps) {
         const topData = await topRes.json();
         const topRows = Array.isArray(topData?.rows) ? topData.rows : [];
         setTopItems(
-          topRows.map((row: any) => ({
-            url: row.url ?? "",
-            visit_count: row.visit_count ?? 0,
-            last_ts: row.last_ts ?? "",
+          topRows.map((row: Record<string, unknown>) => ({
+            url: String(row.url ?? ""),
+            visit_count: Number(row.visit_count ?? 0),
+            last_ts: String(row.last_ts ?? ""),
           }))
         );
       }

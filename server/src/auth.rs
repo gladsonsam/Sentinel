@@ -177,7 +177,7 @@ fn login_client_key(headers: &HeaderMap, addr: SocketAddr) -> String {
 }
 
 fn login_rate_retry_after(state: &AppState, key: &str) -> Option<u64> {
-    let mut map = state.login_failures.lock().unwrap();
+    let mut map = state.login_failures.lock();
     let v = map.get_mut(key)?;
     let now = Instant::now();
     v.retain(|t| now.saturating_duration_since(*t) < LOGIN_FAIL_WINDOW);
@@ -200,8 +200,8 @@ fn login_rate_retry_after(state: &AppState, key: &str) -> Option<u64> {
 /// Records a failed login. Returns `Ok(attempts_remaining)` (wrong tries left before lockout), or
 /// `Err(retry_secs)` when this attempt triggered the limit.
 fn record_login_failure(state: &AppState, key: &str) -> Result<u64, u64> {
-    let mut map = state.login_failures.lock().unwrap();
-    let v = map.entry(key.to_string()).or_insert_with(Vec::new);
+    let mut map = state.login_failures.lock();
+    let v = map.entry(key.to_string()).or_default();
     let now = Instant::now();
     v.retain(|t| now.saturating_duration_since(*t) < LOGIN_FAIL_WINDOW);
     v.push(now);
@@ -217,9 +217,7 @@ fn record_login_failure(state: &AppState, key: &str) -> Result<u64, u64> {
 }
 
 fn clear_login_failures(state: &AppState, key: &str) {
-    if let Ok(mut map) = state.login_failures.lock() {
-        map.remove(key);
-    }
+    state.login_failures.lock().remove(key);
 }
 
 async fn audit_auth_event(
@@ -774,12 +772,11 @@ pub async fn oidc_callback(
     let email = claims.email().map(|e| e.as_str().to_string());
     let name = claims
         .name()
-        .map(|n| n.get(None).map(|s| s.to_string()))
-        .flatten();
+        .and_then(|n| n.get(None).map(|s| s.to_string()));
 
     // Authentik: groups often appear as a custom claim `groups` (array of strings).
     let mut groups: Vec<String> = Vec::new();
-    if let Ok(val) = serde_json::to_value(&claims) {
+    if let Ok(val) = serde_json::to_value(claims) {
         if let Some(arr) = val.get("groups").and_then(|v| v.as_array()) {
             for it in arr {
                 if let Some(s) = it.as_str() {

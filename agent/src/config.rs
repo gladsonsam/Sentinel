@@ -13,6 +13,8 @@
 //!
 //! [`CryptProtectData`]: https://learn.microsoft.com/en-us/windows/win32/api/dpapi/nf-dpapi-cryptprotectdata
 
+use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
+use argon2::Argon2;
 use base64::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -39,8 +41,8 @@ pub struct Config {
     #[serde(default)]
     pub agent_password: String,
 
-    /// SHA-256 hex-digest of the local UI access password.
-    /// An empty-string hash (`hash_password("")`) means no password required.
+    /// Local UI password verification material: legacy SHA-256 hex digest, or Argon2 PHC string
+    /// from the server. An empty-string hash (`hash_password("")`) means no password required.
     #[serde(default = "empty_password_hash")]
     pub ui_password_hash: String,
 
@@ -81,6 +83,16 @@ pub fn hash_password(password: &str) -> String {
     let mut h = Sha256::new();
     h.update(password.as_bytes());
     format!("{:x}", h.finalize())
+}
+
+/// Argon2 PHC string for a **new** local UI password set in the Tauri settings UI.
+/// Matches the server’s `hash_dashboard_password` / `hash_agent_local_ui_password` defaults.
+pub fn hash_ui_password_argon2(plain: &str) -> Result<String, String> {
+    let salt = SaltString::generate(&mut OsRng);
+    Argon2::default()
+        .hash_password(plain.as_bytes(), &salt)
+        .map(|h| h.to_string())
+        .map_err(|e| e.to_string())
 }
 
 /// Optional app-specific entropy so unrelated DPAPI blobs are never mistaken for ours.

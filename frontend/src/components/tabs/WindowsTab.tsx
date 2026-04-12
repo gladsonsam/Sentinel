@@ -51,12 +51,12 @@ export function WindowsTab({ agentId }: WindowsTabProps) {
         const data = await response.json();
         const rows = Array.isArray(data?.rows) ? data.rows : Array.isArray(data) ? data : [];
         setItems(
-          rows.map((row: any) => ({
-            id: row.id ?? row.hwnd ?? 0,
-            window_title: row.window_title ?? row.title ?? "—",
-            exe_name: row.exe_name ?? row.app ?? "—",
-            app_display: row.app_display ?? row.exe_name ?? row.app ?? "—",
-            timestamp: row.timestamp ?? row.ts ?? row.created ?? "",
+          rows.map((row: Record<string, unknown>) => ({
+            id: Number(row.id ?? row.hwnd ?? 0),
+            window_title: String(row.window_title ?? row.title ?? "—"),
+            exe_name: String(row.exe_name ?? row.app ?? "—"),
+            app_display: String(row.app_display ?? row.exe_name ?? row.app ?? "—"),
+            timestamp: String(row.timestamp ?? row.ts ?? row.created ?? ""),
           }))
         );
       }
@@ -68,12 +68,12 @@ export function WindowsTab({ agentId }: WindowsTabProps) {
         const topData = await topRes.json();
         const topRows = Array.isArray(topData?.rows) ? topData.rows : [];
         setTopItems(
-          topRows.map((row: any) => ({
-            app: row.app ?? "",
-            app_display: row.app_display ?? row.app ?? "",
-            title: row.title ?? "",
-            focus_count: row.focus_count ?? 0,
-            last_ts: row.last_ts ?? "",
+          topRows.map((row: Record<string, unknown>) => ({
+            app: String(row.app ?? ""),
+            app_display: String(row.app_display ?? row.app ?? ""),
+            title: String(row.title ?? ""),
+            focus_count: Number(row.focus_count ?? 0),
+            last_ts: String(row.last_ts ?? ""),
           }))
         );
       }
@@ -132,7 +132,9 @@ export function WindowsTab({ agentId }: WindowsTabProps) {
                 <button
                   type="button"
                   onClick={() =>
-                    filterProps.onChange({ detail: { filteringText: item.exe_name ?? "" } } as any)
+                    filterProps.onChange({
+                      detail: { filteringText: item.exe_name ?? "" },
+                    } as Parameters<typeof filterProps.onChange>[0])
                   }
                   title="Filter table by this app"
                   style={{

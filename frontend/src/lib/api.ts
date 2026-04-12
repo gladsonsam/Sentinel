@@ -33,21 +33,45 @@ export function apiUrl(path: string): string {
   return buildApiUrl(path);
 }
 
-/** Per-tab CSRF secret from login or `GET /api/me`; sent as `X-CSRF-Token` on mutating requests. */
-let dashboardCsrfToken: string | null = null;
+/** Per-tab CSRF token (`sessionStorage` isolates concurrent logins across browser tabs). */
+const CSRF_STORAGE_KEY = "sentinel.dashboard.csrf";
 
 export function setDashboardCsrfToken(token: string | null): void {
-  dashboardCsrfToken = token;
+  try {
+    if (token) sessionStorage.setItem(CSRF_STORAGE_KEY, token);
+    else sessionStorage.removeItem(CSRF_STORAGE_KEY);
+  } catch {
+    // Storage disabled — CSRF-protected mutating calls may fail until login succeeds again.
+  }
 }
 
 function csrfHeaders(): Record<string, string> {
-  if (!dashboardCsrfToken) return {};
-  return { "X-CSRF-Token": dashboardCsrfToken };
+  try {
+    const t = sessionStorage.getItem(CSRF_STORAGE_KEY);
+    if (!t) return {};
+    return { "X-CSRF-Token": t };
+  } catch {
+    return {};
+  }
 }
 
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(apiUrl(path), { credentials: "include" });
-  if (!res.ok) throw new Error(`HTTP ${res.status} – ${path}`);
+  const ct = res.headers.get("Content-Type") ?? "";
+  if (!res.ok) {
+    if (ct.includes("application/json")) {
+      const errBody = (await res.json().catch(() => ({}))) as { error?: string };
+      throw new Error(errBody.error ?? `HTTP ${res.status} – ${path}`);
+    }
+    const text = await res.text().catch(() => "");
+    throw new Error(text.trim() || `HTTP ${res.status} – ${path}`);
+  }
+  if (!ct.includes("application/json")) {
+    const text = await res.text().catch(() => "");
+    throw new Error(
+      `Expected JSON from ${path}; got ${ct || "unknown type"}: ${text.slice(0, 200)}`,
+    );
+  }
   return res.json() as Promise<T>;
 }
 

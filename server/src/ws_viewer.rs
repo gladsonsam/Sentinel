@@ -36,8 +36,8 @@ use crate::state::{AppState, Broadcast};
 // This prevents large JSON objects from turning into expensive parses or
 // unbounded command payload forwarding.
 const MAX_VIEWER_TEXT_BYTES: usize = 64 * 1024;
-/// File uploads send base64 chunks; allow large `WriteFileChunk` payloads (no fixed file-size cap).
-const MAX_VIEWER_WRITEFILE_MSG_BYTES: usize = 256 * 1024 * 1024;
+/// File uploads send base64 chunks — align with agent `REMOTE_FILE_CHUNK_BYTES` + JSON (~8 MiB).
+const MAX_VIEWER_WRITEFILE_MSG_BYTES: usize = 8 * 1024 * 1024;
 const MAX_TYPE_TEXT_CHARS: usize = 2_000;
 const MAX_NOTIFY_TITLE_CHARS: usize = 64;
 const MAX_NOTIFY_MESSAGE_CHARS: usize = 256;
@@ -52,14 +52,23 @@ pub async fn handler(
 
 async fn run(mut ws: WebSocket, state: Arc<AppState>, user: AuthUser) {
     // ── Send initial agent list (includes offline agents + last session times) ──
-    let agents = match crate::db::list_agents(&state.db).await {
-        Ok(rows) => rows,
-        Err(_) => Vec::new(),
-    };
+    let agents = crate::db::list_agents(&state.db).await.unwrap_or_default();
 
     let online: std::collections::HashMap<uuid::Uuid, chrono::DateTime<chrono::Utc>> = {
-        let map = state.agents.lock().unwrap();
+        let map = state.agents.lock();
         map.iter().map(|(id, a)| (*id, a.connected_at)).collect()
+    };
+
+    let agent_ids: Vec<Uuid> = agents
+        .iter()
+        .filter_map(|a| a["id"].as_str().and_then(|s| s.parse().ok()))
+        .collect();
+    let session_times = match crate::db::agent_last_session_times_batch(&state.db, &agent_ids).await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!(error = %e, "agent_last_session_times_batch failed for viewer init");
+            std::collections::HashMap::new()
+        }
     };
 
     let mut out: Vec<serde_json::Value> = Vec::with_capacity(agents.len());
@@ -68,10 +77,10 @@ async fn run(mut ws: WebSocket, state: Arc<AppState>, user: AuthUser) {
             Some(id) => id,
             None => continue,
         };
-        let (last_connected_at, last_disconnected_at) =
-            crate::db::agent_last_session_times(&state.db, id)
-                .await
-                .unwrap_or((None, None));
+        let (last_connected_at, last_disconnected_at) = session_times
+            .get(&id)
+            .copied()
+            .unwrap_or((None, None));
         let connected_at = online.get(&id).copied();
         out.push(serde_json::json!({
             "id": id,
@@ -153,14 +162,12 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>, user: &AuthUser) {
 
     // Validate command "shape" before forwarding to the agent.
     let cmd_type = val["cmd"]["type"].as_str().unwrap_or("");
-    if text.len() > MAX_VIEWER_TEXT_BYTES {
-        if cmd_type != "WriteFileChunk" {
-            warn!(
-                "Dropping viewer message: payload too large ({} bytes)",
-                text.len()
-            );
-            return;
-        }
+    if text.len() > MAX_VIEWER_TEXT_BYTES && cmd_type != "WriteFileChunk" {
+        warn!(
+            "Dropping viewer message: payload too large ({} bytes)",
+            text.len()
+        );
+        return;
     }
 
     let Some(agent_id_str) = val["agent_id"].as_str() else {
@@ -248,7 +255,7 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>, user: &AuthUser) {
         let pool = state.db.clone();
         let actor = user.username.clone();
         tokio::spawn(async move {
-            let _ = crate::db::insert_audit_log_dedup(
+            crate::db::insert_audit_log_dedup_traced(
                 &pool,
                 &actor,
                 Some(agent_id),
@@ -275,17 +282,10 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>, user: &AuthUser) {
     let sent = state
         .agent_cmds
         .lock()
-        .unwrap()
         .get(&agent_id)
-        .map(|tx| tx.send(cmd).is_ok());
+        .map(|tx| tx.try_send(cmd).is_ok());
 
-    let status = if sent == Some(true) {
-        "ok"
-    } else if sent == Some(false) {
-        "error"
-    } else {
-        "error"
-    };
+    let status = if sent == Some(true) { "ok" } else { "error" };
     let detail = serde_json::json!({
         "cmd_type": cmd_type,
         "agent_online": sent.is_some(),
@@ -294,7 +294,7 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>, user: &AuthUser) {
     let actor = user.username.clone();
     let dedup_window_secs = if cmd_type == "MouseMove" { 5 } else { 2 };
     tokio::spawn(async move {
-        let _ = crate::db::insert_audit_log_dedup(
+        crate::db::insert_audit_log_dedup_traced(
             &pool,
             &actor,
             Some(agent_id),
@@ -308,6 +308,6 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>, user: &AuthUser) {
     });
 
     if sent == Some(false) {
-        warn!("Agent {agent_id} command channel closed");
+        warn!("Agent {agent_id} command channel full or closed");
     }
 }

@@ -15,7 +15,15 @@ import { useAgents } from "./hooks/useAgents";
 import { useTheme } from "./hooks/useTheme";
 import { useNotifications } from "./hooks/useNotifications";
 import { api, apiUrl, setDashboardCsrfToken } from "./lib/api";
-import type { Agent, AgentInfo, AgentLiveStatus, TabKey, DashboardSessionUser, DashboardNavUser } from "./lib/types";
+import type {
+  Agent,
+  AgentInfo,
+  AgentLiveStatus,
+  TabKey,
+  DashboardSessionUser,
+  DashboardNavUser,
+  WsEvent,
+} from "./lib/types";
 import type { NotificationItem } from "./hooks/useNotifications";
 import type { ThemeMode } from "./hooks/useTheme";
 import { DashboardLayout } from "./layouts/DashboardLayout";
@@ -554,18 +562,17 @@ export function App() {
 
   const { send } = useWebSocket({
     enabled: wsEnabled,
-    onMessage: (event: any) => {
+    onMessage: (event: WsEvent) => {
       switch (event.event) {
-        case "init":
-          if (event.agents) {
-            const agentMap: Record<string, any> = {};
-            event.agents.forEach((agent: any) => {
-              agentMap[agent.id] = agent;
-            });
-            setAllAgents(agentMap);
-          }
+        case "init": {
+          const agentMap: Record<string, Agent> = {};
+          event.agents.forEach((agent) => {
+            agentMap[agent.id] = agent;
+          });
+          setAllAgents(agentMap);
           setWsInitReceived(true);
           break;
+        }
 
         case "agent_connected":
           if (event.agent_id && event.name) {
@@ -642,11 +649,11 @@ export function App() {
           break;
 
         case "alert_rule_match": {
-          const aid = event.agent_id as string | undefined;
+          const aid = event.agent_id;
           const agentLabel =
-            (aid && agents[aid]?.name) || (event.agent_name as string) || aid || "Agent";
-          const ruleLabel = (event.rule_name as string) || `Rule #${event.rule_id ?? "?"}`;
-          const snippet = (event.snippet as string) ? ` — ${event.snippet}` : "";
+            (aid && agents[aid]?.name) || event.agent_name || aid || "Agent";
+          const ruleLabel = event.rule_name || `Rule #${event.rule_id ?? "?"}`;
+          const snippet = event.snippet ? ` — ${event.snippet}` : "";
           warning("Alert rule matched", `${ruleLabel} · ${agentLabel}${snippet}`);
           break;
         }

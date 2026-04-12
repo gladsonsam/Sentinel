@@ -16,7 +16,7 @@ interface FileItem {
 
 interface FilesTabProps {
   agentId: string;
-  sendWsMessage: (msg: any) => void;
+  sendWsMessage: (msg: unknown) => void;
 }
 
 /** Raw bytes per upload chunk — must match agent `REMOTE_FILE_CHUNK_BYTES` in `agent/src/main.rs`. */
