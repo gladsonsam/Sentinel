@@ -1,5 +1,7 @@
 //! Enumerate installed programs from Windows Uninstall registry keys.
 
+use std::cmp::Ordering;
+
 use serde_json::{json, Value};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
@@ -8,6 +10,23 @@ use tracing::{info, warn};
 use crate::unix_timestamp_secs;
 
 const MAX_ITEMS: usize = 8000;
+
+/// ASCII-only case folding; avoids per-comparison `to_lowercase()` allocations (MSRV-safe).
+pub(crate) fn cmp_str_ascii_case_insensitive(a: &str, b: &str) -> Ordering {
+    let mut ab = a.bytes().map(|x| x.to_ascii_lowercase());
+    let mut bb = b.bytes().map(|x| x.to_ascii_lowercase());
+    loop {
+        match (ab.next(), bb.next()) {
+            (None, None) => return Ordering::Equal,
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (Some(x), Some(y)) => match x.cmp(&y) {
+                Ordering::Equal => {}
+                o => return o,
+            },
+        }
+    }
+}
 
 /// Windows often stores `InstallDate` as REG_SZ `YYYYMMDD` (or `YYYYMMDDHHmmss`). Present as ISO date.
 #[cfg(windows)]
@@ -105,7 +124,7 @@ pub fn collect_items() -> Vec<Value> {
     out.sort_by(|a, b| {
         let na = a["name"].as_str().unwrap_or("");
         let nb = b["name"].as_str().unwrap_or("");
-        na.to_lowercase().cmp(&nb.to_lowercase())
+        cmp_str_ascii_case_insensitive(na, nb)
     });
     out
 }

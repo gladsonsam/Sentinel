@@ -43,7 +43,7 @@ Please **do not** include real screen captures, keystrokes, credentials, tokens,
 
 ## Deployment hardening (operators)
 
-The server supports common production patterns; see `env.example` for details.
+The server supports common production patterns; see `.env.example` in the repository and the wiki ([Configuration](https://github.com/gladsonsam/Sentinel/wiki/Configuration), [Environment template](https://github.com/gladsonsam/Sentinel/wiki/Environment-template)).
 
 - **TLS**: Terminate HTTPS in a reverse proxy; keep `ENFORCE_HTTPS=true` and forward `X-Forwarded-Proto: https` (or `wss` for WebSocket upgrades).
 - **Secrets**: Prefer `DATABASE_URL_FILE`, `ADMIN_PASSWORD_FILE`, `AGENT_SECRET_FILE`, etc., instead of embedding secrets in the environment.

@@ -50,6 +50,9 @@ pub fn start_capture(tx: mpsc::Sender<Vec<u8>>, stop: Arc<AtomicBool>) -> anyhow
                 monitor.height().unwrap_or(0),
             );
 
+            // Reuse one buffer per frame to avoid allocator churn on the capture thread.
+            let mut jpeg_data: Vec<u8> = Vec::new();
+
             loop {
                 // Check stop flag first so we exit promptly.
                 if stop.load(Ordering::Relaxed) {
@@ -61,7 +64,7 @@ pub fn start_capture(tx: mpsc::Sender<Vec<u8>>, stop: Arc<AtomicBool>) -> anyhow
                     Ok(rgba_img) => {
                         let rgb = image::DynamicImage::ImageRgba8(rgba_img).into_rgb8();
 
-                        let mut jpeg_data: Vec<u8> = Vec::new();
+                        jpeg_data.clear();
                         let encoder = JpegEncoder::new_with_quality(&mut jpeg_data, 40);
 
                         match encoder.write_image(
@@ -71,10 +74,11 @@ pub fn start_capture(tx: mpsc::Sender<Vec<u8>>, stop: Arc<AtomicBool>) -> anyhow
                             ExtendedColorType::Rgb8,
                         ) {
                             Err(e) => warn!("JPEG encode error (skipping): {e}"),
-                            Ok(()) => match tx.try_send(jpeg_data) {
+                            Ok(()) => match tx.try_send(std::mem::take(&mut jpeg_data)) {
                                 Ok(()) => {}
-                                Err(TrySendError::Full(_)) => {
-                                    // Consumer busy – drop stale frame.
+                                Err(TrySendError::Full(v)) => {
+                                    // Consumer busy – drop stale frame; keep capacity for next encode.
+                                    jpeg_data = v;
                                 }
                                 Err(TrySendError::Closed(_)) => {
                                     info!("Frame channel closed; stopping capture.");

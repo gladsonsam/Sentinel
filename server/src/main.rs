@@ -1,6 +1,6 @@
 //! Sentinel server: Axum HTTP API, static dashboard, WebSockets for agents and viewers, PostgreSQL.
 //!
-//! Configuration is via environment variables; see `env.example` in the repository root.
+//! Configuration is via environment variables; see `.env.example` in the repository root and the wiki (Configuration + Environment template).
 
 mod alert_rules;
 mod api;

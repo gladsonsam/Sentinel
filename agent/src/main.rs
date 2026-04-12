@@ -322,8 +322,11 @@ fn main() {
     std::thread::Builder::new()
         .name("agent-runtime".into())
         .spawn(move || {
+            // Few workers: the agent is mostly one WebSocket session plus short-lived
+            // spawned tasks; a large default pool wastes RAM (thread stacks) on many-core PCs.
             let rt = tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
+                .worker_threads(2)
                 .build()
                 .expect("Failed to build Tokio runtime");
 
@@ -725,7 +728,7 @@ async fn run_session(
                             let _ = out_tx.send(Message::Text(payload)).await;
                         }
                         // Avoid retrying constantly for executables that can't produce icons.
-                        sent_app_icons.insert(exe_key.clone());
+                        sent_app_icons.insert(exe_key);
                     }
                     let payload = serde_json::json!({
                         "type"  : "window_focus",
@@ -1013,11 +1016,9 @@ fn handle_server_command(
                     if a_dir != b_dir {
                         b_dir.cmp(&a_dir)
                     } else {
-                        a["name"]
-                            .as_str()
-                            .unwrap_or("")
-                            .to_lowercase()
-                            .cmp(&b["name"].as_str().unwrap_or("").to_lowercase())
+                        let na = a["name"].as_str().unwrap_or("");
+                        let nb = b["name"].as_str().unwrap_or("");
+                        software_inventory::cmp_str_ascii_case_insensitive(na, nb)
                     }
                 });
                 let payload = serde_json::json!({

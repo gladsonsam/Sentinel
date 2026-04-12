@@ -10,6 +10,7 @@ A lightweight, self-hosted monitoring system built with Rust and React. A Window
 
 ![Agent activity timeline](docs/images/agent-activity-timeline.jpg)
 
+Tab-by-tab UI tour (with more detail): **[wiki → Features](https://github.com/gladsonsam/Sentinel/wiki/Features)**.
 
 > [!WARNING]
 > This project was **largely written with AI assistance** and is intended for **experimentation and testing**, not as a hardened or supported product. **Do not rely on it in production** or for sensitive environments. Monitoring, remote control, and keystroke-related features carry inherent privacy and security implications; the codebase has **not** undergone professional security review and may contain bugs, weak defaults, or other issues that could expose data or systems. Use at your own risk.
@@ -30,6 +31,15 @@ A lightweight, self-hosted monitoring system built with Rust and React. A Window
 | **sentinel-server**    | Rust (Axum, Tokio, SQLx, PostgreSQL)                               |
 | **sentinel-dashboard** | React 19, Vite, TailwindCSS                                        |
 
+
+## Quick start (Docker)
+
+```bash
+cp .env.example .env   # set POSTGRES_PASSWORD, ADMIN_PASSWORD, AGENT_SECRET
+docker compose up -d
+```
+
+Open **[http://localhost:9000](http://localhost:9000)** (default `PUBLISH_PORT=9000`). Building the image from this repo, Traefik/TLS, and other layouts: **[wiki → Deployment](https://github.com/gladsonsam/Sentinel/wiki/Deployment)**.
 
 ## Documentation
 
