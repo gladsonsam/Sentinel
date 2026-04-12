@@ -19,8 +19,9 @@ import ColumnLayout from "@cloudscape-design/components/column-layout";
 import Container from "@cloudscape-design/components/container";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
 import Badge from "@cloudscape-design/components/badge";
+import Tabs from "@cloudscape-design/components/tabs";
 import { api } from "../lib/api";
-import type { DashboardRole, DashboardSessionUser, DashboardUser } from "../lib/types";
+import { dashboardRoleLabel, type DashboardRole, type DashboardSessionUser, type DashboardUser } from "../lib/types";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { DashboardUserAvatar } from "../components/common/DashboardUserAvatar";
 import {
@@ -79,6 +80,8 @@ const PROFILE_LUCIDE_NAMES = [
 ];
 
 function UserAvatarFields({
+  fullName,
+  setFullName,
   username,
   setUsername,
   icon,
@@ -87,6 +90,8 @@ function UserAvatarFields({
   isNarrow,
   onImportError,
 }: {
+  fullName: string;
+  setFullName: (v: string) => void;
   username: string;
   setUsername: (v: string) => void;
   icon: string;
@@ -140,36 +145,46 @@ function UserAvatarFields({
   return (
     <SpaceBetween size="m">
       <ColumnLayout columns={isNarrow ? 1 : 2}>
-        <FormField label="Sign-in username" description={idLabel}>
+        <FormField
+          label="Full name"
+          description="Shown in the top bar and user lists. Optional; sign-in still uses username below."
+        >
+          <Input
+            value={fullName}
+            onChange={({ detail }) => setFullName(detail.value)}
+            placeholder="e.g. Jane Doe"
+          />
+        </FormField>
+        <FormField label="Username" description={idLabel}>
           <Input value={username} onChange={({ detail }) => setUsername(detail.value)} />
         </FormField>
-        <FormField
-          label="Avatar"
-          description="Choose a Lucide icon or import a photo (JPEG/PNG/WebP/GIF). Cleared avatars use initials."
-        >
-          <SpaceBetween size="m">
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/jpeg,image/png,image/webp,image/gif"
-              hidden
-              onChange={(ev) => void onPhotoChange(ev)}
-            />
-            <SpaceBetween direction="horizontal" size="xs">
-              <Button iconName="upload" onClick={() => fileRef.current?.click()} loading={photoBusy}>
-                Import photo
-              </Button>
-              <Button variant="link" onClick={() => setIcon("")}>
-                Clear avatar
-              </Button>
-            </SpaceBetween>
-            <Box variant="awsui-key-label" margin={{ top: "xs" }}>
-              Icon library
-            </Box>
-            {grid}
-          </SpaceBetween>
-        </FormField>
       </ColumnLayout>
+      <FormField
+        label="Avatar"
+        description="Choose a Lucide icon or import a photo (JPEG/PNG/WebP/GIF). Cleared avatars use initials from your full name or username."
+      >
+        <SpaceBetween size="m">
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            hidden
+            onChange={(ev) => void onPhotoChange(ev)}
+          />
+          <SpaceBetween direction="horizontal" size="xs">
+            <Button iconName="upload" onClick={() => fileRef.current?.click()} loading={photoBusy}>
+              Import photo
+            </Button>
+            <Button variant="link" onClick={() => setIcon("")}>
+              Clear avatar
+            </Button>
+          </SpaceBetween>
+          <Box variant="awsui-key-label" margin={{ top: "xs" }}>
+            Icon library
+          </Box>
+          {grid}
+        </SpaceBetween>
+      </FormField>
     </SpaceBetween>
   );
 }
@@ -193,7 +208,13 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
   const [actionError, setActionError] = useState<string | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [create, setCreate] = useState<{ username: string; password: string; role: DashboardRole }>({
+  const [create, setCreate] = useState<{
+    display_name: string;
+    username: string;
+    password: string;
+    role: DashboardRole;
+  }>({
+    display_name: "",
     username: "",
     password: "",
     role: "viewer",
@@ -206,14 +227,18 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
   const [identities, setIdentities] = useState<any[] | null>(null);
   const [identityLink, setIdentityLink] = useState({ issuer: "", subject: "" });
 
+  const [selfDisplayName, setSelfDisplayName] = useState("");
   const [selfUsername, setSelfUsername] = useState("");
   const [selfIcon, setSelfIcon] = useState("");
   const [savingSelf, setSavingSelf] = useState(false);
 
   const [editOther, setEditOther] = useState<null | DashboardUser>(null);
+  const [editOtherDisplayName, setEditOtherDisplayName] = useState("");
   const [editOtherUsername, setEditOtherUsername] = useState("");
   const [editOtherIcon, setEditOtherIcon] = useState("");
   const [savingOther, setSavingOther] = useState(false);
+
+  const [accountTab, setAccountTab] = useState<"profile" | "admin">("profile");
 
   const canManage = me?.role === "admin";
 
@@ -223,6 +248,7 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
     try {
       const m = await api.me();
       setMe(m);
+      setSelfDisplayName(m.display_name?.trim() ?? "");
       setSelfUsername(m.username);
       setSelfIcon(m.display_icon?.trim() ?? "");
 
@@ -249,7 +275,7 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
   const rowActions = (): ButtonDropdownProps.ItemOrGroup[] => [
     {
       id: "edit_profile",
-      text: "Username & avatar",
+      text: "Name, username & avatar",
     },
     {
       id: "set_role",
@@ -272,6 +298,7 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
     switch (actionId) {
       case "edit_profile": {
         setEditOther(u);
+        setEditOtherDisplayName(u.display_name?.trim() ?? "");
         setEditOtherUsername(u.username);
         setEditOtherIcon(u.display_icon?.trim() ?? "");
         break;
@@ -330,7 +357,10 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
     setSavingSelf(true);
     setActionError(null);
     try {
-      const body: { username?: string; display_icon?: string | null } = {};
+      const body: { username?: string; display_name?: string; display_icon?: string | null } = {};
+      const dnTrim = selfDisplayName.trim();
+      const prevDn = me.display_name?.trim() ?? "";
+      if (dnTrim !== prevDn) body.display_name = dnTrim;
       if (trimmedUser !== me.username) body.username = trimmedUser;
       const iconTrim = selfIcon.trim();
       const prev = me.display_icon?.trim() ?? "";
@@ -361,7 +391,10 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
     setSavingOther(true);
     setActionError(null);
     try {
-      const body: { username?: string; display_icon?: string | null } = {};
+      const body: { username?: string; display_name?: string; display_icon?: string | null } = {};
+      const dnTrim = editOtherDisplayName.trim();
+      const prevDn = editOther.display_name?.trim() ?? "";
+      if (dnTrim !== prevDn) body.display_name = dnTrim;
       if (trimmedUser !== editOther.username) body.username = trimmedUser;
       const iconTrim = editOtherIcon.trim();
       const prev = editOther.display_icon?.trim() ?? "";
@@ -402,10 +435,10 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
       header={
         <Header
           variant="h1"
-          description="Update your username and avatar. Admins can manage passwords, roles, and OIDC links for everyone."
+          description="Profile is for everyone. Administration (roles, passwords, OIDC) is for admins only."
           actions={isNarrow ? undefined : headerActions}
         >
-          Users
+          Account
         </Header>
       }
     >
@@ -420,142 +453,232 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
             </Alert>
           ) : null}
 
-          <ExpandableSection variant="container" headerText="What each role can do" defaultExpanded={false}>
-            <SpaceBetween size="s">
-              {ROLE_OPTIONS.map((r) => (
-                <Box key={r.value} padding="s">
-                  <Box variant="strong">{r.label}</Box>
-                  <Box color="text-body-secondary">{r.description}</Box>
-                </Box>
-              ))}
-            </SpaceBetween>
-          </ExpandableSection>
-
-          {me ? (
-            <Container
-              header={
-                <Header variant="h2" description="Shown in the account menu and user list. Changing username affects how you sign in.">
-                  Your profile
-                </Header>
-              }
-            >
-              <SpaceBetween size="l">
-                <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                  <DashboardUserAvatar username={selfUsername || me.username} displayIcon={selfIcon || null} size={56} />
-                  <Box color="text-body-secondary">
-                    Signed in as <Box variant="strong">{me.username}</Box> ({me.role})
-                  </Box>
-                </div>
-                <UserAvatarFields
-                  username={selfUsername}
-                  setUsername={setSelfUsername}
-                  icon={selfIcon}
-                  setIcon={setSelfIcon}
-                  idLabel="Must be unique. Use letters, numbers, or common punctuation."
-                  isNarrow={isNarrow}
-                  onImportError={(m) => setActionError(m)}
-                />
-                <Button variant="primary" onClick={() => void saveSelfProfile()} loading={savingSelf}>
-                  Save your profile
-                </Button>
-              </SpaceBetween>
-            </Container>
-          ) : null}
-
           {canManage ? (
-            <>
-              <Header variant="h2" description="Create users, assign roles, reset passwords, and manage OIDC links.">
-                All users
-              </Header>
-              {isNarrow ? (
-                loading && items.length === 0 ? (
-                  <Box color="text-body-secondary">Loading users…</Box>
-                ) : items.length === 0 ? (
-                  <Box color="text-body-secondary">No users.</Box>
-                ) : (
-                  <SpaceBetween size="m">
-                    {items.map((u) => (
-                      <Box key={u.id} variant="div" className="sentinel-users-mobile-card">
-                        <SpaceBetween size="s">
-                          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                            <DashboardUserAvatar username={u.username} displayIcon={u.display_icon} size={40} />
-                            <div>
-                              <Box variant="h3" tagOverride="div" fontSize="heading-m">
-                                {u.username}
-                              </Box>
-                              <Box>{roleBadge(u.role)}</Box>
-                            </div>
-                          </div>
-                          <Box color="text-body-secondary" fontSize="body-s">
-                            Created {new Date(u.created_at).toLocaleString()}
-                          </Box>
-                          <div className="sentinel-users-manage-slot">
-                            <ButtonDropdown
-                              variant="primary"
-                              disabled={!canManage}
-                              items={rowActions()}
-                              expandToViewport
-                              onItemClick={({ detail }) => {
-                                void runUserAction(u, detail.id);
-                              }}
-                            >
-                              Manage
-                            </ButtonDropdown>
-                          </div>
-                        </SpaceBetween>
-                      </Box>
-                    ))}
-                  </SpaceBetween>
-                )
-              ) : (
-                <Table
-                  items={items}
-                  loading={loading}
-                  loadingText="Loading users"
-                  columnDefinitions={[
-                    {
-                      id: "avatar",
-                      header: "",
-                      width: 52,
-                      cell: (u) => (
-                        <DashboardUserAvatar username={u.username} displayIcon={u.display_icon} size={32} />
-                      ),
-                    },
-                    { id: "username", header: "Username", cell: (u) => u.username },
-                    { id: "role", header: "Role", cell: (u) => roleBadge(u.role) },
-                    {
-                      id: "created",
-                      header: "Created",
-                      cell: (u) => new Date(u.created_at).toLocaleString(),
-                    },
-                    {
-                      id: "actions",
-                      header: "",
-                      cell: (u) => (
-                        <ButtonDropdown
-                          variant="normal"
-                          disabled={!canManage}
-                          items={rowActions()}
-                          expandToViewport
-                          onItemClick={({ detail }) => {
-                            void runUserAction(u, detail.id);
-                          }}
+            <Tabs
+              activeTabId={accountTab}
+              onChange={({ detail }) => setAccountTab(detail.activeTabId as "profile" | "admin")}
+              tabs={[
+                {
+                  id: "profile",
+                  label: "Profile",
+                  content: me ? (
+                    <Container
+                      header={
+                        <Header
+                          variant="h2"
+                          description="Your full name, sign-in username, and avatar. Changing username changes how you log in."
                         >
-                          Manage
-                        </ButtonDropdown>
-                      ),
-                    },
-                  ]}
-                  empty={<Box color="text-body-secondary">No users.</Box>}
-                  variant="embedded"
-                />
-              )}
-            </>
+                          Your profile
+                        </Header>
+                      }
+                    >
+                      <SpaceBetween size="l">
+                        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                          <DashboardUserAvatar
+                            username={selfUsername || me.username}
+                            displayName={selfDisplayName}
+                            displayIcon={selfIcon || null}
+                            size={56}
+                          />
+                          <Box color="text-body-secondary">
+                            <Box variant="strong">{selfDisplayName.trim() || me.username}</Box>
+                            <Box fontSize="body-s">
+                              @{me.username} · {dashboardRoleLabel(me.role)}
+                            </Box>
+                          </Box>
+                        </div>
+                        <UserAvatarFields
+                          fullName={selfDisplayName}
+                          setFullName={setSelfDisplayName}
+                          username={selfUsername}
+                          setUsername={setSelfUsername}
+                          icon={selfIcon}
+                          setIcon={setSelfIcon}
+                          idLabel="Must be unique. Use letters, numbers, or common punctuation."
+                          isNarrow={isNarrow}
+                          onImportError={(m) => setActionError(m)}
+                        />
+                        <Button variant="primary" onClick={() => void saveSelfProfile()} loading={savingSelf}>
+                          Save profile
+                        </Button>
+                      </SpaceBetween>
+                    </Container>
+                  ) : null,
+                },
+                {
+                  id: "admin",
+                  label: "Administration",
+                  content: (
+                    <SpaceBetween size="l">
+                      <ExpandableSection variant="container" headerText="What each role can do" defaultExpanded={false}>
+                        <SpaceBetween size="s">
+                          {ROLE_OPTIONS.map((r) => (
+                            <Box key={r.value} padding="s">
+                              <Box variant="strong">{r.label}</Box>
+                              <Box color="text-body-secondary">{r.description}</Box>
+                            </Box>
+                          ))}
+                        </SpaceBetween>
+                      </ExpandableSection>
+                      <Header variant="h2" description="Create users, assign roles, reset passwords, and manage OIDC links.">
+                        All users
+                      </Header>
+                      {isNarrow ? (
+                        loading && items.length === 0 ? (
+                          <Box color="text-body-secondary">Loading users…</Box>
+                        ) : items.length === 0 ? (
+                          <Box color="text-body-secondary">No users.</Box>
+                        ) : (
+                          <SpaceBetween size="m">
+                            {items.map((u) => (
+                              <Box key={u.id} variant="div" className="sentinel-users-mobile-card">
+                                <SpaceBetween size="s">
+                                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                                    <DashboardUserAvatar
+                                      username={u.username}
+                                      displayName={u.display_name}
+                                      displayIcon={u.display_icon}
+                                      size={40}
+                                    />
+                                    <div>
+                                      <Box variant="h3" tagOverride="div" fontSize="heading-m">
+                                        {u.display_name?.trim() || u.username}
+                                      </Box>
+                                      <Box fontSize="body-s" color="text-body-secondary">
+                                        @{u.username}
+                                      </Box>
+                                      <Box>{roleBadge(u.role)}</Box>
+                                    </div>
+                                  </div>
+                                  <Box color="text-body-secondary" fontSize="body-s">
+                                    Created {new Date(u.created_at).toLocaleString()}
+                                  </Box>
+                                  <div className="sentinel-users-manage-slot">
+                                    <ButtonDropdown
+                                      variant="primary"
+                                      disabled={!canManage}
+                                      items={rowActions()}
+                                      expandToViewport
+                                      onItemClick={({ detail }) => {
+                                        void runUserAction(u, detail.id);
+                                      }}
+                                    >
+                                      Manage
+                                    </ButtonDropdown>
+                                  </div>
+                                </SpaceBetween>
+                              </Box>
+                            ))}
+                          </SpaceBetween>
+                        )
+                      ) : (
+                        <Table
+                          items={items}
+                          loading={loading}
+                          loadingText="Loading users"
+                          columnDefinitions={[
+                            {
+                              id: "avatar",
+                              header: "",
+                              width: 52,
+                              cell: (u) => (
+                                <DashboardUserAvatar
+                                  username={u.username}
+                                  displayName={u.display_name}
+                                  displayIcon={u.display_icon}
+                                  size={32}
+                                />
+                              ),
+                            },
+                            {
+                              id: "name",
+                              header: "Name",
+                              cell: (u) => u.display_name?.trim() || "—",
+                            },
+                            { id: "username", header: "Username", cell: (u) => u.username },
+                            { id: "role", header: "Role", cell: (u) => roleBadge(u.role) },
+                            {
+                              id: "created",
+                              header: "Created",
+                              cell: (u) => new Date(u.created_at).toLocaleString(),
+                            },
+                            {
+                              id: "actions",
+                              header: "",
+                              cell: (u) => (
+                                <ButtonDropdown
+                                  variant="normal"
+                                  disabled={!canManage}
+                                  items={rowActions()}
+                                  expandToViewport
+                                  onItemClick={({ detail }) => {
+                                    void runUserAction(u, detail.id);
+                                  }}
+                                >
+                                  Manage
+                                </ButtonDropdown>
+                              ),
+                            },
+                          ]}
+                          empty={<Box color="text-body-secondary">No users.</Box>}
+                          variant="embedded"
+                        />
+                      )}
+                    </SpaceBetween>
+                  ),
+                },
+              ]}
+            />
           ) : (
-            <Alert type="info" header="Admin-only user management">
-              Only administrators can view the full user list, create accounts, or change roles. You can still update your own
-              username and avatar above.
-            </Alert>
+            <SpaceBetween size="l">
+              {me ? (
+                <Container
+                  header={
+                    <Header
+                      variant="h2"
+                      description="Your full name, sign-in username, and avatar. Changing username changes how you log in."
+                    >
+                      Your profile
+                    </Header>
+                  }
+                >
+                  <SpaceBetween size="l">
+                    <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                      <DashboardUserAvatar
+                        username={selfUsername || me.username}
+                        displayName={selfDisplayName}
+                        displayIcon={selfIcon || null}
+                        size={56}
+                      />
+                      <Box color="text-body-secondary">
+                        <Box variant="strong">{selfDisplayName.trim() || me.username}</Box>
+                        <Box fontSize="body-s">
+                          @{me.username} · {dashboardRoleLabel(me.role)}
+                        </Box>
+                      </Box>
+                    </div>
+                    <UserAvatarFields
+                      fullName={selfDisplayName}
+                      setFullName={setSelfDisplayName}
+                      username={selfUsername}
+                      setUsername={setSelfUsername}
+                      icon={selfIcon}
+                      setIcon={setSelfIcon}
+                      idLabel="Must be unique. Use letters, numbers, or common punctuation."
+                      isNarrow={isNarrow}
+                      onImportError={(m) => setActionError(m)}
+                    />
+                    <Button variant="primary" onClick={() => void saveSelfProfile()} loading={savingSelf}>
+                      Save profile
+                    </Button>
+                  </SpaceBetween>
+                </Container>
+              ) : null}
+              <Alert type="info" header="Administration">
+                Only administrators can open the user directory, create accounts, or change roles. Ask an admin if you need a
+                new account or role change.
+              </Alert>
+            </SpaceBetween>
           )}
         </SpaceBetween>
 
@@ -579,8 +702,9 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
                         username: create.username.trim(),
                         password: create.password,
                         role: create.role,
+                        ...(create.display_name.trim() ? { display_name: create.display_name.trim() } : {}),
                       });
-                      setCreate({ username: "", password: "", role: "viewer" });
+                      setCreate({ display_name: "", username: "", password: "", role: "viewer" });
                       setCreateOpen(false);
                       await load();
                     } catch (e: unknown) {
@@ -595,6 +719,13 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
           }
         >
           <SpaceBetween size="m">
+            <FormField label="Full name" description="Optional. Shown in the UI; sign-in still uses username.">
+              <Input
+                value={create.display_name}
+                onChange={({ detail }) => setCreate((p) => ({ ...p, display_name: detail.value }))}
+                placeholder="e.g. Jane Doe"
+              />
+            </FormField>
             <ColumnLayout columns={isNarrow ? 1 : 2}>
               <FormField label="Username">
                 <Input
@@ -654,12 +785,15 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
               <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <DashboardUserAvatar
                   username={editOtherUsername || editOther.username}
+                  displayName={editOtherDisplayName}
                   displayIcon={editOtherIcon || null}
                   size={48}
                 />
                 {roleBadge(editOther.role)}
               </div>
               <UserAvatarFields
+                fullName={editOtherDisplayName}
+                setFullName={setEditOtherDisplayName}
                 username={editOtherUsername}
                 setUsername={setEditOtherUsername}
                 icon={editOtherIcon}

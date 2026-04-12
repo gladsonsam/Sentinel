@@ -25,14 +25,14 @@ use std::time::Instant;
 use axum::body::Body;
 use axum::extract::Request;
 use axum::extract::State;
+use axum::http::header::{self, HeaderValue};
 use axum::http::StatusCode;
+use axum::http::{HeaderName, Method};
 use axum::middleware::Next;
 use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::routing::{get, post};
 use axum::{middleware::from_fn_with_state, Router};
-use axum::http::header::{self, HeaderValue};
-use axum::http::{HeaderName, Method};
 use std::io::{stderr, IsTerminal};
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
 use tower_http::trace::TraceLayer;
@@ -170,7 +170,10 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or(15);
     let wol_min_interval = std::time::Duration::from_secs(wol_min_interval_secs);
     if !wol_min_interval.is_zero() {
-        info!("Wake-on-LAN per-agent throttle: {}s.", wol_min_interval_secs);
+        info!(
+            "Wake-on-LAN per-agent throttle: {}s.",
+            wol_min_interval_secs
+        );
     }
 
     let allow_remote_script = read_env_or_file("ALLOW_REMOTE_SCRIPT_EXECUTION")
@@ -233,8 +236,7 @@ async fn main() -> anyhow::Result<()> {
                 interval.tick().await;
                 m.db_pool_size.set(st.db.size() as i64);
                 m.db_pool_idle.set(st.db.num_idle() as i64);
-                m.agents_online
-                    .set(st.agents.lock().unwrap().len() as i64);
+                m.agents_online.set(st.agents.lock().unwrap().len() as i64);
                 let viewers: u64 = st
                     .capture_viewers
                     .lock()
@@ -333,10 +335,7 @@ async fn main() -> anyhow::Result<()> {
                 .append_index_html_on_directories(true)
                 .not_found_service(ServeFile::new(index_path)),
         )
-        .layer(from_fn_with_state(
-            state.clone(),
-            record_http_metrics,
-        ))
+        .layer(from_fn_with_state(state.clone(), record_http_metrics))
         .layer(
             TraceLayer::new_for_http().make_span_with(|req: &Request<Body>| {
                 let rid = req
@@ -355,10 +354,7 @@ async fn main() -> anyhow::Result<()> {
         .layer(PropagateRequestIdLayer::new(x_request_id.clone()))
         .layer(SetRequestIdLayer::new(x_request_id, MakeRequestUuid))
         .layer(cors_layer_from_env())
-        .layer(from_fn_with_state(
-            https_enforced(),
-            require_https,
-        ))
+        .layer(from_fn_with_state(https_enforced(), require_https))
         .with_state(state.clone());
 
     let addr = cfg.listen;
@@ -439,11 +435,7 @@ fn https_enforced() -> bool {
         .unwrap_or(true)
 }
 
-async fn require_https(
-    State(enforce): State<bool>,
-    req: Request,
-    next: Next,
-) -> Response {
+async fn require_https(State(enforce): State<bool>, req: Request, next: Next) -> Response {
     if !enforce {
         return next.run(req).await;
     }
@@ -459,8 +451,7 @@ async fn require_https(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    if forwarded_proto.eq_ignore_ascii_case("https")
-        || forwarded_proto.eq_ignore_ascii_case("wss")
+    if forwarded_proto.eq_ignore_ascii_case("https") || forwarded_proto.eq_ignore_ascii_case("wss")
     {
         next.run(req).await
     } else {

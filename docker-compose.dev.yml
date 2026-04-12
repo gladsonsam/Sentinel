@@ -1,0 +1,8 @@
+# Dev / pre-release: build server from this checkout instead of pulling GHCR.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+services:
+  server:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
+    image: sentinel-server:dev

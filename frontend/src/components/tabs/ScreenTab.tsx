@@ -17,9 +17,16 @@ interface ScreenTabProps {
   agentId: string;
   sendWsMessage: (msg: any) => void;
   dashboardRole?: DashboardRole | null;
+  /** When false, the MJPEG request is not started (tab hidden / navigated away). */
+  streamActive?: boolean;
 }
 
-export function ScreenTab({ agentId, sendWsMessage, dashboardRole = null }: ScreenTabProps) {
+export function ScreenTab({
+  agentId,
+  sendWsMessage,
+  dashboardRole = null,
+  streamActive = true,
+}: ScreenTabProps) {
   const [streaming, setStreaming] = useState(false);
   const [remoteControl, setRemoteControl] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
@@ -31,6 +38,30 @@ export function ScreenTab({ agentId, sendWsMessage, dashboardRole = null }: Scre
 
   const streamUrl = apiUrl(`/agents/${agentId}/mjpeg`);
   const blockedByRole = dashboardRole === "viewer";
+  const streamEnabled = streamActive && !blockedByRole;
+
+  useEffect(() => {
+    if (!streamActive) setRemoteControl(false);
+  }, [streamActive]);
+
+  useEffect(() => {
+    if (!streamEnabled) {
+      const el = imgRef.current;
+      if (el) el.src = "";
+      setStreaming(false);
+      const wrap = containerRef.current;
+      if (wrap && document.fullscreenElement === wrap) {
+        void document.exitFullscreen();
+      }
+    }
+  }, [streamEnabled]);
+
+  useEffect(() => {
+    return () => {
+      const el = imgRef.current;
+      if (el) el.src = "";
+    };
+  }, []);
 
   const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!remoteControl || !imgRef.current) return;
@@ -142,7 +173,7 @@ export function ScreenTab({ agentId, sendWsMessage, dashboardRole = null }: Scre
                 <Box padding={{ top: "xs" }}>
                   <Toggle
                     checked={remoteControl}
-                    disabled={blockedByRole}
+                    disabled={blockedByRole || !streamEnabled}
                     onChange={({ detail }) => setRemoteControl(detail.checked)}
                   >
                     Remote control
@@ -150,14 +181,14 @@ export function ScreenTab({ agentId, sendWsMessage, dashboardRole = null }: Scre
                 </Box>
                 <Button
                   iconName="notification"
-                  disabled={blockedByRole}
+                  disabled={blockedByRole || !streamEnabled}
                   onClick={() => setShowNotificationModal(true)}
                 >
                   Send notification
                 </Button>
                 <Button
                   iconName={fullscreen ? "close" : "expand"}
-                  disabled={blockedByRole}
+                  disabled={blockedByRole || !streamEnabled}
                   onClick={toggleFullscreen}
                 >
                   {fullscreen ? "Exit" : "Fullscreen"}
@@ -185,13 +216,13 @@ export function ScreenTab({ agentId, sendWsMessage, dashboardRole = null }: Scre
           <div className="sentinel-screen-frame">
             <img
               ref={imgRef}
-              src={blockedByRole ? "" : streamUrl}
+              src={streamEnabled ? streamUrl : ""}
               alt="Agent screen"
               className="sentinel-screen-image"
-              onLoad={() => setStreaming(true)}
+              onLoad={() => streamEnabled && setStreaming(true)}
               onError={() => setStreaming(false)}
             />
-            {remoteControl && (
+            {remoteControl && streamEnabled && (
               <div
                 className="sentinel-remote-overlay"
                 onMouseMove={handleMouseMove}
@@ -206,7 +237,7 @@ export function ScreenTab({ agentId, sendWsMessage, dashboardRole = null }: Scre
           </div>
         </div>
 
-        {!streaming && !blockedByRole && (
+        {!streaming && streamEnabled && (
           <Box textAlign="center" padding="xxl">
             <Box variant="p" color="text-body-secondary">
               Screen stream not available. Ensure the agent is connected and screen capture is enabled.

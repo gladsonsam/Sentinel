@@ -8,8 +8,8 @@ import {
   FolderOpen,
   History,
   Keyboard,
+  LayoutGrid,
   Link2,
-  Monitor,
   Package,
   ScrollText,
   Server,
@@ -19,18 +19,21 @@ import {
 import type { TabKey } from "./types";
 
 /** Top-level agent page sections (horizontal tab bar). */
-export type AgentSectionId = "activity" | "system" | "data" | "settings";
+export type AgentSectionId = "live" | "system" | "data" | "settings";
 
-export const AGENT_SECTION_ORDER: AgentSectionId[] = ["activity", "system", "data", "settings"];
+export const AGENT_SECTION_ORDER: AgentSectionId[] = ["live", "system", "data", "settings"];
 
-/** Sub-views under “System” (machine context, remote tools, files). Max 6 for SegmentedControl. */
-export const AGENT_SYSTEM_SUBTABS: TabKey[] = ["specs", "screen", "software", "scripts", "files"];
+/** Sub-views under “Live” (activity timeline default, then screen). */
+export const AGENT_LIVE_SUBTABS: TabKey[] = ["activity", "live"];
+
+/** Sub-views under “System” (machine context, tools, files). Max 6 for SegmentedControl. */
+export const AGENT_SYSTEM_SUBTABS: TabKey[] = ["specs", "software", "scripts", "files"];
 
 /** Sub-views under “Data” (telemetry / history). */
 export const AGENT_DATA_SUBTABS: TabKey[] = ["keys", "windows", "urls", "alerts", "audit"];
 
 export function agentSectionFromTabKey(tab: TabKey): AgentSectionId {
-  if (tab === "activity") return "activity";
+  if (tab === "live" || tab === "activity") return "live";
   if (AGENT_SYSTEM_SUBTABS.includes(tab)) return "system";
   if (AGENT_DATA_SUBTABS.includes(tab)) return "data";
   return "settings";
@@ -38,7 +41,7 @@ export function agentSectionFromTabKey(tab: TabKey): AgentSectionId {
 
 export function defaultTabForAgentSection(section: AgentSectionId): TabKey {
   switch (section) {
-    case "activity":
+    case "live":
       return "activity";
     case "system":
       return "specs";
@@ -50,7 +53,7 @@ export function defaultTabForAgentSection(section: AgentSectionId): TabKey {
 }
 
 const SECTION_META: Record<AgentSectionId, { tabLabel: string; icon: LucideIcon }> = {
-  activity: { tabLabel: "Activity", icon: Activity },
+  live: { tabLabel: "Live", icon: LayoutGrid },
   system: { tabLabel: "System", icon: Server },
   data: { tabLabel: "Data", icon: History },
   settings: { tabLabel: "Settings", icon: Settings },
@@ -69,8 +72,8 @@ export function AgentSectionTabLabel({ section }: { section: AgentSectionId }) {
 
 export const AGENT_TAB_ORDER: TabKey[] = [
   "activity",
+  "live",
   "specs",
-  "screen",
   "software",
   "scripts",
   "files",
@@ -90,10 +93,16 @@ export interface AgentTabDefinition {
 }
 
 export const AGENT_TAB_META: Record<TabKey, AgentTabDefinition> = {
+  live: {
+    tabLabel: "Screen + activity",
+    sideNavLabel: "Live desk",
+    breadcrumbLabel: "Live desk",
+    icon: LayoutGrid,
+  },
   activity: {
-    tabLabel: "Activity",
-    sideNavLabel: "Activity",
-    breadcrumbLabel: "Activity",
+    tabLabel: "Timeline only",
+    sideNavLabel: "Timeline",
+    breadcrumbLabel: "Activity timeline",
     icon: Activity,
   },
   specs: {
@@ -101,12 +110,6 @@ export const AGENT_TAB_META: Record<TabKey, AgentTabDefinition> = {
     sideNavLabel: "Specs",
     breadcrumbLabel: "Specs",
     icon: Cpu,
-  },
-  screen: {
-    tabLabel: "Screen",
-    sideNavLabel: "Screen",
-    breadcrumbLabel: "Screen",
-    icon: Monitor,
   },
   software: {
     tabLabel: "Software",

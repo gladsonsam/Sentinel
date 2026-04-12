@@ -17,10 +17,9 @@ services:
       retries:  10
 
   # ── Sentinel Server ──────────────────────────────────────────────────────────
+  # Default: pull release image. Local dev build: docker compose -f docker-compose.yml -f docker-compose.dev.yml …
   server:
-    build:
-      context:    .
-      dockerfile: server/Dockerfile
+    image: ghcr.io/gladsonsam/sentinel/server:latest
     restart: unless-stopped
     env_file:
       - .env

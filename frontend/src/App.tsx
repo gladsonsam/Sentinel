@@ -43,7 +43,12 @@ const AuthenticatedGroups = lazy(() =>
 
 function sessionToNavUser(u: DashboardSessionUser | null): DashboardNavUser | null {
   if (!u) return null;
-  return { username: u.username, role: u.role, display_icon: u.display_icon };
+  return {
+    username: u.username,
+    display_name: u.display_name,
+    role: u.role,
+    display_icon: u.display_icon,
+  };
 }
 
 /** Minimal first paint (no Cloudscape) while auth or route chunks load. */
@@ -69,9 +74,9 @@ type NavState = { from?: string } | null;
 
 function isTabKey(v: string | null): v is TabKey {
   return (
+    v === "live" ||
     v === "activity" ||
     v === "specs" ||
-    v === "screen" ||
     v === "software" ||
     v === "scripts" ||
     v === "keys" ||
@@ -220,8 +225,21 @@ function AgentDetailRoute({
 
   const activeTab = useMemo<TabKey>(() => {
     const tab = searchParams.get("tab");
-    return isTabKey(tab) ? tab : "activity";
+    if (tab === "screen") return "live";
+    return isTabKey(tab) ? tab : "live";
   }, [searchParams]);
+
+  useEffect(() => {
+    if (searchParams.get("tab") !== "screen") return;
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev);
+        next.set("tab", "live");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [searchParams, setSearchParams]);
 
   // ISO timestamp for timeline highlight (from ?at=)
   const highlightTimestamp = searchParams.get("at") ?? null;
@@ -346,12 +364,10 @@ function LogsRoute({
   onOpenNotifications?: () => void;
   currentUser: DashboardSessionUser | null;
 }) {
-  const back = useReturnTo();
   const navigate = useNavigate();
   return (
     <Suspense fallback={<LoadShell label="Loading activity log…" />}>
       <AuthenticatedLogs
-        onBack={back}
         onLogout={() => void handleLogout()}
         onShowPreferences={openSettings}
         onOpenUsers={onOpenUsers}
@@ -676,11 +692,11 @@ export function App() {
   };
 
   const handleSelectAgent = (agentId: string) => {
-    navigate(`/agents/${agentId}?tab=activity`);
+    navigate(`/agents/${agentId}?tab=live`);
   };
 
   const handleOpenScreen = (agentId: string) => {
-    navigate(`/agents/${agentId}?tab=screen`);
+    navigate(`/agents/${agentId}?tab=live`);
   };
 
   const handleOpenSettings = () => {

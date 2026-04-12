@@ -4,7 +4,6 @@ import type { NotificationItem } from "../hooks/useNotifications";
 import type { DashboardNavUser } from "../lib/types";
 
 interface Props {
-  onBack: () => void;
   onLogout: () => void;
   onShowPreferences: () => void;
   onOpenUsers: () => void;
@@ -18,7 +17,6 @@ interface Props {
 }
 
 export function AuthenticatedLogs({
-  onBack,
   onLogout,
   onShowPreferences,
   onOpenUsers,
@@ -38,7 +36,6 @@ export function AuthenticatedLogs({
       onOpenUsers={onOpenUsers}
       onOpenNotifications={onOpenNotifications}
       onGoHome={onGoHome}
-      onBackToOverview={onBack}
       contentType="default"
       currentUser={currentUser}
       notifications={notifications}

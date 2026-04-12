@@ -1,7 +1,18 @@
-import { useEffect, useState } from "react";
 import TopNavigation from "@cloudscape-design/components/top-navigation";
-import { api, SETTINGS_VERSION_POLL_INTERVAL_MS } from "../../lib/api";
+import type { TopNavigationProps } from "@cloudscape-design/components/top-navigation";
+import type { ButtonDropdownProps } from "@cloudscape-design/components/button-dropdown";
+import clsx from "clsx";
+import { useMemo } from "react";
 import { dashboardRoleLabel, type DashboardNavUser } from "../../lib/types";
+import { usePollDashboardServerVersion } from "../../hooks/usePollDashboardServerVersion";
+import { useServerVersionPayload } from "../../lib/serverVersionStore";
+import { DashboardUserAvatar } from "../common/DashboardUserAvatar";
+
+const MENU_SERVER_VERSION_ID = "sentinel_menu_server_version";
+
+type AccountMenuUtility = Extract<TopNavigationProps.Utility, { type: "menu-dropdown" }> & {
+  renderItem?: ButtonDropdownProps.ItemRenderer;
+};
 
 interface TopNavProps {
   onLogout: () => void;
@@ -27,50 +38,134 @@ export function TopNav({
   onGoHome,
   currentUser = null,
 }: TopNavProps) {
-  const [versionLine, setVersionLine] = useState<{
-    label: string;
-    updateAvailable: boolean;
-    releasesUrl: string;
-    remoteVersion?: string;
-  } | null>(null);
+  usePollDashboardServerVersion();
+  const versionPayload = useServerVersionPayload();
 
-  useEffect(() => {
-    let cancelled = false;
+  const accountMenuUtility = useMemo((): AccountMenuUtility => {
+    const updateAvailable = versionPayload?.server_update_available ?? false;
+    const versionLabel = versionPayload?.server_version ?? null;
+    const releasesUrlRaw = versionPayload?.releases_url?.trim() ?? "";
+    const remoteVersion = versionPayload?.latest_server_release ?? null;
+    const hasData = versionLabel != null;
+    const canOpenReleases =
+      hasData && (releasesUrlRaw.startsWith("https://") || releasesUrlRaw.startsWith("http://"));
 
-    const load = () => {
-      void api
-        .settingsVersionGet()
-        .then((v) => {
-          if (cancelled) return;
-          setVersionLine({
-            label: v.server_version,
-            updateAvailable: v.server_update_available,
-            releasesUrl: v.releases_url,
-            remoteVersion: v.latest_server_release ?? undefined,
-          });
-        })
-        .catch(() => {
-          if (cancelled) return;
-          setVersionLine(null);
-        });
+    const serverMenuItem: ButtonDropdownProps.Item = canOpenReleases
+      ? {
+          id: MENU_SERVER_VERSION_ID,
+          text: "Server version",
+          ariaLabel:
+            remoteVersion != null
+              ? `Server v${versionLabel}. Latest GitHub release v${remoteVersion}. Opens GitHub releases in a new tab.`
+              : `Server v${versionLabel}. Opens GitHub releases in a new tab.`,
+          href: releasesUrlRaw,
+          external: true,
+          externalIconAriaLabel: "Opens in a new tab",
+        }
+      : {
+          id: MENU_SERVER_VERSION_ID,
+          text: "Server version",
+          ariaLabel: hasData
+            ? "Server version (GitHub releases link unavailable)."
+            : "Loading server version.",
+          disabled: true,
+        };
+
+    const renderItem: ButtonDropdownProps.ItemRenderer = ({ item }) => {
+      if (item.type !== "action" || item.option.id !== MENU_SERVER_VERSION_ID) return null;
+      const title = !hasData
+        ? "Loading server version"
+        : canOpenReleases
+          ? "Open GitHub releases in a new tab"
+          : `Server v${versionLabel}`;
+
+      return (
+        <div
+          className={clsx(
+            "sentinel-account-menu-version",
+            updateAvailable && hasData && "sentinel-account-menu-version--update",
+            !hasData && "sentinel-account-menu-version--loading",
+          )}
+          title={title}
+        >
+          <div className="sentinel-account-menu-version__eyebrow">Server</div>
+          <div className="sentinel-account-menu-version__row">
+            {hasData ? (
+              <>
+                <span className="sentinel-account-menu-version__ver">v{versionLabel}</span>
+                {updateAvailable ? (
+                  <span className="sentinel-account-menu-version__pill">Update available</span>
+                ) : (
+                  <span className="sentinel-account-menu-version__ok">Up to date</span>
+                )}
+              </>
+            ) : (
+              <span className="sentinel-account-menu-version__muted">Checking version…</span>
+            )}
+          </div>
+          {hasData && remoteVersion != null ? (
+            <div className="sentinel-account-menu-version__latest">Latest on GitHub: v{remoteVersion}</div>
+          ) : hasData ? (
+            <div className="sentinel-account-menu-version__latest sentinel-account-menu-version__latest--muted">
+              Latest on GitHub: not reported
+            </div>
+          ) : null}
+        </div>
+      );
     };
 
-    load();
-    const id = window.setInterval(load, SETTINGS_VERSION_POLL_INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, []);
+    const items: ButtonDropdownProps.Items = [
+      serverMenuItem,
+      ...(onOpenUsers ? [{ id: "users", text: "Account" }] : []),
+      ...(onOpenNotifications ? [{ id: "notifications", text: "Alerts" }] : []),
+      ...(onOpenActivityLog ? [{ id: "activity_log", text: "Activity log" }] : []),
+      { id: "settings", text: "Settings" },
+      { id: "logout", text: "Logout" },
+    ];
 
-  const versionTitle =
-    versionLine == null
-      ? "Server version (unavailable)"
-      : versionLine.updateAvailable && versionLine.remoteVersion != null
-        ? `This server is v${versionLine.label}. GitHub latest is v${versionLine.remoteVersion}. Open Settings for details.`
-        : versionLine.updateAvailable
-          ? `This server is v${versionLine.label}. A newer release may be available on GitHub.`
-          : `This server is v${versionLine.label}. Matches or exceeds the latest GitHub release (last check).`;
+    const accountIcon = currentUser
+      ? {
+          iconSvg: (
+            <DashboardUserAvatar
+              username={currentUser.username}
+              displayName={currentUser.display_name}
+              displayIcon={currentUser.display_icon}
+              size={22}
+              className="sentinel-top-nav-account-avatar"
+            />
+          ),
+        }
+      : { iconName: "user-profile" as const };
+
+    return {
+      type: "menu-dropdown",
+      ...accountIcon,
+      text: currentUser ? (currentUser.display_name?.trim() || currentUser.username) : "Account",
+      description: currentUser ? dashboardRoleLabel(currentUser.role) : undefined,
+      title: "Account",
+      ariaLabel: currentUser
+        ? `${currentUser.display_name?.trim() || currentUser.username}, ${dashboardRoleLabel(currentUser.role)}`
+        : "Account",
+      badge: updateAvailable && versionLabel != null,
+      items,
+      renderItem,
+      onItemClick: ({ detail }) => {
+        if (detail.id === "users") onOpenUsers?.();
+        else if (detail.id === "notifications") onOpenNotifications?.();
+        else if (detail.id === "activity_log") onOpenActivityLog?.();
+        else if (detail.id === "settings") onShowPreferences();
+        else if (detail.id === "logout") onLogout();
+      },
+    };
+  }, [
+    currentUser,
+    onLogout,
+    onOpenActivityLog,
+    onOpenNotifications,
+    onOpenUsers,
+    onShowPreferences,
+    versionPayload,
+  ]);
 
   return (
     <div id="sentinel-top-nav" className="sentinel-top-nav">
@@ -98,66 +193,7 @@ export function TopNav({
                 },
               ]
             : []),
-          ...(versionLine != null
-            ? [
-                {
-                  type: "button" as const,
-                  variant: "link" as const,
-                  text: versionLine.updateAvailable
-                    ? `v${versionLine.label} · update available`
-                    : `v${versionLine.label}`,
-                  title: versionTitle,
-                  ariaLabel: versionTitle,
-                  onClick: () => onShowPreferences(),
-                },
-              ]
-            : []),
-          ...(versionLine?.updateAvailable
-            ? [
-                {
-                  type: "button" as const,
-                  variant: "link" as const,
-                  text: "Update",
-                  title:
-                    versionLine.remoteVersion != null
-                      ? `Version ${versionLine.remoteVersion} is available on GitHub`
-                      : "A newer release may be available on GitHub",
-                  href: versionLine.releasesUrl,
-                  target: "_blank",
-                  rel: "noopener noreferrer",
-                  external: true,
-                  externalIconAriaLabel: "Opens in a new tab",
-                },
-              ]
-            : []),
-          {
-            type: "menu-dropdown" as const,
-            iconName: "user-profile" as const,
-            text: currentUser
-              ? `${currentUser.username}\n${dashboardRoleLabel(currentUser.role)}`
-              : "Account",
-            description: currentUser ? dashboardRoleLabel(currentUser.role) : undefined,
-            title: "Account",
-            ariaLabel: currentUser
-              ? `${currentUser.username}, ${dashboardRoleLabel(currentUser.role)}`
-              : "Account",
-            items: [
-              ...(onOpenUsers ? [{ id: "users", text: "Users" }] : []),
-              ...(onOpenNotifications ? [{ id: "notifications", text: "Alerts" }] : []),
-              ...(onOpenActivityLog
-                ? [{ id: "activity_log", text: "Activity log" }]
-                : []),
-              { id: "settings", text: "Settings" },
-              { id: "logout", text: "Logout" },
-            ],
-            onItemClick: ({ detail }) => {
-              if (detail.id === "users") onOpenUsers?.();
-              else if (detail.id === "notifications") onOpenNotifications?.();
-              else if (detail.id === "activity_log") onOpenActivityLog?.();
-              else if (detail.id === "settings") onShowPreferences();
-              else if (detail.id === "logout") onLogout();
-            },
-          },
+          accountMenuUtility as TopNavigationProps.Utility,
         ]}
       />
     </div>

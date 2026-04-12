@@ -95,7 +95,6 @@ export function AuthenticatedAgentDetail({
       onOpenUsers={onOpenUsers}
       onOpenNotifications={onOpenNotifications}
       onGoHome={onGoHome}
-      onBackToOverview={onBackToOverview}
       contentType="default"
       currentUser={currentUser}
       notifications={notifications}

@@ -3,6 +3,7 @@ import Flashbar from "@cloudscape-design/components/flashbar";
 import { TopNav } from "../components/navigation/TopNav";
 import { useState } from "react";
 import type { ReactNode } from "react";
+import { useLocation } from "react-router-dom";
 import type { NotificationItem } from "../hooks/useNotifications";
 import { ToolsContent } from "../components/detail/ToolsContent";
 import type { DashboardNavUser } from "../lib/types";
@@ -16,7 +17,6 @@ interface DashboardLayoutProps {
   onOpenUsers?: () => void;
   /** Admin: alerts (rules + history). */
   onOpenNotifications?: () => void;
-  onBackToOverview?: () => void;
   onGoHome: () => void;
   currentUser?: DashboardNavUser | null;
   contentType?: "default" | "table" | "form" | "cards";
@@ -35,7 +35,6 @@ export function DashboardLayout({
   onOpenActivityLog,
   onOpenUsers,
   onOpenNotifications,
-  onBackToOverview,
   onGoHome,
   currentUser = null,
   contentType = "default",
@@ -46,6 +45,8 @@ export function DashboardLayout({
   onToolsChange,
 }: DashboardLayoutProps) {
   const [navigationOpen, setNavigationOpen] = useState(true);
+  const { pathname } = useLocation();
+  const onBackToOverview = pathname !== "/" ? onGoHome : undefined;
 
   return (
     <>

@@ -48,7 +48,8 @@ fn valid_ha_event_type(s: &str) -> bool {
     !b.is_empty()
         && b.len() <= 100
         && b[0].is_ascii_lowercase()
-        && b.iter().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'_')
+        && b.iter()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'_')
 }
 
 pub struct HomeAssistantNotifier {
@@ -62,8 +63,8 @@ impl HomeAssistantNotifier {
     pub fn from_env() -> Option<Self> {
         let base = env_trim("HOME_ASSISTANT_URL")?;
         let token = env_trim("HOME_ASSISTANT_ACCESS_TOKEN")?;
-        let event_type = env_trim("HOME_ASSISTANT_EVENT_TYPE")
-            .unwrap_or_else(|| "sentinel_alert".to_string());
+        let event_type =
+            env_trim("HOME_ASSISTANT_EVENT_TYPE").unwrap_or_else(|| "sentinel_alert".to_string());
         if !valid_ha_event_type(&event_type) {
             tracing::warn!(
                 event_type = %event_type,

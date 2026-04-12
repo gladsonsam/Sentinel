@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::oneshot;
 
+use axum::extract::Extension;
 use axum::{
     body::Body,
     extract::{ConnectInfo, Path, Query, State},
@@ -15,7 +16,6 @@ use axum::{
     routing::{delete, get, post, put},
     Json, Router,
 };
-use axum::extract::Extension;
 use bytes::Bytes;
 use futures_util::StreamExt;
 use regex::RegexBuilder;
@@ -46,9 +46,15 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/agents/:id/info", get(agent_info))
         .route("/agents/:id/windows", get(agent_windows))
         .route("/agents/:id/keys", get(agent_keys))
-        .route("/agents/:id/alert-rule-events", get(agent_alert_rule_events))
+        .route(
+            "/agents/:id/alert-rule-events",
+            get(agent_alert_rule_events),
+        )
         .route("/agents/:id/groups", get(agent_agent_groups_for_agent_h))
-        .route("/alert-rule-events/:id/screenshot", get(alert_rule_event_screenshot))
+        .route(
+            "/alert-rule-events/:id/screenshot",
+            get(alert_rule_event_screenshot),
+        )
         .route("/agents/:id/urls", get(agent_urls))
         .route("/agents/:id/activity", get(agent_activity))
         .route("/agents/:id/app-icons/:exe_name", get(agent_app_icon))
@@ -62,7 +68,9 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/audit", get(audit_log))
         .route(
             "/agents/:id/retention",
-            get(agent_retention_get).put(agent_retention_put).delete(agent_retention_delete),
+            get(agent_retention_get)
+                .put(agent_retention_put)
+                .delete(agent_retention_delete),
         )
         .route("/agents/:id/screen", get(agent_screen))
         .route("/agents/:id/mjpeg", get(agent_mjpeg))
@@ -95,7 +103,10 @@ pub fn router() -> Router<Arc<AppState>> {
                 .delete(agent_auto_update_agent_delete),
         )
         .route("/agents/:id/update-now", post(agent_update_now))
-        .route("/agent-groups", get(agent_groups_list_h).post(agent_groups_create_h))
+        .route(
+            "/agent-groups",
+            get(agent_groups_list_h).post(agent_groups_create_h),
+        )
         .route(
             "/agent-groups/:group_id",
             put(agent_groups_update_h).delete(agent_groups_delete_h),
@@ -108,8 +119,14 @@ pub fn router() -> Router<Arc<AppState>> {
             "/agent-groups/:group_id/members/:agent_id",
             delete(agent_group_member_remove_h),
         )
-        .route("/alert-rules", get(alert_rules_list_h).post(alert_rules_create_h))
-        .route("/alert-rules/:rule_id/events", get(alert_rule_events_for_rule_h))
+        .route(
+            "/alert-rules",
+            get(alert_rules_list_h).post(alert_rules_create_h),
+        )
+        .route(
+            "/alert-rules/:rule_id/events",
+            get(alert_rule_events_for_rule_h),
+        )
         .route(
             "/alert-rules/:rule_id",
             put(alert_rules_update_h).delete(alert_rules_delete_h),
@@ -149,7 +166,11 @@ async fn fetch_latest_agent_version() -> Option<String> {
     }
     let body = resp.json::<LatestAgentJson>().await.ok()?;
     let v = body.version.trim().trim_start_matches('v').to_string();
-    if v.is_empty() { None } else { Some(v) }
+    if v.is_empty() {
+        None
+    } else {
+        Some(v)
+    }
 }
 
 async fn fetch_latest_github_release_version() -> Option<String> {
@@ -170,7 +191,11 @@ async fn fetch_latest_github_release_version() -> Option<String> {
     }
     let body = resp.json::<GitHubLatestRelease>().await.ok()?;
     let v = body.tag_name.trim().trim_start_matches('v').to_string();
-    if v.is_empty() { None } else { Some(v) }
+    if v.is_empty() {
+        None
+    } else {
+        Some(v)
+    }
 }
 
 fn semver_is_newer(latest: &str, current: &str) -> bool {
@@ -254,7 +279,11 @@ async fn agent_auto_update_global_put(
     Json(body): Json<AgentAutoUpdateBody>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     let ip = audit_ip(&headers, addr);
     match db::set_agent_auto_update_global(&s.db, body.enabled).await {
@@ -276,7 +305,10 @@ async fn agent_auto_update_global_put(
     }
 }
 
-async fn agent_auto_update_agent_get(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Response {
+async fn agent_auto_update_agent_get(
+    Path(id): Path<Uuid>,
+    State(s): State<Arc<AppState>>,
+) -> Response {
     let global = match db::get_agent_auto_update_global(&s.db).await {
         Ok(v) => v,
         Err(e) => return err500(e),
@@ -304,7 +336,11 @@ async fn agent_auto_update_agent_put(
     Json(body): Json<AgentAutoUpdateBody>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     let ip = audit_ip(&headers, addr);
     match db::set_agent_auto_update_override(&s.db, id, body.enabled).await {
@@ -334,7 +370,11 @@ async fn agent_auto_update_agent_delete(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     let ip = audit_ip(&headers, addr);
     match db::clear_agent_auto_update_override(&s.db, id).await {
@@ -368,7 +408,7 @@ async fn agent_app_icon(
     }
     if !exe
         .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' )
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
     {
         return (StatusCode::BAD_REQUEST, "invalid exe_name").into_response();
     }
@@ -394,7 +434,10 @@ async fn alert_rule_event_screenshot(
 ) -> Response {
     match db::alert_rule_event_screenshot_get(&s.db, id).await {
         Ok(Some(bytes)) => (
-            [(header::CONTENT_TYPE, "image/jpeg"), (header::CACHE_CONTROL, "no-store")],
+            [
+                (header::CONTENT_TYPE, "image/jpeg"),
+                (header::CACHE_CONTROL, "no-store"),
+            ],
             bytes,
         )
             .into_response(),
@@ -407,6 +450,7 @@ async fn me(Extension(user): Extension<auth::AuthUser>) -> Response {
     Json(serde_json::json!({
         "id": user.user_id,
         "username": user.username,
+        "display_name": user.display_name,
         "role": user.role,
         "display_icon": user.display_icon,
         "csrf_token": user.csrf_token,
@@ -468,7 +512,9 @@ struct AgentIconBody {
 }
 
 fn normalize_icon(raw: Option<String>) -> Result<Option<String>, &'static str> {
-    let Some(s) = raw else { return Ok(Some("monitor".to_string())); };
+    let Some(s) = raw else {
+        return Ok(Some("monitor".to_string()));
+    };
     let t = s.trim();
     if t.is_empty() {
         return Ok(Some("monitor".to_string()));
@@ -503,11 +549,21 @@ async fn agent_icon_put(
     Json(body): Json<AgentIconBody>,
 ) -> Response {
     if !user.is_operator() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     let icon = match normalize_icon(body.icon) {
         Ok(v) => v,
-        Err(msg) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response(),
+        Err(msg) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": msg })),
+            )
+                .into_response()
+        }
     };
     let ip = audit_ip(&headers, addr);
     match db::set_agent_icon(&s.db, id, icon.as_deref()).await {
@@ -535,6 +591,8 @@ struct CreateUserBody {
     username: String,
     password: String,
     role: Option<String>,
+    #[serde(default)]
+    display_name: Option<String>,
 }
 
 fn normalize_role(raw: Option<String>) -> Result<String, &'static str> {
@@ -552,7 +610,11 @@ async fn users_list(
     Extension(user): Extension<auth::AuthUser>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     match db::dashboard_user_list(&s.db).await {
         Ok(rows) => Json(serde_json::json!({ "users": rows })).into_response(),
@@ -568,20 +630,57 @@ async fn users_create(
     Json(body): Json<CreateUserBody>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     let role = match normalize_role(body.role) {
         Ok(r) => r,
-        Err(msg) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response(),
+        Err(msg) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": msg })),
+            )
+                .into_response()
+        }
     };
     if body.username.trim().is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "username is required" }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "username is required" })),
+        )
+            .into_response();
     }
     if body.password.len() < 6 {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "password must be at least 6 characters" }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "password must be at least 6 characters" })),
+        )
+            .into_response();
     }
+    let display_name =
+        match normalize_profile_display_name(body.display_name.as_deref().unwrap_or("")) {
+            Ok(v) => v,
+            Err(msg) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": msg })),
+                )
+                    .into_response()
+            }
+        };
     let ip = audit_ip(&headers, addr);
-    match db::dashboard_user_create(&s.db, body.username.trim(), &body.password, &role).await {
+    match db::dashboard_user_create(
+        &s.db,
+        body.username.trim(),
+        &body.password,
+        &role,
+        display_name.as_str(),
+    )
+    .await
+    {
         Ok(new_id) => {
             let _ = db::insert_audit_log(
                 &s.db,
@@ -589,7 +688,7 @@ async fn users_create(
                 None,
                 "user_create",
                 "ok",
-                &serde_json::json!({ "user_id": new_id, "username": body.username.trim(), "role": role }),
+                &serde_json::json!({ "user_id": new_id, "username": body.username.trim(), "role": role, "display_name": display_name }),
                 ip.as_deref(),
             )
             .await;
@@ -608,9 +707,22 @@ struct PasswordBody {
 struct UserProfileBody {
     #[serde(default)]
     username: Option<String>,
+    #[serde(default)]
+    display_name: Option<String>,
     /// `None` = field omitted (no change). `Some(None)` = JSON null (clear icon). `Some(Some(s))` = set.
     #[serde(default)]
     display_icon: Option<Option<String>>,
+}
+
+fn normalize_profile_display_name(raw: &str) -> Result<String, &'static str> {
+    let t = raw.trim();
+    if t.len() > 200 {
+        return Err("display name must be at most 200 characters");
+    }
+    if t.chars().any(|c| c.is_control()) {
+        return Err("display name may not contain control characters");
+    }
+    Ok(t.to_string())
 }
 
 fn normalize_profile_username(raw: &str) -> Result<String, &'static str> {
@@ -683,13 +795,17 @@ async fn user_profile_update(
     Json(body): Json<UserProfileBody>,
 ) -> Response {
     if user.user_id != id && !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
 
-    if body.username.is_none() && body.display_icon.is_none() {
+    if body.username.is_none() && body.display_icon.is_none() && body.display_name.is_none() {
         return (
             StatusCode::BAD_REQUEST,
-            Json(serde_json::json!({ "error": "Provide username and/or display_icon to update" })),
+            Json(serde_json::json!({ "error": "Provide username, display_name, and/or display_icon to update" })),
         )
             .into_response();
     }
@@ -698,8 +814,12 @@ async fn user_profile_update(
         Ok(v) => v,
         Err(e) => return err500(e),
     };
-    let Some((current_username, _current_icon)) = profile_before else {
-        return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "user not found" }))).into_response();
+    let Some((current_username, _current_icon, current_display_name)) = profile_before else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "user not found" })),
+        )
+            .into_response();
     };
 
     let ip = audit_ip(&headers, addr);
@@ -708,7 +828,11 @@ async fn user_profile_update(
         let new_name = match normalize_profile_username(&raw_username) {
             Ok(v) => v,
             Err(msg) => {
-                return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": msg })),
+                )
+                    .into_response();
             }
         };
         if new_name != current_username {
@@ -739,13 +863,45 @@ async fn user_profile_update(
         }
     }
 
+    if let Some(raw_dn) = body.display_name {
+        let new_dn = match normalize_profile_display_name(&raw_dn) {
+            Ok(v) => v,
+            Err(msg) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({ "error": msg })),
+                )
+                    .into_response();
+            }
+        };
+        if new_dn != current_display_name {
+            if let Err(e) = db::dashboard_user_set_display_name(&s.db, id, &new_dn).await {
+                return err500(e);
+            }
+            let _ = db::insert_audit_log(
+                &s.db,
+                user.username.as_str(),
+                None,
+                "user_set_display_name",
+                "ok",
+                &serde_json::json!({ "user_id": id }),
+                ip.as_deref(),
+            )
+            .await;
+        }
+    }
+
     if let Some(icon_outer) = body.display_icon {
         let icon_val: Option<String> = match icon_outer {
             None => None,
             Some(s) => match normalize_profile_display_icon_set(&s) {
                 Ok(v) => Some(v),
                 Err(msg) => {
-                    return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(serde_json::json!({ "error": msg })),
+                    )
+                        .into_response();
                 }
             },
         };
@@ -768,14 +924,19 @@ async fn user_profile_update(
         Ok(v) => v,
         Err(e) => return err500(e),
     };
-    let Some((username, display_icon)) = profile_after else {
-        return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "user not found" }))).into_response();
+    let Some((username, display_icon, display_name)) = profile_after else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "user not found" })),
+        )
+            .into_response();
     };
 
     Json(serde_json::json!({
         "ok": true,
         "id": id,
         "username": username,
+        "display_name": display_name,
         "display_icon": display_icon,
     }))
     .into_response()
@@ -790,10 +951,18 @@ async fn user_set_password(
     Json(body): Json<PasswordBody>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     if body.password.len() < 6 {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "password must be at least 6 characters" }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "password must be at least 6 characters" })),
+        )
+            .into_response();
     }
     let ip = audit_ip(&headers, addr);
     match db::dashboard_user_set_password(&s.db, id, &body.password).await {
@@ -828,16 +997,28 @@ async fn user_set_role(
     Json(body): Json<RoleBody>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     let role = match normalize_role(Some(body.role)) {
         Ok(r) => r,
-        Err(msg) => return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response(),
+        Err(msg) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": msg })),
+            )
+                .into_response()
+        }
     };
 
     // Safety: do not allow demoting the last remaining admin.
     if role != "admin" {
-        let is_target_admin = db::dashboard_user_is_admin(&s.db, id).await.unwrap_or(false);
+        let is_target_admin = db::dashboard_user_is_admin(&s.db, id)
+            .await
+            .unwrap_or(false);
         if is_target_admin {
             let admin_count = db::dashboard_admin_count(&s.db).await.unwrap_or(0);
             if admin_count <= 1 {
@@ -877,14 +1058,24 @@ async fn user_delete(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     if id == user.user_id {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "cannot delete your own user" }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "cannot delete your own user" })),
+        )
+            .into_response();
     }
 
     // Safety: do not allow deleting the last remaining admin.
-    let is_target_admin = db::dashboard_user_is_admin(&s.db, id).await.unwrap_or(false);
+    let is_target_admin = db::dashboard_user_is_admin(&s.db, id)
+        .await
+        .unwrap_or(false);
     if is_target_admin {
         let admin_count = db::dashboard_admin_count(&s.db).await.unwrap_or(0);
         if admin_count <= 1 {
@@ -921,7 +1112,11 @@ async fn user_identities(
     Extension(user): Extension<auth::AuthUser>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     match db::dashboard_identities_for_user(&s.db, id).await {
         Ok(rows) => Json(serde_json::json!({ "identities": rows })).into_response(),
@@ -944,12 +1139,20 @@ async fn user_identity_link(
     Json(body): Json<IdentityLinkBody>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     let issuer = body.issuer.trim();
     let subject = body.subject.trim();
     if issuer.is_empty() || subject.is_empty() {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "issuer and subject are required" }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "issuer and subject are required" })),
+        )
+            .into_response();
     }
     let ip = audit_ip(&headers, addr);
     match db::dashboard_identity_link(&s.db, issuer, subject, id).await {
@@ -978,7 +1181,11 @@ async fn identity_unlink(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     let ip = audit_ip(&headers, addr);
     match db::dashboard_identity_unlink(&s.db, id).await {
@@ -1059,7 +1266,11 @@ async fn agent_windows(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     if let Err(msg) = validate_page_params(&p) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": msg })),
+        )
+            .into_response();
     }
     let ip = audit_ip(&headers, addr);
     match db::query_windows(&s.db, id, p.limit, p.offset).await {
@@ -1090,7 +1301,11 @@ async fn agent_keys(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     if let Err(msg) = validate_page_params(&p) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": msg })),
+        )
+            .into_response();
     }
     let ip = audit_ip(&headers, addr);
     match db::query_keys(&s.db, id, p.limit, p.offset).await {
@@ -1121,7 +1336,11 @@ async fn agent_urls(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     if let Err(msg) = validate_page_params(&p) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": msg })),
+        )
+            .into_response();
     }
     let ip = audit_ip(&headers, addr);
     match db::query_urls(&s.db, id, p.limit, p.offset).await {
@@ -1152,10 +1371,18 @@ async fn alert_rule_events_for_rule_h(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "admin only" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "admin only" })),
+        )
+            .into_response();
     }
     if let Err(msg) = validate_page_params(&p) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": msg })),
+        )
+            .into_response();
     }
     let ip = audit_ip(&headers, addr);
     match db::alert_rule_events_list_for_rule(&s.db, rule_id, p.limit, p.offset).await {
@@ -1186,7 +1413,11 @@ async fn agent_alert_rule_events(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     if let Err(msg) = validate_page_params(&p) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": msg })),
+        )
+            .into_response();
     }
     let ip = audit_ip(&headers, addr);
     match db::alert_rule_events_list_for_agent(&s.db, id, p.limit, p.offset).await {
@@ -1215,7 +1446,11 @@ async fn agent_agent_groups_for_agent_h(
     Extension(user): Extension<auth::AuthUser>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     match db::agent_groups_for_agent(&s.db, agent_id).await {
         Ok(groups) => Json(serde_json::json!({ "groups": groups })).into_response(),
@@ -1232,7 +1467,11 @@ async fn agent_activity(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     if let Err(msg) = validate_page_params(&p) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": msg })),
+        )
+            .into_response();
     }
     let ip = audit_ip(&headers, addr);
     match db::query_activity(&s.db, id, p.limit, p.offset).await {
@@ -1287,7 +1526,11 @@ async fn agent_top_urls(
     State(s): State<Arc<AppState>>,
 ) -> Response {
     if let Err(msg) = validate_page_params(&p) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": msg })),
+        )
+            .into_response();
     }
     match db::query_top_urls(&s.db, id, p.limit, p.offset).await {
         Ok(rows) => Json(serde_json::json!({ "rows": rows })).into_response(),
@@ -1301,7 +1544,11 @@ async fn agent_top_windows(
     State(s): State<Arc<AppState>>,
 ) -> Response {
     if let Err(msg) = validate_page_params(&p) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": msg })),
+        )
+            .into_response();
     }
     match db::query_top_windows(&s.db, id, p.limit, p.offset).await {
         Ok(rows) => Json(serde_json::json!({ "rows": rows })).into_response(),
@@ -1318,7 +1565,11 @@ async fn clear_agent_history(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     if !user.is_operator() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     let ip = audit_ip(&headers, addr);
     match db::clear_agent_history(&s.db, id).await {
@@ -1357,7 +1608,11 @@ async fn agent_wake(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     if !user.is_operator() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     let ip = audit_ip(&headers, addr);
     if let Err(retry_secs) = s.wol_throttle_check(id) {
@@ -1461,7 +1716,11 @@ async fn audit_log(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     if let Err(msg) = validate_audit_params(&p) {
-        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": msg })),
+        )
+            .into_response();
     }
 
     let ip = audit_ip(&headers, addr);
@@ -1533,7 +1792,9 @@ fn parse_agent_retention(body: RetentionBody) -> Result<db::RetentionAgentOverri
             Some(0) => Ok(Some(0)),
             Some(x) if (1..=36_500).contains(&x) => Ok(Some(x)),
             Some(x) if x < 0 => Err("retention days cannot be negative"),
-            Some(_) => Err("retention override must be omitted (inherit), 0 (unlimited), or 1–36500 days"),
+            Some(_) => {
+                Err("retention override must be omitted (inherit), 0 (unlimited), or 1–36500 days")
+            }
         }
     };
     Ok(db::RetentionAgentOverride {
@@ -1563,12 +1824,20 @@ async fn retention_global_put(
     Json(body): Json<RetentionBody>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     let p = match normalize_global_retention(body) {
         Ok(p) => p,
         Err(msg) => {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": msg })),
+            )
+                .into_response();
         }
     };
     let ip = audit_ip(&headers, addr);
@@ -1632,12 +1901,20 @@ async fn agent_retention_put(
     Json(body): Json<RetentionBody>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     let ov = match parse_agent_retention(body) {
         Ok(ov) => ov,
         Err(msg) => {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": msg })),
+            )
+                .into_response();
         }
     };
     let ip = audit_ip(&headers, addr);
@@ -1671,7 +1948,11 @@ async fn agent_retention_delete(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     let ip = audit_ip(&headers, addr);
     match db::clear_retention_agent(&s.db, id).await {
@@ -1728,11 +2009,19 @@ async fn local_ui_password_global_put(
     Json(body): Json<LocalUiPasswordBody>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     if let Some(ref p) = body.password {
         if let Err(msg) = validate_local_ui_password_plain(p) {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": msg })),
+            )
+                .into_response();
         }
     }
     let ip = audit_ip(&headers, addr);
@@ -1760,7 +2049,10 @@ async fn local_ui_password_global_put(
     }
 }
 
-async fn local_ui_password_agent_get(Path(id): Path<Uuid>, State(s): State<Arc<AppState>>) -> Response {
+async fn local_ui_password_agent_get(
+    Path(id): Path<Uuid>,
+    State(s): State<Arc<AppState>>,
+) -> Response {
     let global = match db::get_local_ui_global_hash(&s.db).await {
         Ok(h) => h,
         Err(e) => return err500(e),
@@ -1792,11 +2084,19 @@ async fn local_ui_password_agent_put(
     Json(body): Json<LocalUiPasswordBody>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     if let Some(ref p) = body.password {
         if let Err(msg) = validate_local_ui_password_plain(p) {
-            return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": msg }))).into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": msg })),
+            )
+                .into_response();
         }
     }
     let ip = audit_ip(&headers, addr);
@@ -1832,7 +2132,11 @@ async fn local_ui_password_agent_delete(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     let ip = audit_ip(&headers, addr);
     match db::clear_local_ui_override(&s.db, id).await {
@@ -1890,7 +2194,11 @@ async fn agent_update_now(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
 ) -> Response {
     if !user.is_operator() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     let ip = audit_ip(&headers, addr);
 
@@ -2261,7 +2569,11 @@ async fn agent_run_script(
 ) -> Response {
     let ip = audit_ip(&headers, addr);
     if !user.is_operator() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     if !s.allow_remote_script {
         return (
@@ -2330,7 +2642,11 @@ async fn agents_bulk_script(
     Json(body): Json<BulkScriptBody>,
 ) -> Response {
     if !user.is_operator() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     if !s.allow_remote_script {
         return (
@@ -2535,7 +2851,11 @@ async fn agent_groups_list_h(
     Extension(user): Extension<auth::AuthUser>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     match db::agent_groups_list(&s.db).await {
         Ok(groups) => Json(serde_json::json!({ "groups": groups })).into_response(),
@@ -2549,7 +2869,11 @@ async fn agent_groups_create_h(
     Json(body): Json<AgentGroupCreateBody>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     let name = body.name.trim();
     if name.is_empty() {
@@ -2572,7 +2896,11 @@ async fn agent_groups_update_h(
     Json(body): Json<AgentGroupUpdateBody>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     let name = body.name.trim();
     if name.is_empty() {
@@ -2599,7 +2927,11 @@ async fn agent_groups_delete_h(
     Path(group_id): Path<Uuid>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     match db::agent_group_delete(&s.db, group_id).await {
         Ok(true) => Json(serde_json::json!({ "ok": true })).into_response(),
@@ -2618,7 +2950,11 @@ async fn agent_group_members_list_h(
     Path(group_id): Path<Uuid>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     match db::agent_group_members(&s.db, group_id).await {
         Ok(ids) => Json(serde_json::json!({ "agent_ids": ids })).into_response(),
@@ -2633,7 +2969,11 @@ async fn agent_group_members_add_h(
     Json(body): Json<AgentGroupMembersAddBody>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     if body.agent_ids.len() > 512 {
         return (
@@ -2654,7 +2994,11 @@ async fn agent_group_member_remove_h(
     Path((group_id, agent_id)): Path<(Uuid, Uuid)>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     match db::agent_group_remove_member(&s.db, group_id, agent_id).await {
         Ok(true) => Json(serde_json::json!({ "ok": true })).into_response(),
@@ -2672,7 +3016,11 @@ async fn alert_rules_list_h(
     Extension(user): Extension<auth::AuthUser>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     match db::alert_rules_list_all(&s.db).await {
         Ok(rules) => Json(serde_json::json!({ "rules": rules })).into_response(),
@@ -2686,7 +3034,11 @@ async fn alert_rules_create_h(
     Json(body): Json<AlertRuleCreateBody>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     if let Err(msg) = validate_alert_rule_pattern(
         body.channel.trim(),
@@ -2724,11 +3076,7 @@ async fn alert_rules_create_h(
     )
     .await
     {
-        Ok(id) => (
-            StatusCode::CREATED,
-            Json(serde_json::json!({ "id": id })),
-        )
-            .into_response(),
+        Ok(id) => (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response(),
         Err(e) => err500(e),
     }
 }
@@ -2740,7 +3088,11 @@ async fn alert_rules_update_h(
     Json(body): Json<AlertRuleUpdateBody>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     if let Err(msg) = validate_alert_rule_pattern(
         body.channel.trim(),
@@ -2795,7 +3147,11 @@ async fn alert_rules_delete_h(
     Path(rule_id): Path<i64>,
 ) -> Response {
     if !user.is_admin() {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "Forbidden" })),
+        )
+            .into_response();
     }
     match db::alert_rule_delete(&s.db, rule_id).await {
         Ok(true) => Json(serde_json::json!({ "ok": true })).into_response(),

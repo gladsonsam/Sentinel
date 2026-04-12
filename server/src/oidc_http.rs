@@ -32,6 +32,10 @@ pub async fn async_http_client(req: HttpRequest) -> Result<HttpResponse, reqwest
             headers_mut.insert(k, v.clone());
         }
     }
-    Ok(out.body(body).unwrap_or_else(|_| axum::http::Response::builder().status(500).body(Vec::new()).unwrap()))
+    Ok(out.body(body).unwrap_or_else(|_| {
+        axum::http::Response::builder()
+            .status(500)
+            .body(Vec::new())
+            .unwrap()
+    }))
 }
-

@@ -23,6 +23,8 @@ const hashHue = (s: string): number => {
 
 export interface DashboardUserAvatarProps {
   username: string;
+  /** Used for initials / title when no photo or Lucide icon (e.g. full name). */
+  displayName?: string | null;
   displayIcon?: string | null;
   size?: number;
   className?: string;
@@ -32,12 +34,14 @@ export interface DashboardUserAvatarProps {
 /** Circle avatar: optional Lucide icon key, photo data URL, or short legacy glyph; otherwise colored initials. */
 export function DashboardUserAvatar({
   username,
+  displayName,
   displayIcon,
   size = 36,
   className,
   style,
 }: DashboardUserAvatarProps) {
   const raw = displayIcon?.trim() ?? "";
+  const label = displayName?.trim() || username;
   const hue = hashHue(username || "user");
   const bg = `hsl(${hue} 42% 36%)`;
   const fg = "hsl(0 0% 98%)";
@@ -58,7 +62,7 @@ export function DashboardUserAvatar({
           flexShrink: 0,
           ...style,
         }}
-        title={username}
+        title={label}
       />
     );
   }
@@ -82,7 +86,7 @@ export function DashboardUserAvatar({
             flexShrink: 0,
             ...style,
           }}
-          title={username}
+          title={label}
           aria-hidden
         >
           <Cmp size={Math.max(14, size * 0.52)} strokeWidth={2} color={fg} />
@@ -101,7 +105,7 @@ export function DashboardUserAvatar({
           fontSize: Math.max(14, size * 0.52),
           ...style,
         }}
-        title={username}
+        title={label}
         aria-hidden
       >
         {raw}
@@ -109,7 +113,7 @@ export function DashboardUserAvatar({
     );
   }
 
-  const initials = initialsFromUsername(username);
+  const initials = initialsFromUsername(label);
   return (
     <span
       className={`sentinel-user-avatar sentinel-user-avatar--initials ${className ?? ""}`}
@@ -121,8 +125,8 @@ export function DashboardUserAvatar({
         color: fg,
         ...style,
       }}
-      title={username}
-      aria-label={`${username} avatar`}
+      title={label}
+      aria-label={`${label} avatar`}
     >
       {initials}
     </span>

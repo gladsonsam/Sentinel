@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 use std::net::SocketAddr;
 
 use anyhow::anyhow;
+use axum::response::Redirect;
 use axum::{
     extract::{ConnectInfo, Request, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
@@ -28,9 +29,8 @@ use axum::{
     Json,
 };
 use rand::RngCore;
-use subtle::ConstantTimeEq;
-use axum::response::Redirect;
 use serde::Deserialize;
+use subtle::ConstantTimeEq;
 use tracing::{info, warn};
 
 use crate::db;
@@ -123,12 +123,9 @@ pub async fn require_auth(
 
     let token_hash = db::sha256_hex_bytes(token.as_bytes());
     let user = match db::dashboard_session_get_user(&state.db, &token_hash).await {
-        Ok(Some((user_id, username, role, display_icon, csrf_token))) => {
+        Ok(Some((user_id, username, role, display_name, display_icon, csrf_token))) => {
             if request_requires_csrf_token(req.method()) {
-                let supplied = req
-                    .headers()
-                    .get(CSRF_HEADER)
-                    .and_then(|v| v.to_str().ok());
+                let supplied = req.headers().get(CSRF_HEADER).and_then(|v| v.to_str().ok());
                 if !csrf_header_matches(&csrf_token, supplied) {
                     return (
                         StatusCode::FORBIDDEN,
@@ -143,6 +140,7 @@ pub async fn require_auth(
                 user_id,
                 username,
                 role,
+                display_name,
                 display_icon,
                 csrf_token,
             }
@@ -455,14 +453,7 @@ pub async fn logout(
         let token_hash = db::sha256_hex_bytes(t.as_bytes());
         let _ = db::dashboard_session_delete(&state.db, &token_hash).await;
         info!("Dashboard session revoked.");
-        audit_auth_event(
-            &state,
-            "logout",
-            "ok",
-            serde_json::json!({}),
-            ip_ref,
-        )
-        .await;
+        audit_auth_event(&state, "logout", "ok", serde_json::json!({}), ip_ref).await;
     }
 
     let forwarded_proto = headers
@@ -540,9 +531,7 @@ pub async fn config() -> Response {
 }
 
 /// `GET /api/auth/oidc/login` — redirect to the OIDC provider.
-pub async fn oidc_login(
-    headers: HeaderMap,
-) -> Response {
+pub async fn oidc_login(headers: HeaderMap) -> Response {
     let Some(cfg) = oidc::OidcConfig::from_env() else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
@@ -589,15 +578,31 @@ pub async fn oidc_login(
             .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
             .unwrap_or(false);
 
-    let same_site = if secure { "SameSite=None; Secure" } else { "SameSite=Lax" };
-    let c_state = format!("{OIDC_STATE_COOKIE}={}; HttpOnly; {same_site}; Path=/; Max-Age=600", state.secret());
-    let c_nonce = format!("{OIDC_NONCE_COOKIE}={}; HttpOnly; {same_site}; Path=/; Max-Age=600", nonce.secret());
-    let c_ret = format!("{OIDC_RETURN_COOKIE}={}; HttpOnly; {same_site}; Path=/; Max-Age=600", urlencoding::encode(return_to));
+    let same_site = if secure {
+        "SameSite=None; Secure"
+    } else {
+        "SameSite=Lax"
+    };
+    let c_state = format!(
+        "{OIDC_STATE_COOKIE}={}; HttpOnly; {same_site}; Path=/; Max-Age=600",
+        state.secret()
+    );
+    let c_nonce = format!(
+        "{OIDC_NONCE_COOKIE}={}; HttpOnly; {same_site}; Path=/; Max-Age=600",
+        nonce.secret()
+    );
+    let c_ret = format!(
+        "{OIDC_RETURN_COOKIE}={}; HttpOnly; {same_site}; Path=/; Max-Age=600",
+        urlencoding::encode(return_to)
+    );
 
     let mut res = Redirect::to(url.as_str()).into_response();
-    res.headers_mut().append(header::SET_COOKIE, HeaderValue::from_str(&c_state).unwrap());
-    res.headers_mut().append(header::SET_COOKIE, HeaderValue::from_str(&c_nonce).unwrap());
-    res.headers_mut().append(header::SET_COOKIE, HeaderValue::from_str(&c_ret).unwrap());
+    res.headers_mut()
+        .append(header::SET_COOKIE, HeaderValue::from_str(&c_state).unwrap());
+    res.headers_mut()
+        .append(header::SET_COOKIE, HeaderValue::from_str(&c_nonce).unwrap());
+    res.headers_mut()
+        .append(header::SET_COOKIE, HeaderValue::from_str(&c_ret).unwrap());
     res
 }
 
@@ -621,7 +626,11 @@ fn cookie_get(headers: &HeaderMap, name: &str) -> Option<String> {
 }
 
 fn cookie_clear(name: &str, secure: bool) -> HeaderValue {
-    let samesite = if secure { "SameSite=None; Secure" } else { "SameSite=Lax" };
+    let samesite = if secure {
+        "SameSite=None; Secure"
+    } else {
+        "SameSite=Lax"
+    };
     HeaderValue::from_str(&format!("{name}=; HttpOnly; {samesite}; Path=/; Max-Age=0")).unwrap()
 }
 
@@ -736,7 +745,9 @@ pub async fn oidc_callback(
 
     let token_req = match client.exchange_code(openidconnect::AuthorizationCode::new(code)) {
         Ok(r) => r,
-        Err(e) => return crate::error::internal_error(anyhow!("OIDC token request build failed: {e}")),
+        Err(e) => {
+            return crate::error::internal_error(anyhow!("OIDC token request build failed: {e}"))
+        }
     };
     let token = match token_req
         .request_async(&crate::oidc_http::async_http_client)
@@ -759,11 +770,12 @@ pub async fn oidc_callback(
 
     let issuer = claims.issuer().url().to_string();
     let subject = claims.subject().as_str().to_string();
-    let preferred_username = claims
-        .preferred_username()
-        .map(|s| s.to_string());
+    let preferred_username = claims.preferred_username().map(|s| s.to_string());
     let email = claims.email().map(|e| e.as_str().to_string());
-    let name = claims.name().map(|n| n.get(None).map(|s| s.to_string())).flatten();
+    let name = claims
+        .name()
+        .map(|n| n.get(None).map(|s| s.to_string()))
+        .flatten();
 
     // Authentik: groups often appear as a custom claim `groups` (array of strings).
     let mut groups: Vec<String> = Vec::new();
@@ -790,7 +802,10 @@ pub async fn oidc_callback(
                 .or(email.clone())
                 .unwrap_or_else(|| format!("oidc-{}", &subject[..subject.len().min(12)]));
             let random_pw = uuid::Uuid::new_v4().to_string();
-            match db::dashboard_user_create(&state.db, &uname, &random_pw, &role).await {
+            let dname = name.clone().unwrap_or_default();
+            match db::dashboard_user_create(&state.db, &uname, &random_pw, &role, dname.trim())
+                .await
+            {
                 Ok(uid) => uid,
                 Err(e) => return crate::error::internal_error(e),
             }
@@ -840,14 +855,21 @@ pub async fn oidc_callback(
     )
     .await;
 
-    let same_site = if secure { "SameSite=None; Secure" } else { "SameSite=Lax" };
+    let same_site = if secure {
+        "SameSite=None; Secure"
+    } else {
+        "SameSite=Lax"
+    };
     let session_cookie = format!(
         "session={}; HttpOnly; {same_site}; Path=/; Max-Age=86400",
         token_plain
     );
 
     let mut res = Redirect::to(&return_to).into_response();
-    res.headers_mut().append(header::SET_COOKIE, HeaderValue::from_str(&session_cookie).unwrap());
+    res.headers_mut().append(
+        header::SET_COOKIE,
+        HeaderValue::from_str(&session_cookie).unwrap(),
+    );
     res.headers_mut().append(header::SET_COOKIE, clear_state);
     res.headers_mut().append(header::SET_COOKIE, clear_nonce);
     res.headers_mut().append(header::SET_COOKIE, clear_ret);
@@ -861,6 +883,8 @@ pub struct AuthUser {
     pub user_id: uuid::Uuid,
     pub username: String,
     pub role: String, // 'admin' | 'operator' | 'viewer'
+    /// Optional full name shown in the UI; sign-in uses `username`.
+    pub display_name: String,
     /// Optional avatar glyph (e.g. emoji) for the dashboard UI.
     pub display_icon: Option<String>,
     /// Per-session secret; sent to the SPA for `X-CSRF-Token` on mutating requests.

@@ -21,6 +21,7 @@ import type {
   AlertRule,
 } from "./types";
 import { buildApiUrl } from "./serverSettings";
+import { publishServerVersion, type SettingsVersionPayload } from "./serverVersionStore";
 
 interface PageParams {
   limit?: number;
@@ -312,15 +313,11 @@ export const api = {
   agentUpdateNow: (id: string): Promise<{ ok: boolean }> =>
     postEmpty(`/agents/${id}/update-now`),
 
-  settingsVersionGet: (opts?: { nocache?: boolean }): Promise<{
-    server_version: string;
-    latest_server_release: string | null;
-    server_update_available: boolean;
-    latest_agent_version: string | null;
-    releases_url: string;
-  }> => {
+  settingsVersionGet: async (opts?: { nocache?: boolean }): Promise<SettingsVersionPayload> => {
     const qs = opts?.nocache ? "?nocache=true" : "";
-    return get(`/settings/version${qs}`);
+    const result = await get<SettingsVersionPayload>(`/settings/version${qs}`);
+    publishServerVersion(result);
+    return result;
   },
 
   storageUsage: (): Promise<StorageUsage> => get("/settings/storage"),
@@ -369,6 +366,7 @@ export const api = {
     username: string;
     password: string;
     role: DashboardRole;
+    display_name?: string;
   }): Promise<{ id: string }> => postJsonRes("/users", body),
 
   userSetPassword: (id: string, password: string): Promise<{ ok: boolean }> =>
@@ -379,9 +377,14 @@ export const api = {
 
   userUpdateProfile: (
     id: string,
-    body: { username?: string; display_icon?: string | null },
-  ): Promise<{ ok: boolean; id: string; username: string; display_icon: string | null }> =>
-    postJsonRes(`/users/${id}/profile`, body),
+    body: { username?: string; display_name?: string; display_icon?: string | null },
+  ): Promise<{
+    ok: boolean;
+    id: string;
+    username: string;
+    display_name: string;
+    display_icon: string | null;
+  }> => postJsonRes(`/users/${id}/profile`, body),
 
   userDelete: (id: string): Promise<{ ok: boolean }> =>
     postEmpty(`/users/${id}/delete`),

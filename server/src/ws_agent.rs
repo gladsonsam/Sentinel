@@ -26,7 +26,10 @@ use serde::Deserialize;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 
-use crate::{alert_rules, db, state::{AppState, Frame}};
+use crate::{
+    alert_rules, db,
+    state::{AppState, Frame},
+};
 
 // Conservative bounds to mitigate memory/DB-flood DoS.
 // These can be tuned later (or moved to env/config).
@@ -335,7 +338,15 @@ async fn dispatch_text(text: &str, agent_id: uuid::Uuid, name: &str, state: &Arc
                     Ok(())
                 } else {
                     match base64::engine::general_purpose::STANDARD.decode(b64) {
-                        Ok(bytes) => db::upsert_app_icon(&state.db, agent_id, val["exe_name"].as_str().unwrap_or(""), &bytes).await,
+                        Ok(bytes) => {
+                            db::upsert_app_icon(
+                                &state.db,
+                                agent_id,
+                                val["exe_name"].as_str().unwrap_or(""),
+                                &bytes,
+                            )
+                            .await
+                        }
                         Err(_) => Ok(()),
                     }
                 }

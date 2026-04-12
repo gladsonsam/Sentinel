@@ -21,8 +21,8 @@ use std::sync::Arc;
 
 use axum::extract::ws::WebSocket;
 use axum::{
-    extract::{ws::Message, State, WebSocketUpgrade},
     extract::Extension,
+    extract::{ws::Message, State, WebSocketUpgrade},
     response::IntoResponse,
 };
 use tokio::sync::broadcast::error::RecvError;
@@ -236,7 +236,11 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>, user: &AuthUser) {
     };
 
     if !cmd_ok {
-        let cmd_type = if cmd_type.is_empty() { "unknown" } else { cmd_type };
+        let cmd_type = if cmd_type.is_empty() {
+            "unknown"
+        } else {
+            cmd_type
+        };
         let detail = serde_json::json!({
             "cmd_type": cmd_type,
             "reason": "invalid cmd type/shape",

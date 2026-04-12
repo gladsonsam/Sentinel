@@ -6,6 +6,7 @@ import Tabs from "@cloudscape-design/components/tabs";
 import BreadcrumbGroup from "@cloudscape-design/components/breadcrumb-group";
 import {
   AGENT_DATA_SUBTABS,
+  AGENT_LIVE_SUBTABS,
   AGENT_SECTION_ORDER,
   AGENT_SYSTEM_SUBTABS,
   AgentSectionTabLabel,
@@ -26,7 +27,6 @@ import { FilesTab } from "../components/tabs/FilesTab";
 import { AuditTab } from "../components/tabs/AuditTab";
 import { SoftwareTab } from "../components/tabs/SoftwareTab";
 import { ScriptsTab } from "../components/tabs/ScriptsTab";
-import { ActivityTimeline } from "../components/timeline/ActivityTimeline";
 import {
   aggregateSessions,
   attachAlertEventsToSessions,
@@ -39,6 +39,7 @@ import { PageHeader, type AgentAction } from "../components/detail/PageHeader";
 import { GeneralConfig } from "../components/detail/GeneralConfig";
 import { parseTimestamp } from "../lib/utils";
 import { AgentSettingsTab } from "../components/AgentSettingsTab";
+import { ActivityTimeline } from "../components/timeline/ActivityTimeline";
 
 interface AgentDetailPageProps {
   agent: Agent;
@@ -317,19 +318,19 @@ export function AgentDetailPage({
     }
   }, [agent.id]);
   useEffect(() => {
-    if (activeTab === "activity") {
+    if (activeTab === "activity" || activeTab === "live") {
       loadActivityData();
     }
   }, [activeTab, agent.id]);
 
   useEffect(() => {
-    if (activeTab !== "activity") return;
+    if (activeTab !== "activity" && activeTab !== "live") return;
     const onWsEvent = (event: Event) => {
       const detail = (event as CustomEvent<any>).detail;
       if (!detail || detail.agent_id !== agent.id) return;
       if (!["window_focus", "url", "keys", "afk", "active", "alert_rule_match"].includes(detail.event))
         return;
-      if (activeTabRef.current !== "activity") return;
+      if (activeTabRef.current !== "activity" && activeTabRef.current !== "live") return;
 
       if (refreshDebounceRef.current) {
         clearTimeout(refreshDebounceRef.current);
@@ -406,19 +407,25 @@ export function AgentDetailPage({
 
   const renderTabContent = (tab: TabKey) => {
     switch (tab) {
+      case "live":
+        return (
+          <ScreenTab
+            agentId={agent.id}
+            sendWsMessage={sendWsMessage}
+            dashboardRole={dashboardRole}
+          />
+        );
       case "activity":
         return (
           <ActivityTimeline
             sessions={sessions}
             loading={loading}
             onRefresh={loadActivityData}
-            highlightTimestamp={effectiveHighlightTimestamp}
+            highlightTimestamp={effectiveHighlightTimestamp ?? null}
           />
         );
       case "specs":
         return <SpecsTab agentId={agent.id} cachedInfo={resolvedInfo} agentOnline={agent.online} />;
-      case "screen":
-        return <ScreenTab agentId={agent.id} sendWsMessage={sendWsMessage} dashboardRole={dashboardRole} />;
       case "software":
         return (
           <SoftwareTab
@@ -476,6 +483,22 @@ export function AgentDetailPage({
     const content =
       activeSection === section
         ? (() => {
+            if (section === "live") {
+              return (
+                <SpaceBetween size="l">
+                  <SegmentedControl
+                    label="View"
+                    selectedId={activeTab}
+                    options={AGENT_LIVE_SUBTABS.map((id) => ({
+                      id,
+                      text: id === "live" ? "Screen" : "Activity",
+                    }))}
+                    onChange={({ detail }) => onTabChange(detail.selectedId as TabKey)}
+                  />
+                  {renderTabContent(activeTab)}
+                </SpaceBetween>
+              );
+            }
             if (section === "system") {
               return (
                 <SpaceBetween size="l">
@@ -516,6 +539,7 @@ export function AgentDetailPage({
       id: section,
       label: <AgentSectionTabLabel section={section} />,
       content,
+      contentRenderStrategy: "active" as const,
     };
   });
 

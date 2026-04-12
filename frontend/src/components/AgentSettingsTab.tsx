@@ -16,6 +16,7 @@ import Table from "@cloudscape-design/components/table";
 import Toggle from "@cloudscape-design/components/toggle";
 import type { AgentGroup, AgentGroupMembership, RetentionPolicy } from "../lib/types";
 import { api } from "../lib/api";
+import { useServerVersionPayload } from "../lib/serverVersionStore";
 import { AGENT_ICON_DEFS, AGENT_ICON_MAP, type AgentIconKey, isAgentIconKey } from "../lib/agentIcons";
 import {
   daysToField,
@@ -157,7 +158,8 @@ export function AgentSettingsTab({
   const [autoUpdOk, setAutoUpdOk] = useState<string | null>(null);
   const [autoUpdGlobal, setAutoUpdGlobal] = useState<boolean | null>(null);
   const [autoUpdOverride, setAutoUpdOverride] = useState<{ enabled: boolean } | null>(null);
-  const [latestAgentVersion, setLatestAgentVersion] = useState<string | null>(null);
+  const versionPayload = useServerVersionPayload();
+  const latestAgentVersion = versionPayload?.latest_agent_version ?? null;
   const [updNow, setUpdNow] = useState(false);
   const [updNowErr, setUpdNowErr] = useState<string | null>(null);
   const [updNowOk, setUpdNowOk] = useState<string | null>(null);
@@ -169,6 +171,10 @@ export function AgentSettingsTab({
   const [grpOk, setGrpOk] = useState<string | null>(null);
   const [addGroupPick, setAddGroupPick] = useState<string>("");
   const [grpBusy, setGrpBusy] = useState(false);
+
+  useEffect(() => {
+    void api.settingsVersionGet().catch(() => {});
+  }, []);
 
   const refreshAgentGroups = useCallback(() => {
     if (!isAdmin) return;
@@ -271,9 +277,8 @@ export function AgentSettingsTab({
       api.localUiPasswordAgentGet(agentId),
       api.agentIconGet(agentId),
       api.agentAutoUpdateAgentGet(agentId),
-      api.settingsVersionGet(),
     ])
-      .then(([{ global, override }, localUi, icon, autoUpd, versions]) => {
+      .then(([{ global, override }, localUi, icon, autoUpd]) => {
         if (cancelled) return;
         setAgGlobal(global);
         const o = override ?? {
@@ -291,7 +296,6 @@ export function AgentSettingsTab({
         setAgentIcon(isAgentIconKey(icon.icon) ? icon.icon : "monitor");
         setAutoUpdGlobal(autoUpd.global.enabled);
         setAutoUpdOverride(autoUpd.override);
-        setLatestAgentVersion(versions.latest_agent_version);
       })
       .catch((e) => {
         if (!cancelled) setErr(String(e));

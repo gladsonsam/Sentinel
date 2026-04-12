@@ -41,7 +41,11 @@ pub async fn agents_live(
     };
 
     let Some(supplied) = bearer_token(&headers) else {
-        return (StatusCode::UNAUTHORIZED, "missing Authorization: Bearer token").into_response();
+        return (
+            StatusCode::UNAUTHORIZED,
+            "missing Authorization: Bearer token",
+        )
+            .into_response();
     };
 
     if !token_ok(expected, supplied) {
@@ -52,11 +56,7 @@ pub async fn agents_live(
         Ok(r) => r,
         Err(e) => {
             tracing::warn!(error = %e, "integration agents_live: list_agents failed");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "database error",
-            )
-                .into_response();
+            return (StatusCode::INTERNAL_SERVER_ERROR, "database error").into_response();
         }
     };
 

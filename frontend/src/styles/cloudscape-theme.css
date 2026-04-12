@@ -200,11 +200,204 @@
   max-inline-size: none;
 }
 
-/* Account menu trigger: name + role on two lines (newline in TopNav `text`). */
-#sentinel-top-nav.sentinel-top-nav [class*="utility-type-menu-dropdown"] button[class*="awsui_button"] > span[class*="awsui_text"] {
-  white-space: pre-line;
-  line-height: 1.25;
-  text-align: start;
+/* Account dropdown trigger: custom avatar in icon slot (photo / Lucide / initials) */
+#sentinel-top-nav.sentinel-top-nav [class*="awsui_utility-type-menu-dropdown"] [class*="awsui_icon"] .sentinel-top-nav-account-avatar {
+  flex-shrink: 0;
+}
+
+#sentinel-top-nav.sentinel-top-nav .sentinel-top-nav-account-avatar.sentinel-user-avatar--initials {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  line-height: 1;
+  font-weight: 600;
+}
+
+/* Slightly taller top bar on narrow viewports (touch targets + breathing room). */
+@media (max-width: 768px) {
+  #sentinel-top-nav.sentinel-top-nav [class*="awsui_padding-box"] {
+    min-block-size: 52px;
+    padding-block: 10px;
+    box-sizing: border-box;
+  }
+}
+
+/* Agent overview root (cards fill the content area). */
+.sentinel-overview-root {
+  position: relative;
+  min-width: 0;
+}
+
+/* Account menu (TopNav user dropdown): server version — flat strip, full width (no inset rounded card) */
+.sentinel-account-menu-version {
+  margin: 0;
+  padding: 12px 16px 12px;
+  border-radius: 0;
+  border: none;
+  border-bottom: 1px solid var(--awsui-color-border-divider-default);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--awsui-color-text-status-info, #0972d3) 10%, transparent) 0%,
+    var(--awsui-color-background-input-default, var(--awsui-color-background-container-content)) 55%,
+    var(--awsui-color-background-container-content) 100%
+  );
+  box-sizing: border-box;
+  max-width: none;
+  width: 100%;
+}
+
+.awsui-dark-mode .sentinel-account-menu-version {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--awsui-color-text-status-info, #539fe5) 14%, transparent) 0%,
+    color-mix(in srgb, var(--awsui-color-background-container-content) 92%, #0a1324) 50%,
+    var(--awsui-color-background-container-content) 100%
+  );
+}
+
+.sentinel-account-menu-version--update {
+  border-bottom-color: color-mix(
+    in srgb,
+    var(--awsui-color-text-status-warning, #d9a000) 45%,
+    var(--awsui-color-border-divider-default)
+  );
+  box-shadow: none;
+  border-left: 3px solid var(--awsui-color-text-status-warning, #d9a000);
+  padding-left: 13px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--awsui-color-text-status-warning, #d9a000) 18%, transparent) 0%,
+    color-mix(in srgb, var(--awsui-color-text-status-info, #0972d3) 6%, transparent) 38%,
+    var(--awsui-color-background-input-default, var(--awsui-color-background-container-content)) 100%
+  );
+}
+
+.awsui-dark-mode .sentinel-account-menu-version--update {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--awsui-color-text-status-warning, #e0c349) 20%, transparent) 0%,
+    color-mix(in srgb, var(--awsui-color-text-status-info, #539fe5) 10%, transparent) 40%,
+    var(--awsui-color-background-container-content) 100%
+  );
+}
+
+/* Bleed to the dropdown panel edges (cancels list + panel inset) */
+#sentinel-top-nav [class*="awsui_dropdown-content"] li[data-testid="sentinel_menu_server_version"] .sentinel-account-menu-version {
+  margin-inline: calc(-1 * var(--space-s, 12px));
+  width: calc(100% + 2 * var(--space-s, 12px));
+  padding-inline: calc(16px + var(--space-s, 12px));
+}
+
+#sentinel-top-nav [class*="awsui_dropdown-content"] li[data-testid="sentinel_menu_server_version"] .sentinel-account-menu-version--update {
+  padding-left: calc(13px + var(--space-s, 12px));
+}
+
+/* First row: square hit target so focus/hover isn’t a rounded capsule around a square block */
+#sentinel-top-nav li[data-testid="sentinel_menu_server_version"] {
+  border-radius: 0 !important;
+}
+
+#sentinel-top-nav li[data-testid="sentinel_menu_server_version"][class*="awsui_highlighted"] {
+  background-color: transparent !important;
+  border-color: transparent !important;
+}
+
+#sentinel-top-nav
+  li[data-testid="sentinel_menu_server_version"][class*="awsui_highlighted"]
+  .sentinel-account-menu-version {
+  background-color: var(--awsui-color-background-dropdown-item-hover, rgba(0, 0, 0, 0.06));
+}
+
+.awsui-dark-mode
+  #sentinel-top-nav
+  li[data-testid="sentinel_menu_server_version"][class*="awsui_highlighted"]
+  .sentinel-account-menu-version {
+  background-color: var(--awsui-color-background-dropdown-item-hover, rgba(255, 255, 255, 0.06));
+}
+
+/* No focus ring on server row (hover fill is enough; avoids double box vs. flat strip) */
+#sentinel-top-nav li[data-testid="sentinel_menu_server_version"][class*="awsui_is-focused"] {
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+#sentinel-top-nav li[data-testid="sentinel_menu_server_version"] span[class*="awsui_menu-item"]:focus,
+#sentinel-top-nav li[data-testid="sentinel_menu_server_version"] span[class*="awsui_menu-item"]:focus-visible {
+  outline: none;
+}
+
+.sentinel-account-menu-version--loading {
+  opacity: 0.92;
+}
+
+.sentinel-account-menu-version__eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--awsui-color-text-body-secondary);
+  margin-bottom: 4px;
+}
+
+.sentinel-account-menu-version__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  min-width: 0;
+}
+
+.sentinel-account-menu-version__ver {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--awsui-color-text-body-default);
+  font-variant-numeric: tabular-nums;
+}
+
+.sentinel-account-menu-version__pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--awsui-color-text-status-warning, #b2911c);
+  background: color-mix(in srgb, var(--awsui-color-text-status-warning, #d9a000) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--awsui-color-text-status-warning, #d9a000) 35%, transparent);
+}
+
+.awsui-dark-mode .sentinel-account-menu-version__pill {
+  color: var(--awsui-color-text-status-warning, #f0d060);
+}
+
+.sentinel-account-menu-version__ok {
+  font-size: 12px;
+  color: var(--awsui-color-text-body-secondary);
+}
+
+.sentinel-account-menu-version__muted {
+  font-size: 13px;
+  color: var(--awsui-color-text-body-secondary);
+}
+
+.sentinel-account-menu-version__latest {
+  margin-top: 8px;
+  font-size: 12px;
+  line-height: 1.35;
+  font-weight: 600;
+  color: var(--awsui-color-text-body-default);
+}
+
+.sentinel-account-menu-version__latest--muted {
+  font-weight: 500;
+  color: var(--awsui-color-text-body-secondary);
+}
+@media (max-width: 768px) {
+  .sentinel-overview-cards-header {
+    padding-top: 0.5rem;
+    padding-bottom: 0.75rem !important;
+  }
 }
 
 /* Custom component styles */
@@ -408,20 +601,23 @@
   margin-top: var(--sentinel-section-gap);
 }
 
-/* Screen viewer */
+/* Screen viewer: height follows the MJPEG frame (no letterboxing under a fixed min-height). */
 .sentinel-screen-viewer {
   position: relative;
   background: #000;
   border-radius: var(--awsui-border-radius-container);
   overflow: hidden;
   width: 100%;
-  min-height: 320px;
+  min-height: 0;
+  flex: 0 0 auto;
+  align-self: flex-start;
 }
 
 .sentinel-screen-frame {
   position: relative;
   width: 100%;
-  height: 100%;
+  display: block;
+  line-height: 0;
 }
 
 .sentinel-screen-image {

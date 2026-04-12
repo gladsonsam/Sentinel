@@ -7,9 +7,9 @@
 use anyhow::Result;
 use chrono::{DateTime, TimeZone, Utc};
 use serde::Serialize;
-use std::ops::DerefMut;
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
+use std::ops::DerefMut;
 use uuid::Uuid;
 
 use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
@@ -101,6 +101,7 @@ pub struct WindowTopRow {
 pub struct DashboardUserRow {
     pub id: Uuid,
     pub username: String,
+    pub display_name: String,
     pub role: String,
     pub display_icon: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -173,17 +174,21 @@ pub async fn dashboard_username_taken_by_other(
 pub async fn dashboard_user_get_profile_bits(
     pool: &PgPool,
     user_id: Uuid,
-) -> Result<Option<(String, Option<String>)>> {
-    let row = sqlx::query("SELECT username, display_icon FROM dashboard_users WHERE id = $1")
-        .bind(user_id)
-        .fetch_optional(pool)
-        .await?;
+) -> Result<Option<(String, Option<String>, String)>> {
+    let row = sqlx::query(
+        "SELECT username, display_icon, display_name FROM dashboard_users WHERE id = $1",
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?;
     Ok(row.map(|r| {
         (
             r.try_get::<String, _>("username")
                 .unwrap_or_else(|_| "".to_string()),
             r.try_get::<Option<String>, _>("display_icon")
                 .unwrap_or(None),
+            r.try_get::<String, _>("display_name")
+                .unwrap_or_else(|_| "".to_string()),
         )
     }))
 }
@@ -213,7 +218,7 @@ pub async fn dashboard_user_get_by_username(
 
 pub async fn dashboard_user_list(pool: &PgPool) -> Result<Vec<DashboardUserRow>> {
     let rows = sqlx::query(
-        "SELECT id, username, role, display_icon, created_at FROM dashboard_users ORDER BY lower(username) ASC",
+        "SELECT id, username, display_name, role, display_icon, created_at FROM dashboard_users ORDER BY lower(username) ASC",
     )
     .fetch_all(pool)
     .await?;
@@ -223,13 +228,12 @@ pub async fn dashboard_user_list(pool: &PgPool) -> Result<Vec<DashboardUserRow>>
         .map(|r| DashboardUserRow {
             id: r.try_get("id").unwrap_or_default(),
             username: r.try_get("username").unwrap_or_else(|_| "".to_string()),
+            display_name: r.try_get("display_name").unwrap_or_else(|_| "".to_string()),
             role: r.try_get("role").unwrap_or_else(|_| "viewer".to_string()),
             display_icon: r
                 .try_get::<Option<String>, _>("display_icon")
                 .unwrap_or(None),
-            created_at: r
-                .try_get("created_at")
-                .unwrap_or_else(|_| Utc::now()),
+            created_at: r.try_get("created_at").unwrap_or_else(|_| Utc::now()),
         })
         .collect())
 }
@@ -239,20 +243,26 @@ pub async fn dashboard_user_create(
     username: &str,
     password_plain: &str,
     role: &str,
+    display_name: &str,
 ) -> Result<Uuid> {
     let hash = hash_dashboard_password(password_plain)?;
     let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO dashboard_users (username, password_hash, role) VALUES ($1, $2, $3) RETURNING id",
+        "INSERT INTO dashboard_users (username, password_hash, role, display_name) VALUES ($1, $2, $3, $4) RETURNING id",
     )
     .bind(username)
     .bind(hash)
     .bind(role)
+    .bind(display_name)
     .fetch_one(pool)
     .await?;
     Ok(id)
 }
 
-pub async fn dashboard_user_set_password(pool: &PgPool, user_id: Uuid, password_plain: &str) -> Result<()> {
+pub async fn dashboard_user_set_password(
+    pool: &PgPool,
+    user_id: Uuid,
+    password_plain: &str,
+) -> Result<()> {
     let hash = hash_dashboard_password(password_plain)?;
     sqlx::query("UPDATE dashboard_users SET password_hash = $2 WHERE id = $1")
         .bind(user_id)
@@ -319,11 +329,11 @@ pub async fn dashboard_session_touch(pool: &PgPool, token_sha256_hex: &str) -> R
 pub async fn dashboard_session_get_user(
     pool: &PgPool,
     token_sha256_hex: &str,
-) -> Result<Option<(Uuid, String, String, Option<String>, String)>> {
-    // Returns (user_id, username, role, display_icon, csrf_token) when session exists and is not expired.
+) -> Result<Option<(Uuid, String, String, String, Option<String>, String)>> {
+    // Returns (user_id, username, role, display_name, display_icon, csrf_token) when session exists and is not expired.
     let row = sqlx::query(
         r#"
-        SELECT u.id AS user_id, u.username, u.role, u.display_icon, s.csrf_token
+        SELECT u.id AS user_id, u.username, u.role, u.display_name, u.display_icon, s.csrf_token
         FROM dashboard_sessions s
         JOIN dashboard_users u ON u.id = s.user_id
         WHERE s.token_sha256_hex = $1
@@ -341,6 +351,8 @@ pub async fn dashboard_session_get_user(
                 .unwrap_or_else(|_| "".to_string()),
             r.try_get::<String, _>("role")
                 .unwrap_or_else(|_| "viewer".to_string()),
+            r.try_get::<String, _>("display_name")
+                .unwrap_or_else(|_| "".to_string()),
             r.try_get::<Option<String>, _>("display_icon")
                 .unwrap_or(None),
             r.try_get::<String, _>("csrf_token")
@@ -349,7 +361,11 @@ pub async fn dashboard_session_get_user(
     }))
 }
 
-pub async fn dashboard_user_set_username(pool: &PgPool, user_id: Uuid, username: &str) -> Result<()> {
+pub async fn dashboard_user_set_username(
+    pool: &PgPool,
+    user_id: Uuid,
+    username: &str,
+) -> Result<()> {
     let n = sqlx::query("UPDATE dashboard_users SET username = $2 WHERE id = $1")
         .bind(user_id)
         .bind(username)
@@ -379,12 +395,33 @@ pub async fn dashboard_user_set_display_icon(
     Ok(())
 }
 
-pub async fn bootstrap_default_admin(pool: &PgPool, username: &str, password_plain: &str) -> Result<()> {
+pub async fn dashboard_user_set_display_name(
+    pool: &PgPool,
+    user_id: Uuid,
+    display_name: &str,
+) -> Result<()> {
+    let n = sqlx::query("UPDATE dashboard_users SET display_name = $2 WHERE id = $1")
+        .bind(user_id)
+        .bind(display_name)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    if n == 0 {
+        return Err(anyhow::anyhow!("user not found"));
+    }
+    Ok(())
+}
+
+pub async fn bootstrap_default_admin(
+    pool: &PgPool,
+    username: &str,
+    password_plain: &str,
+) -> Result<()> {
     if dashboard_user_count(pool).await? > 0 {
         return Ok(());
     }
     // First boot: create the initial admin user.
-    let _ = dashboard_user_create(pool, username, password_plain, "admin").await?;
+    let _ = dashboard_user_create(pool, username, password_plain, "admin", "").await?;
     Ok(())
 }
 
@@ -448,7 +485,10 @@ pub struct DashboardIdentityRow {
     pub created_at: DateTime<Utc>,
 }
 
-pub async fn dashboard_identities_for_user(pool: &PgPool, user_id: Uuid) -> Result<Vec<DashboardIdentityRow>> {
+pub async fn dashboard_identities_for_user(
+    pool: &PgPool,
+    user_id: Uuid,
+) -> Result<Vec<DashboardIdentityRow>> {
     let rows = sqlx::query(
         r#"
         SELECT id, issuer, subject, preferred_username, email, name, last_login_at, created_at
@@ -537,7 +577,11 @@ pub async fn touch_agent(pool: &PgPool, id: Uuid) -> Result<()> {
 }
 
 /// Upsert the latest system/specs snapshot for an agent.
-pub async fn upsert_agent_info(pool: &PgPool, agent_id: Uuid, info: &serde_json::Value) -> Result<()> {
+pub async fn upsert_agent_info(
+    pool: &PgPool,
+    agent_id: Uuid,
+    info: &serde_json::Value,
+) -> Result<()> {
     sqlx::query(
         r#"
         INSERT INTO agent_info (agent_id, info, updated_at)
@@ -770,7 +814,12 @@ pub async fn insert_activity(pool: &PgPool, agent: Uuid, v: &serde_json::Value) 
 
 // ─── App icons (per exe) ─────────────────────────────────────────────────────
 
-pub async fn upsert_app_icon(pool: &PgPool, agent: Uuid, exe_name: &str, png_bytes: &[u8]) -> Result<()> {
+pub async fn upsert_app_icon(
+    pool: &PgPool,
+    agent: Uuid,
+    exe_name: &str,
+    png_bytes: &[u8],
+) -> Result<()> {
     // Keep exe_name small-ish; the WS layer also validates, but DB functions should be safe too.
     let exe = exe_name.trim().to_lowercase();
     if exe.is_empty() {
@@ -795,27 +844,33 @@ pub async fn upsert_app_icon(pool: &PgPool, agent: Uuid, exe_name: &str, png_byt
     Ok(())
 }
 
-pub async fn get_app_icon_png(pool: &PgPool, agent: Uuid, exe_name: &str) -> Result<Option<Vec<u8>>> {
+pub async fn get_app_icon_png(
+    pool: &PgPool,
+    agent: Uuid,
+    exe_name: &str,
+) -> Result<Option<Vec<u8>>> {
     let exe = exe_name.trim().to_lowercase();
     if exe.is_empty() {
         return Ok(None);
     }
-    let v: Option<Vec<u8>> = sqlx::query_scalar("SELECT png_bytes FROM app_icons WHERE agent_id=$1 AND exe_name=$2")
-        .bind(agent)
-        .bind(&exe)
-        .fetch_optional(pool)
-        .await?
-        .flatten();
+    let v: Option<Vec<u8>> =
+        sqlx::query_scalar("SELECT png_bytes FROM app_icons WHERE agent_id=$1 AND exe_name=$2")
+            .bind(agent)
+            .bind(&exe)
+            .fetch_optional(pool)
+            .await?
+            .flatten();
     Ok(v)
 }
 
 // ─── List / query helpers (used by API) ───────────────────────────────────────
 
 pub async fn list_agents(pool: &PgPool) -> Result<Vec<serde_json::Value>> {
-    let rows =
-        sqlx::query("SELECT id, name, first_seen, last_seen, icon FROM agents ORDER BY last_seen DESC")
-            .fetch_all(pool)
-            .await?;
+    let rows = sqlx::query(
+        "SELECT id, name, first_seen, last_seen, icon FROM agents ORDER BY last_seen DESC",
+    )
+    .fetch_all(pool)
+    .await?;
 
     Ok(rows
         .iter()
@@ -953,7 +1008,9 @@ pub async fn query_audit_log(
         .map(|r| AuditRecord {
             id: r.try_get("id").unwrap_or_default(),
             ts: r.try_get("ts").unwrap_or_else(|_| Utc::now()),
-            actor: r.try_get("actor").unwrap_or_else(|_| "dashboard".to_string()),
+            actor: r
+                .try_get("actor")
+                .unwrap_or_else(|_| "dashboard".to_string()),
             client_ip: r.try_get("client_ip").ok(),
             agent_id: r.try_get("agent_id").ok(),
             action: r.try_get("action").unwrap_or_default(),
@@ -1033,9 +1090,10 @@ pub async fn query_top_windows(
 /// for the `public` schema. Partition children are omitted — their storage is counted on the
 /// parent (`pg_total_relation_size` on a partitioned table includes all partitions).
 pub async fn query_database_storage(pool: &PgPool) -> Result<serde_json::Value> {
-    let db_size_bytes: i64 = sqlx::query_scalar("SELECT pg_database_size(current_database())::bigint")
-        .fetch_one(pool)
-        .await?;
+    let db_size_bytes: i64 =
+        sqlx::query_scalar("SELECT pg_database_size(current_database())::bigint")
+            .fetch_one(pool)
+            .await?;
 
     let table_rows = sqlx::query(
         r#"
@@ -1232,17 +1290,20 @@ pub async fn clear_agent_history(pool: &PgPool, agent: Uuid) -> Result<u64> {
         .await?
         .rows_affected();
 
-    Ok(win.saturating_add(keys).saturating_add(urls).saturating_add(activity).saturating_add(sessions))
+    Ok(win
+        .saturating_add(keys)
+        .saturating_add(urls)
+        .saturating_add(activity)
+        .saturating_add(sessions))
 }
 
 // ─── Retention settings & pruning ─────────────────────────────────────────────
 
 pub async fn get_retention_global(pool: &PgPool) -> Result<RetentionPolicy> {
-    let row = sqlx::query(
-        "SELECT keylog_days, window_days, url_days FROM retention_global WHERE id = 1",
-    )
-    .fetch_one(pool)
-    .await?;
+    let row =
+        sqlx::query("SELECT keylog_days, window_days, url_days FROM retention_global WHERE id = 1")
+            .fetch_one(pool)
+            .await?;
 
     Ok(RetentionPolicy {
         keylog_days: row.try_get::<Option<i32>, _>("keylog_days").unwrap_or(None),
@@ -1263,7 +1324,10 @@ pub async fn set_retention_global(pool: &PgPool, p: &RetentionPolicy) -> Result<
     Ok(())
 }
 
-pub async fn get_retention_agent(pool: &PgPool, agent: Uuid) -> Result<Option<RetentionAgentOverride>> {
+pub async fn get_retention_agent(
+    pool: &PgPool,
+    agent: Uuid,
+) -> Result<Option<RetentionAgentOverride>> {
     let row = sqlx::query(
         "SELECT keylog_days, window_days, url_days FROM retention_agent WHERE agent_id = $1",
     )
@@ -1278,7 +1342,11 @@ pub async fn get_retention_agent(pool: &PgPool, agent: Uuid) -> Result<Option<Re
     }))
 }
 
-pub async fn set_retention_agent(pool: &PgPool, agent: Uuid, p: &RetentionAgentOverride) -> Result<()> {
+pub async fn set_retention_agent(
+    pool: &PgPool,
+    agent: Uuid,
+    p: &RetentionAgentOverride,
+) -> Result<()> {
     let all_inherit = p.keylog_days.is_none() && p.window_days.is_none() && p.url_days.is_none();
     if all_inherit {
         sqlx::query("DELETE FROM retention_agent WHERE agent_id = $1")
@@ -1320,15 +1388,18 @@ pub async fn clear_retention_agent(pool: &PgPool, agent: Uuid) -> Result<()> {
 pub async fn prune_telemetry_by_retention(pool: &PgPool) -> Result<()> {
     let global = get_retention_global(pool).await?;
 
-    let agent_ids: Vec<Uuid> =
-        sqlx::query_scalar("SELECT id FROM agents").fetch_all(pool).await?;
+    let agent_ids: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM agents")
+        .fetch_all(pool)
+        .await?;
 
     for aid in agent_ids {
-        let ov = get_retention_agent(pool, aid).await?.unwrap_or(RetentionAgentOverride {
-            keylog_days: None,
-            window_days: None,
-            url_days: None,
-        });
+        let ov = get_retention_agent(pool, aid)
+            .await?
+            .unwrap_or(RetentionAgentOverride {
+                keylog_days: None,
+                window_days: None,
+                url_days: None,
+            });
 
         let key_d = ov.keylog_days.or(global.keylog_days);
         let win_d = ov.window_days.or(global.window_days);
@@ -1449,21 +1520,18 @@ pub fn agent_ui_password_is_set(hash: Option<&str>) -> bool {
 }
 
 pub async fn get_local_ui_global_hash(pool: &PgPool) -> Result<Option<String>> {
-    let v: Option<String> = sqlx::query_scalar(
-        "SELECT password_hash_sha256 FROM agent_local_ui_password WHERE id = 1",
-    )
-    .fetch_one(pool)
-    .await?;
+    let v: Option<String> =
+        sqlx::query_scalar("SELECT password_hash_sha256 FROM agent_local_ui_password WHERE id = 1")
+            .fetch_one(pool)
+            .await?;
     Ok(v)
 }
 
 pub async fn set_local_ui_global_hash(pool: &PgPool, hash: Option<&str>) -> Result<()> {
-    sqlx::query(
-        "UPDATE agent_local_ui_password SET password_hash_sha256 = $1 WHERE id = 1",
-    )
-    .bind(hash)
-    .execute(pool)
-    .await?;
+    sqlx::query("UPDATE agent_local_ui_password SET password_hash_sha256 = $1 WHERE id = 1")
+        .bind(hash)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -1478,7 +1546,11 @@ pub async fn get_local_ui_override_hash(pool: &PgPool, agent_id: Uuid) -> Result
     Ok(v.flatten())
 }
 
-pub async fn set_local_ui_override_hash(pool: &PgPool, agent_id: Uuid, hash: Option<&str>) -> Result<()> {
+pub async fn set_local_ui_override_hash(
+    pool: &PgPool,
+    agent_id: Uuid,
+    hash: Option<&str>,
+) -> Result<()> {
     match hash {
         None => {
             sqlx::query("DELETE FROM agent_local_ui_password_override WHERE agent_id = $1")
@@ -1514,11 +1586,10 @@ pub async fn clear_local_ui_override(pool: &PgPool, agent_id: Uuid) -> Result<()
 
 /// Effective hash pushed to the agent (override wins when set).
 pub async fn effective_agent_ui_password_hash(pool: &PgPool, agent_id: Uuid) -> Result<String> {
-    let global: Option<String> = sqlx::query_scalar(
-        "SELECT password_hash_sha256 FROM agent_local_ui_password WHERE id = 1",
-    )
-    .fetch_one(pool)
-    .await?;
+    let global: Option<String> =
+        sqlx::query_scalar("SELECT password_hash_sha256 FROM agent_local_ui_password WHERE id = 1")
+            .fetch_one(pool)
+            .await?;
 
     let global_hex = match global {
         Some(h) if !h.is_empty() => h,
@@ -1560,7 +1631,11 @@ pub async fn get_agent_auto_update_override(pool: &PgPool, agent_id: Uuid) -> Re
     Ok(v)
 }
 
-pub async fn set_agent_auto_update_override(pool: &PgPool, agent_id: Uuid, enabled: bool) -> Result<()> {
+pub async fn set_agent_auto_update_override(
+    pool: &PgPool,
+    agent_id: Uuid,
+    enabled: bool,
+) -> Result<()> {
     sqlx::query(
         r#"
         INSERT INTO agent_auto_update_override (agent_id, enabled)
@@ -1678,12 +1753,11 @@ pub async fn list_agent_software_paged(
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<AgentSoftwareRow>, i64)> {
-    let total: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*)::bigint FROM agent_software WHERE agent_id = $1",
-    )
-    .bind(agent_id)
-    .fetch_one(pool)
-    .await?;
+    let total: i64 =
+        sqlx::query_scalar("SELECT COUNT(*)::bigint FROM agent_software WHERE agent_id = $1")
+            .bind(agent_id)
+            .fetch_one(pool)
+            .await?;
 
     let rows = sqlx::query(
         r#"
@@ -1718,12 +1792,11 @@ pub async fn latest_software_capture_time(
     pool: &PgPool,
     agent_id: Uuid,
 ) -> Result<Option<DateTime<Utc>>> {
-    let v: Option<DateTime<Utc>> = sqlx::query_scalar(
-        "SELECT MAX(captured_at) FROM agent_software WHERE agent_id = $1",
-    )
-    .bind(agent_id)
-    .fetch_one(pool)
-    .await?;
+    let v: Option<DateTime<Utc>> =
+        sqlx::query_scalar("SELECT MAX(captured_at) FROM agent_software WHERE agent_id = $1")
+            .bind(agent_id)
+            .fetch_one(pool)
+            .await?;
     Ok(v)
 }
 
@@ -1794,14 +1867,12 @@ pub async fn agent_group_rename(
     name: &str,
     description: &str,
 ) -> Result<bool> {
-    let r = sqlx::query(
-        "UPDATE agent_groups SET name = $2, description = $3 WHERE id = $1",
-    )
-    .bind(id)
-    .bind(name.trim())
-    .bind(description)
-    .execute(pool)
-    .await?;
+    let r = sqlx::query("UPDATE agent_groups SET name = $2, description = $3 WHERE id = $1")
+        .bind(id)
+        .bind(name.trim())
+        .bind(description)
+        .execute(pool)
+        .await?;
     Ok(r.rows_affected() > 0)
 }
 
@@ -1824,14 +1895,16 @@ pub async fn agent_group_add_members(
     Ok(n)
 }
 
-pub async fn agent_group_remove_member(pool: &PgPool, group_id: Uuid, agent_id: Uuid) -> Result<bool> {
-    let r = sqlx::query(
-        "DELETE FROM agent_group_members WHERE group_id = $1 AND agent_id = $2",
-    )
-    .bind(group_id)
-    .bind(agent_id)
-    .execute(pool)
-    .await?;
+pub async fn agent_group_remove_member(
+    pool: &PgPool,
+    group_id: Uuid,
+    agent_id: Uuid,
+) -> Result<bool> {
+    let r = sqlx::query("DELETE FROM agent_group_members WHERE group_id = $1 AND agent_id = $2")
+        .bind(group_id)
+        .bind(agent_id)
+        .execute(pool)
+        .await?;
     Ok(r.rows_affected() > 0)
 }
 
@@ -1853,7 +1926,10 @@ pub struct AgentGroupForAgentRow {
     pub description: String,
 }
 
-pub async fn agent_groups_for_agent(pool: &PgPool, agent_id: Uuid) -> Result<Vec<AgentGroupForAgentRow>> {
+pub async fn agent_groups_for_agent(
+    pool: &PgPool,
+    agent_id: Uuid,
+) -> Result<Vec<AgentGroupForAgentRow>> {
     let rows = sqlx::query(
         r#"
         SELECT g.id, g.name, g.description
@@ -2174,7 +2250,11 @@ pub async fn alert_rule_event_insert(
     Ok(id)
 }
 
-pub async fn alert_rule_event_screenshot_upsert(pool: &PgPool, event_id: i64, jpeg: &[u8]) -> Result<()> {
+pub async fn alert_rule_event_screenshot_upsert(
+    pool: &PgPool,
+    event_id: i64,
+    jpeg: &[u8],
+) -> Result<()> {
     sqlx::query(
         r#"
         INSERT INTO alert_rule_event_screenshots (event_id, jpeg)
@@ -2191,14 +2271,16 @@ pub async fn alert_rule_event_screenshot_upsert(pool: &PgPool, event_id: i64, jp
     Ok(())
 }
 
-pub async fn alert_rule_event_screenshot_get(pool: &PgPool, event_id: i64) -> Result<Option<Vec<u8>>> {
-    let v: Option<Vec<u8>> = sqlx::query_scalar(
-        "SELECT jpeg FROM alert_rule_event_screenshots WHERE event_id = $1",
-    )
-    .bind(event_id)
-    .fetch_optional(pool)
-    .await?
-    .flatten();
+pub async fn alert_rule_event_screenshot_get(
+    pool: &PgPool,
+    event_id: i64,
+) -> Result<Option<Vec<u8>>> {
+    let v: Option<Vec<u8>> =
+        sqlx::query_scalar("SELECT jpeg FROM alert_rule_event_screenshots WHERE event_id = $1")
+            .bind(event_id)
+            .fetch_optional(pool)
+            .await?
+            .flatten();
     Ok(v)
 }
 
@@ -2235,7 +2317,9 @@ pub async fn alert_rule_events_list_for_agent(
             channel: r.try_get("channel")?,
             snippet: r.try_get("snippet")?,
             has_screenshot: r.try_get::<bool, _>("has_screenshot").unwrap_or(false),
-            screenshot_requested: r.try_get::<bool, _>("screenshot_requested").unwrap_or(false),
+            screenshot_requested: r
+                .try_get::<bool, _>("screenshot_requested")
+                .unwrap_or(false),
             created_at: r.try_get("created_at")?,
         });
     }
@@ -2278,7 +2362,9 @@ pub async fn alert_rule_events_list_for_rule(
             channel: row.try_get("channel")?,
             snippet: row.try_get("snippet")?,
             has_screenshot: row.try_get::<bool, _>("has_screenshot").unwrap_or(false),
-            screenshot_requested: row.try_get::<bool, _>("screenshot_requested").unwrap_or(false),
+            screenshot_requested: row
+                .try_get::<bool, _>("screenshot_requested")
+                .unwrap_or(false),
             created_at: row.try_get("created_at")?,
         });
     }

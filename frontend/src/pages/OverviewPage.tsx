@@ -45,29 +45,31 @@ export function OverviewPage({
 
   return (
     <ContentLayout>
-      {loadingAgents ? (
-        <LoadingAgentsState />
-      ) : hasAgents ? (
-        <AgentCard
-          agents={agents}
-          liveStatus={liveStatus}
-          agentInfo={agentInfo}
-          agentInfoReceivedAtMs={agentInfoReceivedAtMs}
-          onSelectAgent={onSelectAgent}
-          onOpenScreen={onOpenScreen}
-          onRefresh={onRefresh}
-          onBatchWake={onBatchWake}
-          onBulkScript={(ids) => setBulkScriptIds(ids)}
-          onBatchRestart={onBatchRestart}
-          onBatchShutdown={onBatchShutdown}
-          onBulkAddToGroup={
-            adminBulkGroupAssignment ? (ids) => setBulkGroupIds(ids) : undefined
-          }
-          onOpenAgentGroups={onOpenAgentGroups}
-        />
-      ) : (
-        <NoAgentsState />
-      )}
+      <div className="sentinel-overview-root">
+        {loadingAgents ? (
+          <LoadingAgentsState />
+        ) : hasAgents ? (
+          <AgentCard
+            agents={agents}
+            liveStatus={liveStatus}
+            agentInfo={agentInfo}
+            agentInfoReceivedAtMs={agentInfoReceivedAtMs}
+            onSelectAgent={onSelectAgent}
+            onOpenScreen={onOpenScreen}
+            onRefresh={onRefresh}
+            onBatchWake={onBatchWake}
+            onBulkScript={(ids) => setBulkScriptIds(ids)}
+            onBatchRestart={onBatchRestart}
+            onBatchShutdown={onBatchShutdown}
+            onBulkAddToGroup={
+              adminBulkGroupAssignment ? (ids) => setBulkGroupIds(ids) : undefined
+            }
+            onOpenAgentGroups={onOpenAgentGroups}
+          />
+        ) : (
+          <NoAgentsState />
+        )}
+      </div>
       {bulkScriptIds && bulkScriptIds.length > 0 && (
         <BulkScriptModal agentIds={bulkScriptIds} onDismiss={() => setBulkScriptIds(null)} />
       )}

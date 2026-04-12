@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { useServerVersionPayload } from "../../lib/serverVersionStore";
 import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
@@ -19,33 +20,27 @@ interface GeneralConfigProps {
 
 export function GeneralConfig({ agent, info }: GeneralConfigProps) {
   const agentVersion = info?.agent_version || "—";
-  const [latestAgentVersion, setLatestAgentVersion] = useState<string | null>(null);
-  const [versionsLoad, setVersionsLoad] = useState(true);
+  const versionPayload = useServerVersionPayload();
+  const [versionFetchSettled, setVersionFetchSettled] = useState(false);
   const [updateNow, setUpdateNow] = useState(false);
   const [updateNowErr, setUpdateNowErr] = useState<string | null>(null);
   const [updateNowOk, setUpdateNowOk] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    setVersionsLoad(true);
     api
       .settingsVersionGet()
-      .then((v) => {
-        if (cancelled) return;
-        setLatestAgentVersion(v.latest_agent_version);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setLatestAgentVersion(null);
-      })
+      .catch(() => {})
       .finally(() => {
-        if (cancelled) return;
-        setVersionsLoad(false);
+        if (!cancelled) setVersionFetchSettled(true);
       });
     return () => {
       cancelled = true;
     };
   }, []);
+
+  const latestAgentVersion = versionPayload?.latest_agent_version ?? null;
+  const versionsLoad = versionPayload === null && !versionFetchSettled;
 
   const normalizeVersion = (v: string | null | undefined) => {
     const s = (v ?? "").trim();

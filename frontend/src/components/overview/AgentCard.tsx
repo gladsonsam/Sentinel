@@ -191,7 +191,7 @@ export function AgentCard({
         selectionType="multi"
         cardsPerRow={[{ cards: 1 }, { minWidth: 600, cards: 2 }, { minWidth: 900, cards: 3 }]}
         header={
-          <Box padding={{ bottom: "m" }}>
+          <Box padding={{ bottom: "m" }} className="sentinel-overview-cards-header">
             <FullPageHeader
               totalAgents={agentsWithStatus.length}
               selectedCount={selectedItems.length}

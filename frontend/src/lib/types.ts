@@ -222,6 +222,8 @@ export function dashboardRoleLabel(role: DashboardRole): string {
 export interface DashboardSessionUser {
   id: string;
   username: string;
+  /** Optional full name shown in the UI; sign-in uses `username`. */
+  display_name?: string;
   role: DashboardRole;
   /** Lucide key (`icon:lucide:Name`), small JPEG/PNG/WebP/GIF data URL, or legacy short glyph. */
   display_icon?: string | null;
@@ -229,11 +231,12 @@ export interface DashboardSessionUser {
 }
 
 /** Subset passed into the shell / top navigation. */
-export type DashboardNavUser = Pick<DashboardSessionUser, "username" | "role" | "display_icon">;
+export type DashboardNavUser = Pick<DashboardSessionUser, "username" | "display_name" | "role" | "display_icon">;
 
 export interface DashboardUser {
   id: string;
   username: string;
+  display_name?: string;
   role: DashboardRole;
   /** Lucide icon key, photo data URL, or legacy short glyph; initials when unset. */
   display_icon?: string | null;
@@ -295,9 +298,9 @@ export interface AlertRule {
 // ── UI ────────────────────────────────────────────────────────────────────────
 
 export type TabKey =
+  | "live"
   | "activity"
   | "specs"
-  | "screen"
   | "software"
   | "scripts"
   | "keys"

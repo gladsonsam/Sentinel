@@ -52,9 +52,8 @@ fn parse_bool(s: &str) -> bool {
 impl ServerConfig {
     /// Load and validate configuration. Fails fast on invalid values.
     pub fn from_env() -> anyhow::Result<Self> {
-        let database_url = read_env_or_file("DATABASE_URL").unwrap_or_else(|| {
-            "postgres://monitor:monitor@localhost:5432/monitor".to_string()
-        });
+        let database_url = read_env_or_file("DATABASE_URL")
+            .unwrap_or_else(|| "postgres://monitor:monitor@localhost:5432/monitor".to_string());
         if !database_url.starts_with("postgres://") && !database_url.starts_with("postgresql://") {
             anyhow::bail!("DATABASE_URL must be a postgres:// or postgresql:// connection string");
         }
@@ -92,9 +91,10 @@ impl ServerConfig {
             }
         }
 
-        let software_inventory_retention_days: Option<i64> = read_env("SOFTWARE_INVENTORY_RETENTION_DAYS")
-            .map(|s| s.parse())
-            .transpose()?;
+        let software_inventory_retention_days: Option<i64> =
+            read_env("SOFTWARE_INVENTORY_RETENTION_DAYS")
+                .map(|s| s.parse())
+                .transpose()?;
         if let Some(d) = software_inventory_retention_days {
             if d < 1 {
                 anyhow::bail!("SOFTWARE_INVENTORY_RETENTION_DAYS must be >= 1 when set");
@@ -105,7 +105,9 @@ impl ServerConfig {
             .map(|v| parse_bool(&v))
             .unwrap_or(true);
 
-        let log_json = read_env("LOG_JSON").map(|v| parse_bool(&v)).unwrap_or(false);
+        let log_json = read_env("LOG_JSON")
+            .map(|v| parse_bool(&v))
+            .unwrap_or(false);
 
         let api_rate_limit_per_second: u64 = read_env("API_RATE_LIMIT_PER_SECOND")
             .map(|s| s.parse())

@@ -167,13 +167,23 @@ pub async fn on_url_or_keys_event(
     }
 }
 
-async fn capture_and_store_screenshot_for_event(state: &Arc<AppState>, agent_id: Uuid, event_id: i64) {
+async fn capture_and_store_screenshot_for_event(
+    state: &Arc<AppState>,
+    agent_id: Uuid,
+    event_id: i64,
+) {
     // Must have an active WS connection.
     if !state.agent_cmds.lock().unwrap().contains_key(&agent_id) {
         return;
     }
 
-    let prev_seq = state.frames.lock().unwrap().get(&agent_id).map(|f| f.seq).unwrap_or(0);
+    let prev_seq = state
+        .frames
+        .lock()
+        .unwrap()
+        .get(&agent_id)
+        .map(|f| f.seq)
+        .unwrap_or(0);
     let start = serde_json::json!({ "type": "start_capture" });
     if !state.try_send_agent_command_json(agent_id, &start) {
         return;
@@ -200,6 +210,8 @@ async fn capture_and_store_screenshot_for_event(state: &Arc<AppState>, agent_id:
     let stop = serde_json::json!({ "type": "stop_capture" });
     let _ = state.try_send_agent_command_json(agent_id, &stop);
 
-    let Some(j) = jpeg else { return; };
+    let Some(j) = jpeg else {
+        return;
+    };
     let _ = db::alert_rule_event_screenshot_upsert(&state.db, event_id, j.as_ref()).await;
 }

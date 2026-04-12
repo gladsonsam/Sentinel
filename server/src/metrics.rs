@@ -24,10 +24,7 @@ impl AppMetrics {
         let registry = Registry::new();
 
         let http_requests = IntCounterVec::new(
-            Opts::new(
-                "sentinel_http_requests_total",
-                "HTTP requests processed",
-            ),
+            Opts::new("sentinel_http_requests_total", "HTTP requests processed"),
             &["method", "status"],
         )?;
         registry.register(Box::new(http_requests.clone()))?;
@@ -91,10 +88,7 @@ pub async fn metrics_endpoint(metrics: Arc<AppMetrics>) -> impl IntoResponse {
     match metrics.render() {
         Ok(body) => (
             StatusCode::OK,
-            [(
-                axum::http::header::CONTENT_TYPE,
-                prometheus::TEXT_FORMAT,
-            )],
+            [(axum::http::header::CONTENT_TYPE, prometheus::TEXT_FORMAT)],
             body,
         )
             .into_response(),

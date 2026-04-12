@@ -15,18 +15,13 @@ function navLink(id: TabKey): SideNavigationProps.Link {
 /** Collapsible groups keep the sidebar scannable; tab row still lists every view. */
 const NAV_ITEMS: SideNavigationProps.Item[] = [
   navLink("activity"),
+  navLink("live"),
   {
     type: "expandable-link-group",
     text: "System & tools",
     href: "#specs",
     defaultExpanded: true,
-    items: [
-      navLink("specs"),
-      navLink("screen"),
-      navLink("software"),
-      navLink("scripts"),
-      navLink("files"),
-    ],
+    items: [navLink("specs"), navLink("software"), navLink("scripts"), navLink("files")],
   },
   {
     type: "expandable-link-group",
