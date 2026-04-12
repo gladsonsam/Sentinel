@@ -1,0 +1,3 @@
+# SQLx stores SHA384(file bytes) per migration. CRLF vs LF changes the checksum and
+# breaks startup with "migration N was previously applied but has been modified".
+*.sql text eol=lf

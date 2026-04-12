@@ -647,7 +647,8 @@ function SessionItem({
                     display: "inline-flex",
                     alignItems: "center",
                     gap: 8,
-                    padding: "2px 8px",
+                    /* Left padding 0 so icon/title align with exe + subtitle below (they share vtl-card-main’s edge). */
+                    padding: "2px 8px 2px 0",
                     borderRadius: 999,
                     border: "1px solid var(--vtl-border)",
                     background: "transparent",
