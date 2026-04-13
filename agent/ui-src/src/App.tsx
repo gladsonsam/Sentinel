@@ -676,7 +676,7 @@ function SettingsPanel() {
                               type="text"
                             />
                           </FormField>
-                          {discovered.length > 0 ? (
+                          {discovered.length > 1 ? (
                             <FormField label="LAN discovery">
                               <Select
                                 selectedOption={null}
