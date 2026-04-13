@@ -2087,6 +2087,30 @@ pub async fn effective_agent_auto_update_enabled(pool: &PgPool, agent_id: Uuid) 
     Ok(ov.unwrap_or(global))
 }
 
+// ─── Agent internet block (parental controls) ─────────────────────────────────
+
+pub async fn get_agent_internet_blocked(pool: &PgPool, agent_id: Uuid) -> Result<bool> {
+    let v: bool =
+        sqlx::query_scalar("SELECT internet_blocked FROM agents WHERE id = $1")
+            .bind(agent_id)
+            .fetch_one(pool)
+            .await?;
+    Ok(v)
+}
+
+pub async fn set_agent_internet_blocked(
+    pool: &PgPool,
+    agent_id: Uuid,
+    blocked: bool,
+) -> Result<()> {
+    sqlx::query("UPDATE agents SET internet_blocked = $2 WHERE id = $1")
+        .bind(agent_id)
+        .bind(blocked)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 // ─── Installed software inventory ─────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]

@@ -317,4 +317,5 @@ export type TabKey =
   | "urls"
   | "alerts"
   | "files"
+  | "control"
   | "settings";

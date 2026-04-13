@@ -11,6 +11,7 @@ mod auto_update;
 mod groups_and_rules;
 mod helpers;
 mod local_ui;
+mod network_policy;
 mod pagination;
 mod retention;
 mod settings;
@@ -161,6 +162,11 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/agents/:id/update-now",
             post(agents_capture::agent_update_now),
+        )
+        .route(
+            "/agents/:id/internet-blocked",
+            get(network_policy::agent_internet_blocked_get)
+                .put(network_policy::agent_internet_blocked_put),
         )
         .route(
             "/agent-groups",

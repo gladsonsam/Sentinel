@@ -39,6 +39,7 @@ import { PageHeader, type AgentAction } from "../components/detail/PageHeader";
 import { GeneralConfig } from "../components/detail/GeneralConfig";
 import { parseTimestamp } from "../lib/utils";
 import { AgentSettingsTab } from "../components/AgentSettingsTab";
+import { ControlTab } from "../components/tabs/ControlTab";
 import { ActivityTimeline } from "../components/timeline/ActivityTimeline";
 
 interface AgentDetailPageProps {
@@ -461,6 +462,15 @@ export function AgentDetailPage({
         return <FilesTab agentId={agent.id} sendWsMessage={sendWsMessage} />;
       case "logs":
         return <AgentLogsTab agentId={agent.id} />;
+      case "control":
+        return (
+          <ControlTab
+            agentId={agent.id}
+            agentName={agent.name}
+            agentOnline={agent.online}
+            isAdmin={isAdmin}
+          />
+        );
       case "settings":
         return (
           <AgentSettingsTab

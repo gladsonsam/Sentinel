@@ -166,6 +166,18 @@ async fn run(mut ws: WebSocket, name: String, state: Arc<AppState>) {
         }
     }
 
+    // Push network policy so internet block is re-applied after a reboot.
+    if let Ok(blocked) = db::get_agent_internet_blocked(&state.db, agent_id).await {
+        let sync = serde_json::json!({
+            "type": "set_network_policy",
+            "blocked": blocked,
+        })
+        .to_string();
+        if let Err(e) = ws.send(Message::Text(sync)).await {
+            warn!("Failed to push network policy to {name}: {e}");
+        }
+    }
+
     loop {
         tokio::select! {
             msg = ws.recv() => {
@@ -279,6 +291,20 @@ pub async fn push_auto_update_policy_to_all_connected(state: &Arc<AppState>) {
     let ids: Vec<uuid::Uuid> = state.agents.lock().keys().copied().collect();
     for id in ids {
         push_auto_update_policy_to_agent(state, id).await;
+    }
+}
+
+pub async fn push_network_policy_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
+    let Ok(blocked) = db::get_agent_internet_blocked(&state.db, agent_id).await else {
+        return;
+    };
+    let payload = serde_json::json!({
+        "type": "set_network_policy",
+        "blocked": blocked,
+    })
+    .to_string();
+    if let Some(tx) = state.agent_cmds.lock().get(&agent_id) {
+        let _ = tx.try_send(AgentControl::Text(payload));
     }
 }
 

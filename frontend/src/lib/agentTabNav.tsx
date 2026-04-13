@@ -14,14 +14,15 @@ import {
   ScrollText,
   Server,
   Settings,
+  Shield,
   Terminal,
 } from "lucide-react";
 import type { TabKey } from "./types";
 
 /** Top-level agent page sections (horizontal tab bar). */
-export type AgentSectionId = "live" | "system" | "data" | "settings";
+export type AgentSectionId = "live" | "system" | "data" | "control" | "settings";
 
-export const AGENT_SECTION_ORDER: AgentSectionId[] = ["live", "system", "data", "settings"];
+export const AGENT_SECTION_ORDER: AgentSectionId[] = ["live", "system", "data", "control", "settings"];
 
 /** Sub-views under “Live” (activity timeline default, then screen). */
 export const AGENT_LIVE_SUBTABS: TabKey[] = ["activity", "live"];
@@ -36,6 +37,7 @@ export function agentSectionFromTabKey(tab: TabKey): AgentSectionId {
   if (tab === "live" || tab === "activity") return "live";
   if (AGENT_SYSTEM_SUBTABS.includes(tab)) return "system";
   if (AGENT_DATA_SUBTABS.includes(tab)) return "data";
+  if (tab === "control") return "control";
   return "settings";
 }
 
@@ -47,6 +49,8 @@ export function defaultTabForAgentSection(section: AgentSectionId): TabKey {
       return "specs";
     case "data":
       return "keys";
+    case "control":
+      return "control";
     case "settings":
       return "settings";
   }
@@ -56,6 +60,7 @@ const SECTION_META: Record<AgentSectionId, { tabLabel: string; icon: LucideIcon 
   live: { tabLabel: "Live", icon: LayoutGrid },
   system: { tabLabel: "System", icon: Server },
   data: { tabLabel: "Data", icon: History },
+  control: { tabLabel: "Control", icon: Shield },
   settings: { tabLabel: "Settings", icon: Settings },
 };
 
@@ -82,6 +87,7 @@ export const AGENT_TAB_ORDER: TabKey[] = [
   "urls",
   "alerts",
   "logs",
+  "control",
   "settings",
 ];
 
@@ -158,6 +164,12 @@ export const AGENT_TAB_META: Record<TabKey, AgentTabDefinition> = {
     sideNavLabel: "Files",
     breadcrumbLabel: "Files",
     icon: FolderOpen,
+  },
+  control: {
+    tabLabel: "Control",
+    sideNavLabel: "Control",
+    breadcrumbLabel: "Control",
+    icon: Shield,
   },
   settings: {
     tabLabel: "Settings",

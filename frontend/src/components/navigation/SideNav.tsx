@@ -37,6 +37,7 @@ const NAV_ITEMS: SideNavigationProps.Item[] = [
     ],
   },
   { type: "divider" },
+  navLink("control"),
   navLink("settings"),
 ];
 

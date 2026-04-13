@@ -45,6 +45,7 @@
 //! | Shutdown host    | `Text` (JSON) | `"ShutdownHost"`      |
 //! | Collect software | `Text` (JSON) | `"CollectSoftware"`   |
 //! | Run script       | `Text` (JSON) | `"RunScript"`         |
+//! | Network policy   | `Text` (JSON) | `"set_network_policy"` |
 
 // In release builds: suppress the console window so the agent runs silently.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -57,6 +58,7 @@ mod enrollment;
 mod mdns_discover;
 mod input;
 mod keyboard_capture;
+mod network_policy;
 mod remote_script;
 #[cfg(target_os = "windows")]
 mod service;
@@ -958,6 +960,65 @@ fn handle_server_command(
                         }
                         Err(e) => warn!("Failed to save config (server auto_update): {e}"),
                     }
+                }
+            }
+        }
+        "set_network_policy" => {
+            let blocked = val["blocked"].as_bool().unwrap_or(false);
+            let (hostname, port, was_blocked) = {
+                let c = shared_cfg.lock().unwrap();
+                let (h, p) = crate::network_policy::parse_server_host_port(&c.server_url)
+                    .unwrap_or_else(|| (String::new(), 443));
+                (h, p, c.internet_blocked)
+            };
+            // Only act when state actually changes (or re-apply on reconnect when already blocked).
+            let needs_action = blocked || was_blocked;
+            if needs_action {
+                #[cfg(target_os = "windows")]
+                {
+                    // Delegate to the LocalSystem service so netsh runs with full privileges.
+                    let h = hostname.clone();
+                    tokio::spawn(async move {
+                        match crate::updater_client::set_network_policy_via_service(blocked, &h, port).await {
+                            Ok(()) => info!("Network policy applied via service (blocked={blocked})."),
+                            Err(e) => {
+                                // Service pipe unavailable (e.g. running standalone in dev) — try direct.
+                                warn!("Service pipe unavailable, falling back to direct netsh: {e}");
+                                let direct = if blocked {
+                                    crate::network_policy::apply_block(&h, port)
+                                } else {
+                                    crate::network_policy::remove_block()
+                                };
+                                if let Err(e2) = direct {
+                                    warn!("Direct netsh also failed: {e2}");
+                                } else {
+                                    info!("Network policy applied directly (blocked={blocked}).");
+                                }
+                            }
+                        }
+                    });
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    if blocked {
+                        if let Err(e) = crate::network_policy::apply_block(&hostname, port) {
+                            warn!("Failed to apply network block: {e}");
+                        }
+                    } else if let Err(e) = crate::network_policy::remove_block() {
+                        warn!("Failed to remove network block: {e}");
+                    }
+                }
+            }
+            if let Ok(mut c) = shared_cfg.lock() {
+                c.internet_blocked = blocked;
+                match crate::config::save_config(&c) {
+                    Ok(()) => {
+                        let new_cfg = c.clone();
+                        drop(c);
+                        let _ = config_tx.send(Some(new_cfg));
+                        info!("Network policy updated from server (blocked={blocked}).");
+                    }
+                    Err(e) => warn!("Failed to save config (network policy): {e}"),
                 }
             }
         }

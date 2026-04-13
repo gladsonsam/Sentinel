@@ -26,6 +26,8 @@
 //! | `apply_manual_update`| `ManualApplyUpdateResponse` | Download + service `msiexec` (Windows) |
 //! | `list_log_sources`   | `Vec<LogSourceDesc>`     | Known on-disk log files for the Logs tab   |
 //! | `read_log_file_tail` | `String`                 | Tail of a log file (see `kind` + `max_kb`) |
+//! | `clear_log_file`     | `()`                     | Truncate a log file to zero bytes          |
+//! | `open_log_location`  | `()`                     | Open the log file in Explorer (Windows)    |
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -266,6 +268,49 @@ fn read_log_file_tail(kind: String, max_kb: Option<u32>) -> Result<String, Strin
     read_log_tail_display(&path, max_bytes)
 }
 
+/// Truncate the specified log file to zero bytes.
+/// Because the logger opens the file with `O_APPEND`, the next write will
+/// automatically seek to position 0 (the new EOF), so no null-byte gap appears.
+#[tauri::command]
+fn clear_log_file(kind: String) -> Result<(), String> {
+    let path = resolve_log_kind(kind.trim())?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .open(&path)
+        .map(|_| ())
+        .map_err(|e| format!("Could not clear log: {e}"))
+}
+
+/// Open the log file's parent folder in the OS file manager.
+/// On Windows, uses `explorer /select,<path>` to also highlight the file.
+#[tauri::command]
+fn open_log_location(kind: String) -> Result<(), String> {
+    let path = resolve_log_kind(kind.trim())?;
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let select_arg = format!("/select,{}", path.display());
+        std::process::Command::new("explorer.exe")
+            .creation_flags(CREATE_NO_WINDOW)
+            .arg(&select_arg)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("Could not open Explorer: {e}"))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let folder = path.parent().unwrap_or(&path);
+        std::process::Command::new("open")
+            .arg(folder)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| format!("Could not open folder: {e}"))
+    }
+}
+
 #[tauri::command]
 fn get_config(stored: State<StoredConfig>) -> Config {
     stored.0.lock().unwrap().clone()
@@ -294,6 +339,8 @@ fn save_config(
         agent_password: config.agent_password,
         ui_password_hash: ui_hash,
         auto_update_enabled: config.auto_update_enabled,
+        // Preserve the server-managed internet block state; the settings UI does not touch it.
+        internet_blocked: stored.0.lock().unwrap().internet_blocked,
     };
 
     crate::config::save_config(&new_cfg).map_err(|e| e.to_string())?;
@@ -525,6 +572,8 @@ pub fn run_tauri(
             adopt_with_enrollment_code,
             list_log_sources,
             read_log_file_tail,
+            clear_log_file,
+            open_log_location,
         ])
         // ── Setup ────────────────────────────────────────────────────────────
         .setup(move |app| {

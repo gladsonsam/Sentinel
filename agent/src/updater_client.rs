@@ -12,13 +12,13 @@ use tracing::{info, warn};
 const UPDATER_PUBKEY_B64: &str =
     "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDkwNkVDQzFDMjkzRjVEN0QKUldSOVhUOHBITXh1a003RnZYUUhqNmdsRkZTMktrbnFnZGRMZUFnaGYwNmxqV0tyL2h3bTlCUkYK";
 
-const PIPE_NAME: &str = r"\\.\pipe\SentinelAgentUpdater";
+const PIPE_NAME: &str = r"\\.\pipe\SentinelAgentService";
 
 /// Max wait for JSON reply after sending a pipe command.
 const PIPE_REPLY_TIMEOUT: Duration = Duration::from_secs(120);
 
-/// Keep in sync with `MAX_UPDATER_PIPE_LINE` in `service.rs`.
-const MAX_UPDATER_PIPE_REPLY_BYTES: usize = 256 * 1024;
+/// Keep in sync with `MAX_SERVICE_PIPE_LINE` in `service.rs`.
+const MAX_SERVICE_PIPE_REPLY_BYTES: usize = 256 * 1024;
 
 /// One JSON object per line, newline-terminated (named-pipe friendly).
 fn pipe_request_line(json: serde_json::Value) -> String {
@@ -191,7 +191,7 @@ async fn read_updater_pipe_reply_line(client: &mut NamedPipeClient) -> Result<Ve
             "timed out waiting for updater service reply (service likely too old or stuck)"
         ),
     }
-    if buf.len() > MAX_UPDATER_PIPE_REPLY_BYTES {
+    if buf.len() > MAX_SERVICE_PIPE_REPLY_BYTES {
         anyhow::bail!("updater service reply too large");
     }
     while matches!(buf.last().copied(), Some(b'\n' | b'\r')) {
@@ -245,6 +245,38 @@ pub async fn update_via_service() -> Result<UpdateViaServiceOutcome> {
         info!("Updater: already on published version; not exiting.");
     }
     Ok(o)
+}
+
+/// Ask the LocalSystem service to apply or remove the Windows Firewall internet block.
+///
+/// The service runs as SYSTEM so `netsh advfirewall` succeeds without UAC prompts.
+/// Falls back gracefully when the service pipe is unavailable.
+pub async fn set_network_policy_via_service(
+    blocked: bool,
+    server_hostname: &str,
+    server_port: u16,
+) -> Result<()> {
+    let mut client = connect_pipe().await?;
+    let req = pipe_request_line(serde_json::json!({
+        "action": "set_network_policy",
+        "blocked": blocked,
+        "server_hostname": server_hostname,
+        "server_port": server_port,
+    }));
+    client.write_all(req.as_bytes()).await?;
+    client.flush().await?;
+
+    let buf = read_updater_pipe_reply_line(&mut client).await?;
+    let v: serde_json::Value =
+        serde_json::from_slice(&buf).map_err(|e| anyhow::anyhow!("invalid JSON from service: {e}"))?;
+    if v.get("ok").and_then(|x| x.as_bool()) != Some(true) {
+        let err = v
+            .get("error")
+            .and_then(|x| x.as_str())
+            .unwrap_or("service returned ok=false");
+        anyhow::bail!("{err}");
+    }
+    Ok(())
 }
 
 /// Helper used by the agent when it knows it's going to be replaced.

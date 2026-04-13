@@ -465,6 +465,7 @@ export function AgentSettingsTab({
       .finally(() => setAutoUpdSave(false));
   };
 
+
   const isOutOfDate =
     !!latestAgentVersion &&
     !!agentVersion &&
@@ -1011,6 +1012,7 @@ export function AgentSettingsTab({
           </SpaceBetween>
         </Container>
       )}
+
     </SpaceBetween>
   );
 }

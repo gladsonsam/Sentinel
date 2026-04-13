@@ -357,6 +357,17 @@ export const api = {
   agentUpdateNow: (id: string): Promise<{ ok: boolean }> =>
     postEmpty(`/agents/${id}/update-now`),
 
+  // ── Network policy (parental controls) ──────────────────────────────────────
+
+  agentInternetBlockedGet: (id: string): Promise<{ blocked: boolean }> =>
+    get(`/agents/${id}/internet-blocked`),
+
+  agentInternetBlockedPut: (
+    id: string,
+    body: { blocked: boolean },
+  ): Promise<{ blocked: boolean }> =>
+    putJson(`/agents/${id}/internet-blocked`, body),
+
   /** Admin: LAN mDNS mode and agent WSS URL for onboarding (mirrors server `mdns_broadcast` rules). */
   getAgentSetupHints: (): Promise<{
     mdns: "advertising" | "disabled_by_env" | "unavailable_no_wss_url";

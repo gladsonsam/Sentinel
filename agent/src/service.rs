@@ -84,27 +84,27 @@ const SERVICE_NAME: &str = "SentinelAgentService";
 windows_service::define_windows_service!(ffi_service_main, service_main);
 
 /// Must match `PIPE_NAME` in `updater_client.rs`.
-const UPDATER_PIPE_NAME: &str = r"\\.\pipe\SentinelAgentUpdater";
+const SERVICE_PIPE_NAME: &str = r"\\.\pipe\SentinelAgentService";
 
-/// Max bytes for one updater JSON line (see `updater_client::pipe_request_line`).
-const MAX_UPDATER_PIPE_LINE: usize = 256 * 1024;
+/// Max bytes for one service JSON line (see `updater_client::pipe_request_line`).
+const MAX_SERVICE_PIPE_LINE: usize = 256 * 1024;
 
 /// Responses must end with `\n` so the user-session client can `read_until` without waiting for EOF.
-fn updater_pipe_reply(json: serde_json::Value) -> String {
+fn service_pipe_reply(json: serde_json::Value) -> String {
     let mut s = json.to_string();
     s.push('\n');
     s
 }
 
-/// Serialize installer work so concurrent pipe requests do not overlap `msiexec` / downloads.
-fn updater_job_mutex() -> &'static tokio::sync::Mutex<()> {
+/// Serialize work so concurrent pipe requests don't overlap `msiexec` / netsh calls.
+fn service_job_mutex() -> &'static tokio::sync::Mutex<()> {
     static M: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
     M.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
 /// Default named-pipe DACL only allows the creator (LocalSystem). The user-session agent
-/// connects without elevation — grant authenticated users read/write so `update_via_service` works.
-fn create_sentinel_updater_pipe_server(
+/// connects without elevation — grant authenticated users read/write so pipe calls work.
+fn create_sentinel_service_pipe_server(
 ) -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
     use std::ffi::c_void;
     use std::io;
@@ -118,7 +118,7 @@ fn create_sentinel_updater_pipe_server(
             &mut p_sd,
             None,
         )
-        .map_err(|e| io::Error::other(format!("updater pipe SDDL: {e}")))?;
+        .map_err(|e| io::Error::other(format!("service pipe SDDL: {e}")))?;
     }
 
     let mut sa = SECURITY_ATTRIBUTES {
@@ -129,7 +129,7 @@ fn create_sentinel_updater_pipe_server(
 
     let server = unsafe {
         ServerOptions::new().create_with_security_attributes_raw(
-            UPDATER_PIPE_NAME,
+            SERVICE_PIPE_NAME,
             &mut sa as *mut SECURITY_ATTRIBUTES as *mut c_void,
         )
     };
@@ -148,10 +148,10 @@ fn create_sentinel_updater_pipe_server(
 /// Must stay **synchronous** (no `.await`) when replacing the listener after a client connects:
 /// otherwise the current-thread runtime spends whole minutes inside a pipe handler
 /// without ever polling `connect()` on the new instance → clients see error 231 (pipe busy).
-fn ensure_sentinel_updater_pipe_server() -> tokio::net::windows::named_pipe::NamedPipeServer {
+fn ensure_sentinel_service_pipe_server() -> tokio::net::windows::named_pipe::NamedPipeServer {
     let mut attempts = 0u32;
     loop {
-        match create_sentinel_updater_pipe_server() {
+        match create_sentinel_service_pipe_server() {
             Ok(s) => return s,
             Err(e) => {
                 attempts += 1;
@@ -221,7 +221,7 @@ fn run_service() -> windows_service::Result<()> {
 
         // Create the next pipe instance synchronously after each accept so another client never
         // hits ERROR_PIPE_BUSY (231) while a long handler runs.
-        let mut server = ensure_sentinel_updater_pipe_server();
+        let mut server = ensure_sentinel_service_pipe_server();
 
         loop {
             // Stop requested?
@@ -252,18 +252,18 @@ fn run_service() -> windows_service::Result<()> {
                         warn!("Named pipe connect failed: {e}");
                     } else {
                         let pipe = server;
-                        server = ensure_sentinel_updater_pipe_server();
+                        server = ensure_sentinel_service_pipe_server();
 
                         tokio::spawn(async move {
                             let mut reader = BufReader::new(pipe);
                             let mut buf = Vec::new();
                             match reader.read_until(b'\n', &mut buf).await {
                                 Ok(0) => {
-                                    warn!("Updater pipe: EOF before request line");
+                                    warn!("Service pipe: EOF before request line");
                                     let mut pipe = reader.into_inner();
-                                    let resp = updater_pipe_reply(serde_json::json!({
+                                    let resp = service_pipe_reply(serde_json::json!({
                                         "ok": false,
-                                        "error": "empty updater pipe request",
+                                        "error": "empty service pipe request",
                                     }));
                                     let _ = pipe.write_all(resp.as_bytes()).await;
                                     let _ = pipe.flush().await;
@@ -271,9 +271,9 @@ fn run_service() -> windows_service::Result<()> {
                                 }
                                 Ok(_) => {}
                                 Err(e) => {
-                                    warn!("Updater pipe: read failed: {e:#}");
+                                    warn!("Service pipe: read failed: {e:#}");
                                     let mut pipe = reader.into_inner();
-                                    let resp = updater_pipe_reply(serde_json::json!({
+                                    let resp = service_pipe_reply(serde_json::json!({
                                         "ok": false,
                                         "error": format!("pipe read: {e:#}"),
                                     }));
@@ -286,23 +286,23 @@ fn run_service() -> windows_service::Result<()> {
                                 buf.pop();
                             }
                             if buf.is_empty() {
-                                warn!("Updater pipe: empty request line");
+                                warn!("Service pipe: empty request line");
                                 let mut pipe = reader.into_inner();
-                                let resp = updater_pipe_reply(serde_json::json!({
-                                    "ok": false,
-                                    "error": "empty updater pipe request",
-                                }));
+                                    let resp = service_pipe_reply(serde_json::json!({
+                                        "ok": false,
+                                        "error": "empty service pipe request",
+                                    }));
                                 let _ = pipe.write_all(resp.as_bytes()).await;
                                 let _ = pipe.flush().await;
                                 return;
                             }
-                            if buf.len() > MAX_UPDATER_PIPE_LINE {
-                                warn!("Updater pipe: request line too large ({})", buf.len());
+                            if buf.len() > MAX_SERVICE_PIPE_LINE {
+                                warn!("Service pipe: request line too large ({})", buf.len());
                                 let mut pipe = reader.into_inner();
-                                let resp = updater_pipe_reply(serde_json::json!({
-                                    "ok": false,
-                                    "error": "updater pipe request too large",
-                                }));
+                                    let resp = service_pipe_reply(serde_json::json!({
+                                        "ok": false,
+                                        "error": "service pipe request too large",
+                                    }));
                                 let _ = pipe.write_all(resp.as_bytes()).await;
                                 let _ = pipe.flush().await;
                                 return;
@@ -312,9 +312,9 @@ fn run_service() -> windows_service::Result<()> {
                                 Ok(v) => v,
                                 Err(e) => {
                                     let mut pipe = reader.into_inner();
-                                    let resp = updater_pipe_reply(serde_json::json!({
+                                    let resp = service_pipe_reply(serde_json::json!({
                                         "ok": false,
-                                        "error": format!("invalid JSON on updater pipe: {e}"),
+                                        "error": format!("invalid JSON on service pipe: {e}"),
                                     }));
                                     let _ = pipe.write_all(resp.as_bytes()).await;
                                     let _ = pipe.flush().await;
@@ -328,7 +328,7 @@ fn run_service() -> windows_service::Result<()> {
                                 .unwrap_or("")
                                 .to_string();
 
-                            let _job = updater_job_mutex().lock().await;
+                            let _job = service_job_mutex().lock().await;
 
                             // Reply on the pipe before starting msiexec so StopServices cannot tear
                             // down the runtime before the client reads the line.
@@ -357,10 +357,27 @@ fn run_service() -> windows_service::Result<()> {
                                         }
                                     }
                                 }
+                            } else if action == "set_network_policy" {
+                                // Run netsh from the SYSTEM service so no elevation prompt is needed.
+                                let blocked = v.get("blocked").and_then(|x| x.as_bool()).unwrap_or(false);
+                                let hostname = v.get("server_hostname").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                                let port = v.get("server_port").and_then(|x| x.as_u64()).unwrap_or(443) as u16;
+                                let result = tokio::task::spawn_blocking(move || {
+                                    if blocked {
+                                        crate::network_policy::apply_block(&hostname, port)
+                                    } else {
+                                        crate::network_policy::remove_block()
+                                    }
+                                }).await;
+                                match result {
+                                    Ok(Ok(())) => serde_json::json!({"ok": true}).to_string(),
+                                    Ok(Err(e)) => serde_json::json!({"ok": false, "error": format!("{e:#}")}).to_string(),
+                                    Err(e) => serde_json::json!({"ok": false, "error": format!("spawn_blocking: {e}")}).to_string(),
+                                }
                             } else {
                                 serde_json::json!({
                                     "ok": false,
-                                    "error": format!("unknown pipe action: {action:?} (expected install_msi)"),
+                                    "error": format!("unknown pipe action: {action:?}"),
                                 })
                                 .to_string()
                             };

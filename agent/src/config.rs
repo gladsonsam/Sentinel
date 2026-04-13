@@ -61,6 +61,12 @@ pub struct Config {
     /// `set_auto_update`.
     #[serde(default = "default_auto_update_enabled")]
     pub auto_update_enabled: bool,
+
+    /// When true, all outbound internet access is blocked via Windows Firewall.
+    /// The agent's own connection to the Sentinel server is always permitted.
+    /// Controlled remotely via `set_network_policy` from the dashboard.
+    #[serde(default)]
+    pub internet_blocked: bool,
 }
 
 fn default_agent_name() -> String {
@@ -83,6 +89,7 @@ impl Default for Config {
             agent_password: String::new(),
             ui_password_hash: empty_password_hash(),
             auto_update_enabled: default_auto_update_enabled(),
+            internet_blocked: false,
         }
     }
 }

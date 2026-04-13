@@ -93,6 +93,7 @@ function isTabKey(v: string | null): v is TabKey {
     v === "urls" ||
     v === "alerts" ||
     v === "files" ||
+    v === "control" ||
     v === "settings"
   );
 }

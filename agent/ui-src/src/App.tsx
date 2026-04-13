@@ -221,6 +221,8 @@ function SettingsPanel() {
   const [logText, setLogText] = useState("");
   const [logsManualRefresh, setLogsManualRefresh] = useState(false);
   const [logAutoRefresh, setLogAutoRefresh] = useState(true);
+  const [logClearing, setLogClearing] = useState(false);
+  const [logClearMsg, setLogClearMsg] = useState<string | null>(null);
   const logViewportRef = useRef<HTMLDivElement | null>(null);
   const logStickToBottomRef = useRef(true);
   const logInitialScrollDoneRef = useRef(false);
@@ -304,6 +306,25 @@ function SettingsPanel() {
     } finally {
       if (manual) setLogsManualRefresh(false);
     }
+  }, [logSourceId]);
+
+  const clearLogs = useCallback(async () => {
+    setLogClearing(true);
+    setLogClearMsg(null);
+    try {
+      await invoke("clear_log_file", { kind: logSourceId });
+      setLogText("");
+      setLogClearMsg("Cleared.");
+    } catch (e: unknown) {
+      setLogClearMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLogClearing(false);
+      setTimeout(() => setLogClearMsg(null), 3000);
+    }
+  }, [logSourceId]);
+
+  const openLogLocation = useCallback(() => {
+    void invoke("open_log_location", { kind: logSourceId }).catch(() => {});
   }, [logSourceId]);
 
   useEffect(() => {
@@ -801,6 +822,11 @@ function SettingsPanel() {
                               variant="h2"
                               actions={
                                 <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+                                  {logClearMsg && (
+                                    <Box variant="span" fontSize="body-s" color="text-body-secondary">
+                                      {logClearMsg}
+                                    </Box>
+                                  )}
                                   <Toggle
                                     checked={logAutoRefresh}
                                     onChange={({ detail }) => setLogAutoRefresh(detail.checked)}
@@ -809,6 +835,12 @@ function SettingsPanel() {
                                   </Toggle>
                                   <Button onClick={() => void refreshLogs(true)} loading={logsManualRefresh}>
                                     Refresh
+                                  </Button>
+                                  <Button onClick={() => void clearLogs()} loading={logClearing}>
+                                    Clear
+                                  </Button>
+                                  <Button onClick={openLogLocation} iconName="folder-open">
+                                    Open location
                                   </Button>
                                 </SpaceBetween>
                               }
