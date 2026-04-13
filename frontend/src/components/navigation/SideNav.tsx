@@ -16,11 +16,13 @@ function navLink(id: TabKey): SideNavigationProps.Link {
 const NAV_ITEMS: SideNavigationProps.Item[] = [
   navLink("activity"),
   navLink("live"),
+  navLink("control"),
+  { type: "divider" },
   {
     type: "expandable-link-group",
     text: "System & tools",
     href: "#specs",
-    defaultExpanded: true,
+    defaultExpanded: false,
     items: [navLink("specs"), navLink("software"), navLink("scripts"), navLink("files")],
   },
   {
@@ -37,7 +39,6 @@ const NAV_ITEMS: SideNavigationProps.Item[] = [
     ],
   },
   { type: "divider" },
-  navLink("control"),
   navLink("settings"),
 ];
 

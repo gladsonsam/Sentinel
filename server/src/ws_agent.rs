@@ -178,6 +178,18 @@ async fn run(mut ws: WebSocket, name: String, state: Arc<AppState>) {
         }
     }
 
+    // Push app block rules so enforcement resumes after a reboot.
+    if let Ok(rules) = db::app_block_rules_effective_for_agent(&state.db, agent_id).await {
+        let sync = serde_json::json!({
+            "type": "set_app_block_rules",
+            "rules": rules,
+        })
+        .to_string();
+        if let Err(e) = ws.send(Message::Text(sync)).await {
+            warn!("Failed to push app block rules to {name}: {e}");
+        }
+    }
+
     loop {
         tokio::select! {
             msg = ws.recv() => {
@@ -308,6 +320,34 @@ pub async fn push_network_policy_to_agent(state: &Arc<AppState>, agent_id: uuid:
     }
 }
 
+pub async fn push_app_block_rules_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
+    let Ok(rules) = db::app_block_rules_effective_for_agent(&state.db, agent_id).await else {
+        return;
+    };
+    let payload = serde_json::json!({
+        "type": "set_app_block_rules",
+        "rules": rules,
+    })
+    .to_string();
+    if let Some(tx) = state.agent_cmds.lock().get(&agent_id) {
+        let _ = tx.try_send(AgentControl::Text(payload));
+    }
+}
+
+pub async fn push_app_block_rules_to_all_connected(state: &Arc<AppState>) {
+    let ids: Vec<uuid::Uuid> = state.agents.lock().keys().copied().collect();
+    for id in ids {
+        push_app_block_rules_to_agent(state, id).await;
+    }
+}
+
+pub async fn push_internet_block_to_all_connected(state: &Arc<AppState>) {
+    let ids: Vec<uuid::Uuid> = state.agents.lock().keys().copied().collect();
+    for id in ids {
+        push_network_policy_to_agent(state, id).await;
+    }
+}
+
 /// After changing the global default, notify every connected agent.
 pub async fn push_local_ui_password_to_all_connected(state: &Arc<AppState>) {
     let ids: Vec<uuid::Uuid> = state.agents.lock().keys().copied().collect();
@@ -405,6 +445,16 @@ async fn dispatch_text(text: &str, agent_id: uuid::Uuid, name: &str, state: &Arc
                         Err(_) => Ok(()),
                     }
                 }
+            }
+        }
+        "app_block_kill" => {
+            let rule_id = val["rule_id"].as_i64();
+            let rule_name = val["rule_name"].as_str();
+            let exe_name = val["exe_name"].as_str().unwrap_or("").trim().to_string();
+            if !exe_name.is_empty() {
+                db::log_app_block_event(&state.db, agent_id, rule_id, rule_name, &exe_name).await
+            } else {
+                Ok(())
             }
         }
         "agent_info" => db::upsert_agent_info(&state.db, agent_id, &val).await,

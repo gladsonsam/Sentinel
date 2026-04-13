@@ -42,11 +42,11 @@ const AuthenticatedLogs = lazy(() =>
   import("./routes/AuthenticatedLogs").then((m) => ({ default: m.AuthenticatedLogs })),
 );
 const UsersPage = lazy(() => import("./pages/UsersPage").then((m) => ({ default: m.UsersPage })));
-const AuthenticatedNotifications = lazy(() =>
-  import("./routes/AuthenticatedNotifications").then((m) => ({ default: m.AuthenticatedNotifications })),
-);
 const AuthenticatedGroups = lazy(() =>
   import("./routes/AuthenticatedGroups").then((m) => ({ default: m.AuthenticatedGroups })),
+);
+const AuthenticatedRules = lazy(() =>
+  import("./routes/AuthenticatedRules").then((m) => ({ default: m.AuthenticatedRules })),
 );
 
 function sessionToNavUser(u: DashboardSessionUser | null): DashboardNavUser | null {
@@ -392,55 +392,6 @@ function LogsRoute({
   );
 }
 
-function NotificationsRoute({
-  handleLogout,
-  openSettings,
-  openLogs,
-  onOpenUsers,
-  onOpenNotifications,
-  currentUser,
-  notifications,
-  removeNotification,
-  toolsOpen,
-  setToolsOpen,
-}: {
-  handleLogout: () => Promise<void>;
-  openSettings: () => void;
-  openLogs: () => void;
-  onOpenUsers: () => void;
-  onOpenNotifications?: () => void;
-  currentUser: DashboardSessionUser | null;
-  notifications: NotificationItem[];
-  removeNotification: (id: string) => void;
-  toolsOpen: boolean;
-  setToolsOpen: (open: boolean) => void;
-}) {
-  const navigate = useNavigate();
-  const [notifySearch] = useSearchParams();
-  if (currentUser?.role !== "admin") {
-    return <Navigate to="/" replace />;
-  }
-  if (notifySearch.get("tab") === "groups") {
-    return <Navigate to="/groups" replace />;
-  }
-  return (
-    <Suspense fallback={<LoadShell label="Loading notifications…" />}>
-      <AuthenticatedNotifications
-        onLogout={() => void handleLogout()}
-        onShowPreferences={openSettings}
-        onOpenActivityLog={openLogs}
-        onOpenUsers={onOpenUsers}
-        onOpenNotifications={onOpenNotifications}
-        onGoHome={() => navigate("/")}
-        notifications={notifications}
-        onDismissNotification={removeNotification}
-        toolsOpen={toolsOpen}
-        onToolsChange={setToolsOpen}
-        currentUser={sessionToNavUser(currentUser)}
-      />
-    </Suspense>
-  );
-}
 
 function GroupsRoute({
   handleLogout,
@@ -496,7 +447,7 @@ export function App() {
   const location = useLocation();
   const navigate = useNavigate();
   const openAgentGroupsAdmin = useCallback(() => navigate("/groups"), [navigate]);
-  const openAlertRulesAdmin = useCallback(() => navigate("/notifications"), [navigate]);
+  const openAlertRulesAdmin = useCallback(() => navigate("/rules"), [navigate]);
   const adminAgentGroupsNav = me?.role === "admin" ? openAgentGroupsAdmin : undefined;
   const adminAlertRulesNav = me?.role === "admin" ? openAlertRulesAdmin : undefined;
 
@@ -887,21 +838,29 @@ export function App() {
           />
         }
       />
+      <Route path="/notifications" element={<Navigate to="/rules" replace />} />
       <Route
-        path="/notifications"
+        path="/rules"
         element={
-          <NotificationsRoute
-            handleLogout={handleLogout}
-            openSettings={handleOpenSettings}
-            openLogs={handleOpenLogs}
-            onOpenUsers={() => navigate("/users")}
-            onOpenNotifications={adminAlertRulesNav}
-            currentUser={me}
-            notifications={notifications}
-            removeNotification={removeNotification}
-            toolsOpen={toolsOpen}
-            setToolsOpen={setToolsOpen}
-          />
+          me?.role !== "admin" ? (
+            <Navigate to="/" replace />
+          ) : (
+            <Suspense fallback={<LoadShell label="Loading rules…" />}>
+              <AuthenticatedRules
+                onLogout={() => void handleLogout()}
+                onShowPreferences={handleOpenSettings}
+                onOpenActivityLog={handleOpenLogs}
+                onOpenUsers={() => navigate("/users")}
+                onOpenNotifications={adminAlertRulesNav}
+                onGoHome={() => navigate("/")}
+                notifications={notifications}
+                onDismissNotification={removeNotification}
+                toolsOpen={toolsOpen}
+                onToolsChange={setToolsOpen}
+                currentUser={sessionToNavUser(me)}
+              />
+            </Suspense>
+          )
         }
       />
       <Route

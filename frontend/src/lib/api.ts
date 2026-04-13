@@ -19,6 +19,9 @@ import type {
   AgentGroup,
   AgentGroupMembership,
   AlertRule,
+  AppBlockRule,
+  AppBlockEvent,
+  InternetBlockRule,
 } from "./types";
 import { buildApiUrl } from "./serverSettings";
 import { publishServerVersion, type SettingsVersionPayload } from "./serverVersionStore";
@@ -359,14 +362,28 @@ export const api = {
 
   // ── Network policy (parental controls) ──────────────────────────────────────
 
-  agentInternetBlockedGet: (id: string): Promise<{ blocked: boolean }> =>
+  agentInternetBlockedGet: (id: string): Promise<{ blocked: boolean; source?: string | null }> =>
     get(`/agents/${id}/internet-blocked`),
 
   agentInternetBlockedPut: (
     id: string,
     body: { blocked: boolean },
-  ): Promise<{ blocked: boolean }> =>
+  ): Promise<{ blocked: boolean; source?: string | null }> =>
     putJson(`/agents/${id}/internet-blocked`, body),
+
+  internetBlockRulesList: (): Promise<{ rules: InternetBlockRule[] }> =>
+    get("/internet-block-rules"),
+
+  internetBlockRulesCreate: (body: {
+    name?: string;
+    scopes: { kind: string; group_id?: string; agent_id?: string }[];
+  }): Promise<{ id: number }> => postJsonRes("/internet-block-rules", body),
+
+  internetBlockRulesUpdate: (id: number, body: { enabled: boolean }): Promise<{ ok: boolean }> =>
+    putJson(`/internet-block-rules/${id}`, body),
+
+  internetBlockRulesDelete: (id: number): Promise<{ ok: boolean }> =>
+    delJson(`/internet-block-rules/${id}`),
 
   /** Admin: LAN mDNS mode and agent WSS URL for onboarding (mirrors server `mdns_broadcast` rules). */
   getAgentSetupHints: (): Promise<{
@@ -602,6 +619,72 @@ export const api = {
   alertRulesDelete: (id: number): Promise<{ ok: boolean }> =>
     delJson(`/alert-rules/${id}`),
 
+  // ── App block rules ────────────────────────────────────────────────────────
+
+  appBlockRulesList: (agentId?: string): Promise<{ rules: AppBlockRule[] }> => {
+    const path = agentId ? `/app-block-rules?agent_id=${agentId}` : "/app-block-rules";
+    return get(path);
+  },
+
+  appBlockRulesCreate: (body: {
+    name?: string;
+    exe_pattern: string;
+    match_mode: "exact" | "contains";
+    scopes: { kind: string; group_id?: string; agent_id?: string }[];
+  }): Promise<{ id: number }> => postJsonRes("/app-block-rules", body),
+
+  appBlockRulesUpdate: (
+    id: number,
+    body: { enabled: boolean },
+  ): Promise<{ ok: boolean }> => putJson(`/app-block-rules/${id}`, body),
+
+  appBlockRulesDelete: (id: number): Promise<{ ok: boolean }> =>
+    delJson(`/app-block-rules/${id}`),
+
+  agentKnownExes: (agentId: string): Promise<{ exes: string[] }> =>
+    get(`/agents/${agentId}/known-exes`),
+
+  appBlockProtectedExes: (): Promise<{ protected: string[] }> =>
+    get("/app-block-rules/protected"),
+
+  appBlockEventsForAgent: (
+    agentId: string,
+    params?: { limit?: number; offset?: number },
+  ): Promise<{ rows: AppBlockEvent[] }> => {
+    const q = new URLSearchParams();
+    if (params?.limit != null) q.set("limit", String(params.limit));
+    if (params?.offset != null) q.set("offset", String(params.offset));
+    const qs = q.toString();
+    return get(`/agents/${agentId}/app-block-events${qs ? `?${qs}` : ""}`);
+  },
+
+  appBlockEventsForRule: (
+    ruleId: number,
+    params?: { limit?: number; offset?: number },
+  ): Promise<{ rows: AppBlockEvent[] }> => {
+    const q = new URLSearchParams();
+    if (params?.limit != null) q.set("limit", String(params.limit));
+    if (params?.offset != null) q.set("offset", String(params.offset));
+    const qs = q.toString();
+    return get(`/app-block-rules/${ruleId}/events${qs ? `?${qs}` : ""}`);
+  },
+
+  appBlockEventsAll: (
+    params?: { limit?: number; offset?: number },
+  ): Promise<{ rows: AppBlockEvent[] }> => {
+    const q = new URLSearchParams();
+    if (params?.limit != null) q.set("limit", String(params.limit));
+    if (params?.offset != null) q.set("offset", String(params.offset));
+    const qs = q.toString();
+    return get(`/app-block-events${qs ? `?${qs}` : ""}`);
+  },
+
+  agentEffectiveRules: (agentId: string): Promise<{
+    alert_rules: import("./types").AlertRuleRow[];
+    app_block_rules: AppBlockRule[];
+    internet_blocked: boolean;
+  }> => get(`/agents/${agentId}/effective-rules`),
+
   alertRuleEvents: (
     ruleId: number,
     params?: { limit?: number; offset?: number },
@@ -620,6 +703,15 @@ export const api = {
     q.set("limit", String(params?.limit ?? 500));
     q.set("offset", String(params?.offset ?? 0));
     return get(`/agents/${agentId}/alert-rule-events?${q.toString()}`);
+  },
+
+  alertRuleEventsAll: (
+    params?: { limit?: number; offset?: number },
+  ): Promise<{ rows: Record<string, unknown>[] }> => {
+    const q = new URLSearchParams();
+    q.set("limit", String(params?.limit ?? 500));
+    q.set("offset", String(params?.offset ?? 0));
+    return get(`/alert-rule-events?${q.toString()}`);
   },
 };
 

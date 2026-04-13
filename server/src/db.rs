@@ -2089,13 +2089,190 @@ pub async fn effective_agent_auto_update_enabled(pool: &PgPool, agent_id: Uuid) 
 
 // ─── Agent internet block (parental controls) ─────────────────────────────────
 
+/// Whether any enabled internet_block_rule applies to this agent (all/group/agent scope).
 pub async fn get_agent_internet_blocked(pool: &PgPool, agent_id: Uuid) -> Result<bool> {
-    let v: bool =
-        sqlx::query_scalar("SELECT internet_blocked FROM agents WHERE id = $1")
-            .bind(agent_id)
-            .fetch_one(pool)
-            .await?;
-    Ok(v)
+    let count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM internet_block_rules r
+        WHERE r.enabled
+          AND EXISTS (
+            SELECT 1 FROM internet_block_rule_scopes s
+            WHERE s.rule_id = r.id
+              AND (
+                s.scope_kind = 'all'
+                OR (s.scope_kind = 'agent' AND s.agent_id = $1)
+                OR (s.scope_kind = 'group'
+                    AND s.group_id IN (SELECT group_id FROM agent_group_members WHERE agent_id = $1))
+              )
+          )
+        "#,
+    )
+    .bind(agent_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(count > 0)
+}
+
+/// Effective scope kind for display: 'all' > 'group' > 'agent' > null.
+pub async fn get_agent_internet_block_source(pool: &PgPool, agent_id: Uuid) -> Result<Option<String>> {
+    let row: Option<String> = sqlx::query_scalar(
+        r#"
+        SELECT scope_kind FROM internet_block_rule_scopes s
+        JOIN internet_block_rules r ON r.id = s.rule_id
+        WHERE r.enabled
+          AND (
+            s.scope_kind = 'all'
+            OR (s.scope_kind = 'agent' AND s.agent_id = $1)
+            OR (s.scope_kind = 'group'
+                AND s.group_id IN (SELECT group_id FROM agent_group_members WHERE agent_id = $1))
+          )
+        ORDER BY CASE s.scope_kind WHEN 'all' THEN 1 WHEN 'group' THEN 2 ELSE 3 END
+        LIMIT 1
+        "#,
+    )
+    .bind(agent_id)
+    .fetch_optional(pool)
+    .await?
+    .flatten();
+    Ok(row)
+}
+
+// ─── Internet block rules ──────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct InternetBlockScopeJson {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<Uuid>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct InternetBlockRuleRow {
+    pub id: i64,
+    pub name: String,
+    pub enabled: bool,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub scopes: Vec<InternetBlockScopeJson>,
+}
+
+pub async fn internet_block_rules_list_all(pool: &PgPool) -> Result<Vec<InternetBlockRuleRow>> {
+    let rules = sqlx::query(
+        "SELECT id, name, enabled, created_at FROM internet_block_rules ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = Vec::with_capacity(rules.len());
+    for r in &rules {
+        let id: i64 = r.try_get("id")?;
+        let scope_rows = sqlx::query(
+            "SELECT scope_kind, group_id, agent_id FROM internet_block_rule_scopes WHERE rule_id = $1 ORDER BY id",
+        )
+        .bind(id)
+        .fetch_all(pool)
+        .await?;
+
+        let scopes = scope_rows.iter().map(|s| {
+            Ok(InternetBlockScopeJson {
+                kind: s.try_get("scope_kind")?,
+                group_id: s.try_get::<Option<Uuid>, _>("group_id")?,
+                agent_id: s.try_get::<Option<Uuid>, _>("agent_id")?,
+            })
+        }).collect::<Result<Vec<_>>>()?;
+
+        out.push(InternetBlockRuleRow {
+            id,
+            name: r.try_get("name")?,
+            enabled: r.try_get("enabled")?,
+            created_at: r.try_get("created_at")?,
+            scopes,
+        });
+    }
+    Ok(out)
+}
+
+pub async fn internet_block_rule_create(
+    pool: &PgPool,
+    name: &str,
+    scopes: &[(String, Option<Uuid>, Option<Uuid>)],
+) -> Result<i64> {
+    let mut tx = pool.begin().await?;
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO internet_block_rules (name) VALUES ($1) RETURNING id",
+    )
+    .bind(name)
+    .fetch_one(tx.deref_mut())
+    .await?;
+    for (kind, group_id, agent_id) in scopes {
+        sqlx::query(
+            "INSERT INTO internet_block_rule_scopes (rule_id, scope_kind, group_id, agent_id) VALUES ($1,$2,$3,$4)",
+        )
+        .bind(id).bind(kind.as_str()).bind(group_id).bind(agent_id)
+        .execute(tx.deref_mut())
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(id)
+}
+
+pub async fn internet_block_rule_set_enabled(pool: &PgPool, rule_id: i64, enabled: bool) -> Result<bool> {
+    let r = sqlx::query("UPDATE internet_block_rules SET enabled = $2 WHERE id = $1")
+        .bind(rule_id).bind(enabled).execute(pool).await?;
+    Ok(r.rows_affected() > 0)
+}
+
+pub async fn internet_block_rule_delete(pool: &PgPool, rule_id: i64) -> Result<bool> {
+    let r = sqlx::query("DELETE FROM internet_block_rules WHERE id = $1")
+        .bind(rule_id).execute(pool).await?;
+    Ok(r.rows_affected() > 0)
+}
+
+/// Direct agent-scoped rule IDs for push-after-delete targeting.
+pub async fn internet_block_rule_direct_agent_ids(pool: &PgPool, rule_id: i64) -> Result<Vec<Uuid>> {
+    let rows = sqlx::query(
+        "SELECT agent_id FROM internet_block_rule_scopes WHERE rule_id=$1 AND scope_kind='agent' AND agent_id IS NOT NULL",
+    )
+    .bind(rule_id)
+    .fetch_all(pool)
+    .await?;
+    rows.iter().map(|r| Ok(r.try_get::<Uuid, _>("agent_id")?)).collect()
+}
+
+pub async fn internet_block_rule_has_all_scope(pool: &PgPool, rule_id: i64) -> Result<bool> {
+    let c: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM internet_block_rule_scopes WHERE rule_id=$1 AND scope_kind='all'",
+    )
+    .bind(rule_id).fetch_one(pool).await?;
+    Ok(c > 0)
+}
+
+/// Create or update the single agent-scoped rule for quick per-agent toggle.
+/// Returns the new blocked state.
+pub async fn internet_block_set_for_agent(pool: &PgPool, agent_id: Uuid, blocked: bool) -> Result<bool> {
+    if blocked {
+        // Create an agent-scoped rule if the agent isn't already blocked at agent scope.
+        let already: i64 = sqlx::query_scalar(
+            r#"SELECT COUNT(*) FROM internet_block_rules r
+               JOIN internet_block_rule_scopes s ON s.rule_id = r.id
+               WHERE r.enabled AND s.scope_kind='agent' AND s.agent_id=$1"#,
+        )
+        .bind(agent_id).fetch_one(pool).await?;
+        if already == 0 {
+            internet_block_rule_create(pool, "Manual block", &[("agent".into(), None, Some(agent_id))]).await?;
+        }
+    } else {
+        // Remove all agent-scoped rules for this specific agent.
+        sqlx::query(
+            r#"DELETE FROM internet_block_rules WHERE id IN (
+               SELECT rule_id FROM internet_block_rule_scopes WHERE scope_kind='agent' AND agent_id=$1
+            )"#,
+        )
+        .bind(agent_id).execute(pool).await?;
+    }
+    get_agent_internet_blocked(pool, agent_id).await
 }
 
 pub async fn set_agent_internet_blocked(
@@ -2103,11 +2280,7 @@ pub async fn set_agent_internet_blocked(
     agent_id: Uuid,
     blocked: bool,
 ) -> Result<()> {
-    sqlx::query("UPDATE agents SET internet_blocked = $2 WHERE id = $1")
-        .bind(agent_id)
-        .bind(blocked)
-        .execute(pool)
-        .await?;
+    internet_block_set_for_agent(pool, agent_id, blocked).await?;
     Ok(())
 }
 
@@ -2402,7 +2575,7 @@ pub async fn agent_groups_for_agent(
 
 // ─── Alert rules ──────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct AlertRuleRow {
     pub id: i64,
     pub name: String,
@@ -2714,6 +2887,45 @@ pub async fn alert_rule_event_screenshot_get(
     Ok(v)
 }
 
+/// All alert events across all agents — newest first (admin).
+pub async fn alert_rule_events_list_all(
+    pool: &PgPool,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<AlertRuleEventTriggeredRow>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT e.id, e.agent_id, COALESCE(a.name, '') AS agent_name,
+               e.rule_name, e.channel, e.snippet, e.created_at,
+               EXISTS (SELECT 1 FROM alert_rule_event_screenshots s WHERE s.event_id = e.id) AS has_screenshot,
+               COALESCE(r.take_screenshot, false) AS screenshot_requested
+        FROM alert_rule_events e
+        LEFT JOIN agents a ON a.id = e.agent_id
+        LEFT JOIN alert_rules r ON r.id = e.rule_id
+        ORDER BY e.created_at DESC
+        LIMIT $1 OFFSET $2
+        "#,
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    rows.iter().map(|r| {
+        Ok(AlertRuleEventTriggeredRow {
+            id: r.try_get("id")?,
+            agent_id: r.try_get("agent_id")?,
+            agent_name: r.try_get("agent_name")?,
+            rule_name: r.try_get("rule_name")?,
+            channel: r.try_get("channel")?,
+            snippet: r.try_get("snippet")?,
+            has_screenshot: r.try_get::<bool, _>("has_screenshot").unwrap_or(false),
+            screenshot_requested: r.try_get::<bool, _>("screenshot_requested").unwrap_or(false),
+            created_at: r.try_get("created_at")?,
+        })
+    }).collect()
+}
+
 pub async fn alert_rule_events_list_for_agent(
     pool: &PgPool,
     agent_id: Uuid,
@@ -2799,6 +3011,357 @@ pub async fn alert_rule_events_list_for_rule(
         });
     }
     Ok(out)
+}
+
+// ─── App block rules ──────────────────────────────────────────────────────────
+
+/// Minimal rule payload pushed to agents over WebSocket.
+#[derive(Debug, Clone, Serialize)]
+pub struct AppBlockRuleRow {
+    pub id: i64,
+    pub exe_pattern: String,
+    pub match_mode: String,
+    /// Most-permissive scope kind that makes this rule apply to the agent
+    /// (`all` > `group` > `agent`). Included so the dashboard can show a scope badge.
+    pub scope_kind: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AppBlockScopeJson {
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<Uuid>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<Uuid>,
+}
+
+/// Full rule item returned by the list API (includes scopes and metadata).
+#[derive(Debug, Clone, Serialize)]
+pub struct AppBlockRuleListItem {
+    pub id: i64,
+    pub name: String,
+    pub exe_pattern: String,
+    pub match_mode: String,
+    pub enabled: bool,
+    pub created_at: DateTime<Utc>,
+    pub scopes: Vec<AppBlockScopeJson>,
+}
+
+/// Rules effective for a specific agent (all-scope + group + agent-scope, enabled only).
+pub async fn app_block_rules_effective_for_agent(
+    pool: &PgPool,
+    agent_id: Uuid,
+) -> Result<Vec<AppBlockRuleRow>> {
+    // Subquery picks the most-permissive scope kind (all=1, group=2, agent=3)
+    // for display purposes; the WHERE clause checks actual applicability.
+    let rows = sqlx::query(
+        r#"
+        SELECT r.id, r.exe_pattern, r.match_mode,
+               (SELECT scope_kind
+                FROM app_block_rule_scopes sub
+                WHERE sub.rule_id = r.id
+                ORDER BY CASE sub.scope_kind
+                             WHEN 'all'   THEN 1
+                             WHEN 'group' THEN 2
+                             ELSE 3
+                         END
+                LIMIT 1) AS scope_kind
+        FROM app_block_rules r
+        WHERE r.enabled
+          AND EXISTS (
+            SELECT 1 FROM app_block_rule_scopes s
+            WHERE s.rule_id = r.id
+              AND (
+                s.scope_kind = 'all'
+                OR (s.scope_kind = 'agent' AND s.agent_id = $1)
+                OR (s.scope_kind = 'group'
+                    AND s.group_id IN (
+                        SELECT group_id FROM agent_group_members WHERE agent_id = $1
+                    ))
+              )
+          )
+        ORDER BY r.id
+        "#,
+    )
+    .bind(agent_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for r in &rows {
+        out.push(AppBlockRuleRow {
+            id: r.try_get("id")?,
+            exe_pattern: r.try_get("exe_pattern")?,
+            match_mode: r.try_get("match_mode")?,
+            scope_kind: r.try_get::<Option<String>, _>("scope_kind")?.unwrap_or_else(|| "agent".into()),
+        });
+    }
+    Ok(out)
+}
+
+/// All rules with their scopes — for the admin list view.
+pub async fn app_block_rules_list_all(pool: &PgPool) -> Result<Vec<AppBlockRuleListItem>> {
+    let rules = sqlx::query(
+        "SELECT id, name, exe_pattern, match_mode, enabled, created_at FROM app_block_rules ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = Vec::with_capacity(rules.len());
+    for r in &rules {
+        let id: i64 = r.try_get("id")?;
+        let scope_rows = sqlx::query(
+            "SELECT scope_kind, group_id, agent_id FROM app_block_rule_scopes WHERE rule_id = $1 ORDER BY id",
+        )
+        .bind(id)
+        .fetch_all(pool)
+        .await?;
+
+        let scopes = scope_rows
+            .iter()
+            .map(|s| {
+                Ok(AppBlockScopeJson {
+                    kind: s.try_get("scope_kind")?,
+                    group_id: s.try_get::<Option<Uuid>, _>("group_id")?,
+                    agent_id: s.try_get::<Option<Uuid>, _>("agent_id")?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let created_at_raw: Option<chrono::DateTime<Utc>> = r.try_get("created_at").ok();
+        out.push(AppBlockRuleListItem {
+            id,
+            name: r.try_get("name")?,
+            exe_pattern: r.try_get("exe_pattern")?,
+            match_mode: r.try_get("match_mode")?,
+            enabled: r.try_get("enabled")?,
+            created_at: created_at_raw.unwrap_or_else(Utc::now),
+            scopes,
+        });
+    }
+    Ok(out)
+}
+
+/// Insert a new rule with its scopes. Returns the new rule id.
+pub async fn app_block_rule_create(
+    pool: &PgPool,
+    name: &str,
+    exe_pattern: &str,
+    match_mode: &str,
+    scopes: &[(String, Option<Uuid>, Option<Uuid>)],
+) -> Result<i64> {
+    let mut tx = pool.begin().await?;
+    let id: i64 = sqlx::query_scalar(
+        "INSERT INTO app_block_rules (name, exe_pattern, match_mode) VALUES ($1, $2, $3) RETURNING id",
+    )
+    .bind(name)
+    .bind(exe_pattern)
+    .bind(match_mode)
+    .fetch_one(tx.deref_mut())
+    .await?;
+
+    for (kind, group_id, agent_id) in scopes {
+        sqlx::query(
+            "INSERT INTO app_block_rule_scopes (rule_id, scope_kind, group_id, agent_id) VALUES ($1, $2, $3, $4)",
+        )
+        .bind(id)
+        .bind(kind.as_str())
+        .bind(group_id)
+        .bind(agent_id)
+        .execute(tx.deref_mut())
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(id)
+}
+
+/// Toggle a rule's enabled state. Returns false if the rule wasn't found.
+pub async fn app_block_rule_set_enabled(pool: &PgPool, rule_id: i64, enabled: bool) -> Result<bool> {
+    let r = sqlx::query("UPDATE app_block_rules SET enabled = $2 WHERE id = $1")
+        .bind(rule_id)
+        .bind(enabled)
+        .execute(pool)
+        .await?;
+    Ok(r.rows_affected() > 0)
+}
+
+/// Delete a rule (cascades to scopes). Returns false if not found.
+pub async fn app_block_rule_delete(pool: &PgPool, rule_id: i64) -> Result<bool> {
+    let r = sqlx::query("DELETE FROM app_block_rules WHERE id = $1")
+        .bind(rule_id)
+        .execute(pool)
+        .await?;
+    Ok(r.rows_affected() > 0)
+}
+
+/// Agent UUIDs that have a direct-scope rule for this rule_id (for targeted push).
+pub async fn app_block_rule_direct_agent_ids(pool: &PgPool, rule_id: i64) -> Result<Vec<Uuid>> {
+    let rows = sqlx::query(
+        "SELECT agent_id FROM app_block_rule_scopes WHERE rule_id = $1 AND scope_kind = 'agent' AND agent_id IS NOT NULL",
+    )
+    .bind(rule_id)
+    .fetch_all(pool)
+    .await?;
+
+    rows.iter()
+        .map(|r| Ok(r.try_get::<Uuid, _>("agent_id")?))
+        .collect()
+}
+
+/// Whether a rule has any all-scope entry.
+pub async fn app_block_rule_has_all_scope(pool: &PgPool, rule_id: i64) -> Result<bool> {
+    let count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM app_block_rule_scopes WHERE rule_id = $1 AND scope_kind = 'all'",
+    )
+    .bind(rule_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(count > 0)
+}
+
+// ─── App block events ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AppBlockEventRow {
+    pub id: i64,
+    pub agent_id: Uuid,
+    pub agent_name: String,
+    pub rule_id: Option<i64>,
+    pub rule_name: Option<String>,
+    pub exe_name: String,
+    pub killed_at: DateTime<Utc>,
+}
+
+/// Log a process kill event (sent by the agent via WebSocket).
+pub async fn log_app_block_event(
+    pool: &PgPool,
+    agent_id: Uuid,
+    rule_id: Option<i64>,
+    rule_name: Option<&str>,
+    exe_name: &str,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO app_block_events (agent_id, rule_id, rule_name, exe_name) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(agent_id)
+    .bind(rule_id)
+    .bind(rule_name)
+    .bind(exe_name)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+pub async fn app_block_events_for_agent(
+    pool: &PgPool,
+    agent_id: Uuid,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<AppBlockEventRow>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT e.id, e.agent_id, a.name AS agent_name,
+               e.rule_id, COALESCE(e.rule_name, r.name) AS rule_name,
+               e.exe_name, e.killed_at
+        FROM app_block_events e
+        JOIN agents a ON a.id = e.agent_id
+        LEFT JOIN app_block_rules r ON r.id = e.rule_id
+        WHERE e.agent_id = $1
+        ORDER BY e.killed_at DESC
+        LIMIT $2 OFFSET $3
+        "#,
+    )
+    .bind(agent_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    rows.iter().map(|r| {
+        Ok(AppBlockEventRow {
+            id: r.try_get("id")?,
+            agent_id: r.try_get("agent_id")?,
+            agent_name: r.try_get("agent_name")?,
+            rule_id: r.try_get("rule_id")?,
+            rule_name: r.try_get("rule_name")?,
+            exe_name: r.try_get("exe_name")?,
+            killed_at: r.try_get("killed_at")?,
+        })
+    }).collect()
+}
+
+pub async fn app_block_events_for_rule(
+    pool: &PgPool,
+    rule_id: i64,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<AppBlockEventRow>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT e.id, e.agent_id, a.name AS agent_name,
+               e.rule_id, COALESCE(e.rule_name, r.name) AS rule_name,
+               e.exe_name, e.killed_at
+        FROM app_block_events e
+        JOIN agents a ON a.id = e.agent_id
+        LEFT JOIN app_block_rules r ON r.id = e.rule_id
+        WHERE e.rule_id = $1
+        ORDER BY e.killed_at DESC
+        LIMIT $2 OFFSET $3
+        "#,
+    )
+    .bind(rule_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    rows.iter().map(|r| {
+        Ok(AppBlockEventRow {
+            id: r.try_get("id")?,
+            agent_id: r.try_get("agent_id")?,
+            agent_name: r.try_get("agent_name")?,
+            rule_id: r.try_get("rule_id")?,
+            rule_name: r.try_get("rule_name")?,
+            exe_name: r.try_get("exe_name")?,
+            killed_at: r.try_get("killed_at")?,
+        })
+    }).collect()
+}
+
+/// All events across all agents, newest first.
+pub async fn app_block_events_all(
+    pool: &PgPool,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<AppBlockEventRow>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT e.id, e.agent_id, a.name AS agent_name,
+               e.rule_id, COALESCE(e.rule_name, r.name) AS rule_name,
+               e.exe_name, e.killed_at
+        FROM app_block_events e
+        JOIN agents a ON a.id = e.agent_id
+        LEFT JOIN app_block_rules r ON r.id = e.rule_id
+        ORDER BY e.killed_at DESC
+        LIMIT $1 OFFSET $2
+        "#,
+    )
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    rows.iter().map(|r| {
+        Ok(AppBlockEventRow {
+            id: r.try_get("id")?,
+            agent_id: r.try_get("agent_id")?,
+            agent_name: r.try_get("agent_name")?,
+            rule_id: r.try_get("rule_id")?,
+            rule_name: r.try_get("rule_name")?,
+            exe_name: r.try_get("exe_name")?,
+            killed_at: r.try_get("killed_at")?,
+        })
+    }).collect()
 }
 
 // ─── Utility ──────────────────────────────────────────────────────────────────

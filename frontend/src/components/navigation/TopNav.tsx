@@ -154,7 +154,7 @@ export function TopNav({
     const items: ButtonDropdownProps.Items = [
       serverMenuItem,
       ...(onOpenUsers ? [{ id: "users", text: "Account" }] : []),
-      ...(onOpenNotifications ? [{ id: "notifications", text: "Alerts" }] : []),
+      ...(onOpenNotifications ? [{ id: "notifications", text: "Rules" }] : []),
       ...(onOpenActivityLog ? [{ id: "activity_log", text: "Activity log" }] : []),
       { id: "settings", text: "Settings" },
       { id: "logout", text: "Logout" },

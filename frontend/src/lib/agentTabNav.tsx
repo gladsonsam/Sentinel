@@ -3,7 +3,6 @@ import type { LucideIcon } from "lucide-react";
 import {
   Activity,
   AppWindow,
-  BellRing,
   Cpu,
   FolderOpen,
   History,
@@ -16,13 +15,14 @@ import {
   Settings,
   Shield,
   Terminal,
+  Zap,
 } from "lucide-react";
 import type { TabKey } from "./types";
 
 /** Top-level agent page sections (horizontal tab bar). */
 export type AgentSectionId = "live" | "system" | "data" | "control" | "settings";
 
-export const AGENT_SECTION_ORDER: AgentSectionId[] = ["live", "system", "data", "control", "settings"];
+export const AGENT_SECTION_ORDER: AgentSectionId[] = ["live", "control", "system", "data", "settings"];
 
 /** Sub-views under “Live” (activity timeline default, then screen). */
 export const AGENT_LIVE_SUBTABS: TabKey[] = ["activity", "live"];
@@ -78,6 +78,7 @@ export function AgentSectionTabLabel({ section }: { section: AgentSectionId }) {
 export const AGENT_TAB_ORDER: TabKey[] = [
   "activity",
   "live",
+  "control",
   "specs",
   "software",
   "scripts",
@@ -87,7 +88,6 @@ export const AGENT_TAB_ORDER: TabKey[] = [
   "urls",
   "alerts",
   "logs",
-  "control",
   "settings",
 ];
 
@@ -154,10 +154,10 @@ export const AGENT_TAB_META: Record<TabKey, AgentTabDefinition> = {
     icon: Link2,
   },
   alerts: {
-    tabLabel: "Alerts",
-    sideNavLabel: "Alerts",
-    breadcrumbLabel: "Alert notifications",
-    icon: BellRing,
+    tabLabel: "Events",
+    sideNavLabel: "Events",
+    breadcrumbLabel: "Rule events",
+    icon: Zap,
   },
   files: {
     tabLabel: "Files",

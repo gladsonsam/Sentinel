@@ -5,7 +5,9 @@ mod agents_capture;
 mod agents_list;
 mod agents_logs;
 mod agents_telemetry;
+mod app_block;
 mod assets;
+mod internet_block;
 mod audit;
 mod auto_update;
 mod groups_and_rules;
@@ -165,8 +167,18 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route(
             "/agents/:id/internet-blocked",
-            get(network_policy::agent_internet_blocked_get)
-                .put(network_policy::agent_internet_blocked_put),
+            get(internet_block::agent_internet_blocked_get)
+                .put(internet_block::agent_internet_blocked_put),
+        )
+        .route(
+            "/internet-block-rules",
+            get(internet_block::internet_block_rules_list)
+                .post(internet_block::internet_block_rules_create),
+        )
+        .route(
+            "/internet-block-rules/:id",
+            put(internet_block::internet_block_rules_update)
+                .delete(internet_block::internet_block_rules_delete),
         )
         .route(
             "/agent-groups",
@@ -186,6 +198,10 @@ pub fn router() -> Router<Arc<AppState>> {
             delete(groups_and_rules::agent_group_member_remove_h),
         )
         .route(
+            "/alert-rule-events",
+            get(agents_telemetry::alert_rule_events_all_h),
+        )
+        .route(
             "/alert-rules",
             get(groups_and_rules::alert_rules_list_h).post(groups_and_rules::alert_rules_create_h),
         )
@@ -196,5 +212,37 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/alert-rules/:rule_id",
             put(groups_and_rules::alert_rules_update_h).delete(groups_and_rules::alert_rules_delete_h),
+        )
+        .route(
+            "/app-block-rules",
+            get(app_block::app_block_rules_list).post(app_block::app_block_rules_create),
+        )
+        .route(
+            "/app-block-rules/:id",
+            put(app_block::app_block_rules_update).delete(app_block::app_block_rules_delete),
+        )
+        .route(
+            "/app-block-rules/protected",
+            get(app_block::protected_exes_list),
+        )
+        .route(
+            "/app-block-rules/:id/events",
+            get(app_block::rule_app_block_events),
+        )
+        .route(
+            "/app-block-events",
+            get(app_block::all_app_block_events),
+        )
+        .route(
+            "/agents/:id/app-block-events",
+            get(app_block::agent_app_block_events),
+        )
+        .route(
+            "/agents/:id/effective-rules",
+            get(app_block::agent_effective_rules),
+        )
+        .route(
+            "/agents/:id/known-exes",
+            get(app_block::agent_known_exes),
         )
 }

@@ -67,6 +67,19 @@ pub struct Config {
     /// Controlled remotely via `set_network_policy` from the dashboard.
     #[serde(default)]
     pub internet_blocked: bool,
+
+    /// App blocking rules pushed from the server. Persisted so enforcement
+    /// resumes across reboots before the server reconnects.
+    #[serde(default)]
+    pub app_block_rules: Vec<StoredBlockRule>,
+}
+
+/// Minimal representation of an app block rule stored in config.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredBlockRule {
+    pub id: i64,
+    pub exe_pattern: String,
+    pub match_mode: String,
 }
 
 fn default_agent_name() -> String {
@@ -90,6 +103,7 @@ impl Default for Config {
             ui_password_hash: empty_password_hash(),
             auto_update_enabled: default_auto_update_enabled(),
             internet_blocked: false,
+            app_block_rules: Vec::new(),
         }
     }
 }

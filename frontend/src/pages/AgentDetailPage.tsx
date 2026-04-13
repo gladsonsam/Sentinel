@@ -22,7 +22,7 @@ import { ScreenTab } from "../components/tabs/ScreenTab";
 import { KeysTab } from "../components/tabs/KeysTab";
 import { WindowsTab } from "../components/tabs/WindowsTab";
 import { UrlsTab } from "../components/tabs/UrlsTab";
-import { AlertsTab } from "../components/tabs/AlertsTab";
+import { EventsTab } from "../components/tabs/EventsTab";
 import { FilesTab } from "../components/tabs/FilesTab";
 import { AgentLogsTab } from "../components/tabs/AgentLogsTab";
 import { SoftwareTab } from "../components/tabs/SoftwareTab";
@@ -450,7 +450,7 @@ export function AgentDetailPage({
         return <UrlsTab agentId={agent.id} />;
       case "alerts":
         return (
-          <AlertsTab
+          <EventsTab
             agentId={agent.id}
             onViewTimeline={(timestamp) => {
               setTimelineHighlight(timestamp);

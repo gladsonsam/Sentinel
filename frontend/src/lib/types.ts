@@ -303,6 +303,71 @@ export interface AlertRule {
   scopes: AlertRuleScope[];
 }
 
+// ── Effective rules (per-agent) ───────────────────────────────────────────────
+
+/** Minimal alert rule row returned by the effective-rules endpoint. */
+export interface AlertRuleRow {
+  id: number;
+  name: string;
+  pattern: string;
+  match_mode: string;
+  case_insensitive: boolean;
+  cooldown_secs: number;
+  take_screenshot: boolean;
+  scope_kind?: string;
+}
+
+// ── App block events ──────────────────────────────────────────────────────────
+
+export interface AppBlockEvent {
+  id: number;
+  agent_id: string;
+  agent_name: string;
+  rule_id: number | null;
+  rule_name: string | null;
+  exe_name: string;
+  killed_at: string;
+}
+
+// ── Internet block rules ──────────────────────────────────────────────────────
+
+export interface InternetBlockRuleScope {
+  kind: "all" | "group" | "agent";
+  group_id?: string;
+  agent_id?: string;
+}
+
+export interface InternetBlockRule {
+  id: number;
+  name: string;
+  enabled: boolean;
+  created_at: string;
+  scopes: InternetBlockRuleScope[];
+}
+
+// ── App block rules ───────────────────────────────────────────────────────────
+
+export type AppBlockMatchMode = "exact" | "contains";
+
+export interface AppBlockRuleScope {
+  kind: "all" | "group" | "agent";
+  group_id?: string;
+  agent_id?: string;
+}
+
+export interface AppBlockRule {
+  id: number;
+  name: string;
+  exe_pattern: string;
+  match_mode: AppBlockMatchMode;
+  enabled: boolean;
+  created_at?: string;
+  /** Present when fetching effective rules for an agent (summary of most-permissive scope). */
+  scope_kind?: "all" | "group" | "agent";
+  /** Present when fetching the full rule list (includes all scope rows). */
+  scopes?: AppBlockRuleScope[];
+}
+
 // ── UI ────────────────────────────────────────────────────────────────────────
 
 export type TabKey =

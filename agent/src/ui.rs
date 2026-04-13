@@ -341,6 +341,8 @@ fn save_config(
         auto_update_enabled: config.auto_update_enabled,
         // Preserve the server-managed internet block state; the settings UI does not touch it.
         internet_blocked: stored.0.lock().unwrap().internet_blocked,
+        // Preserve app block rules; managed remotely.
+        app_block_rules: stored.0.lock().unwrap().app_block_rules.clone(),
     };
 
     crate::config::save_config(&new_cfg).map_err(|e| e.to_string())?;

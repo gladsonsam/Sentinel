@@ -50,6 +50,7 @@
 // In release builds: suppress the console window so the agent runs silently.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app_block;
 mod app_display;
 mod capture;
 mod config;
@@ -478,6 +479,26 @@ async fn run_agent_loop(
     mut key_rx: mpsc::UnboundedReceiver<InputEvent>,
     status: Arc<Mutex<AgentStatus>>,
 ) {
+    // Load persisted app block rules from config so enforcement starts immediately.
+    let shared_rules = app_block::new_shared_rules();
+    {
+        let cfg = shared_cfg.lock().unwrap();
+        let persisted: Vec<app_block::BlockRule> = cfg
+            .app_block_rules
+            .iter()
+            .map(app_block::BlockRule::from_stored)
+            .collect();
+        if !persisted.is_empty() {
+            info!("Loaded {} persisted app block rule(s).", persisted.len());
+            *shared_rules.lock().unwrap() = persisted;
+        }
+    }
+    let kill_report_tx = app_block::new_kill_report_tx();
+    let rules_for_enforcer = shared_rules.clone();
+    let kill_tx_for_enforcer = kill_report_tx.clone();
+    tokio::spawn(async move {
+        app_block::run_enforcer(rules_for_enforcer, kill_tx_for_enforcer).await;
+    });
     #[cfg(target_os = "windows")]
     if let Ok(true) = crate::enrollment::try_consume_pending_enrollment().await {
         let new_cfg = config::load_config();
@@ -556,6 +577,8 @@ async fn run_agent_loop(
                             capture_stop: &mut capture_stop,
                             shared_cfg: shared_cfg.clone(),
                             config_tx: config_tx.clone(),
+                            shared_rules: shared_rules.clone(),
+                            kill_report_tx: kill_report_tx.clone(),
                         })
                         .await
                         {
@@ -570,6 +593,10 @@ async fn run_agent_loop(
                             stop.store(true, Ordering::Relaxed);
                             info!("Screen capture stopped (session ended).");
                         }
+
+                        // Detach the kill-report sink so the enforcer doesn't
+                        // accumulate events while disconnected.
+                        *kill_report_tx.lock().unwrap() = None;
 
                         set_status(&status, AgentStatus::Disconnected);
                     }
@@ -612,6 +639,8 @@ struct RunSessionArgs<'a> {
     capture_stop: &'a mut Option<Arc<AtomicBool>>,
     shared_cfg: Arc<Mutex<Config>>,
     config_tx: tokio::sync::watch::Sender<Option<Config>>,
+    shared_rules: app_block::SharedRules,
+    kill_report_tx: app_block::KillReportTx,
 }
 
 async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
@@ -623,7 +652,13 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
         capture_stop,
         shared_cfg,
         config_tx,
+        shared_rules,
+        kill_report_tx,
     } = args;
+
+    // Register this session as the kill-event sink so the enforcer can report kills.
+    let (kill_ev_tx, mut kill_ev_rx) = tokio::sync::mpsc::unbounded_channel::<app_block::KillEvent>();
+    *kill_report_tx.lock().unwrap() = Some(kill_ev_tx);
     let (mut ws_tx, mut ws_rx) = ws_stream.split();
 
     // ── Outbound message bus ──────────────────────────────────────────────
@@ -689,6 +724,7 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                             &shared_cfg,
                             &config_tx,
                             out_tx.clone(),
+                            &shared_rules,
                         );
                     }
                     Some(Ok(Message::Close(frame))) => {
@@ -708,7 +744,20 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                 }
             }
 
-            // ── Branch 2: screen frame delivery ──────────────────────────
+            // ── Branch 2: app block kill reports ─────────────────────────
+            ev = kill_ev_rx.recv() => {
+                if let Some(kill) = ev {
+                    let payload = serde_json::json!({
+                        "type": "app_block_kill",
+                        "rule_id": kill.rule_id,
+                        "rule_name": kill.rule_name,
+                        "exe_name": kill.exe_name,
+                    }).to_string();
+                    let _ = out_tx.send(Message::Text(payload)).await;
+                }
+            }
+
+            // ── Branch 3: screen frame delivery ──────────────────────────
             _ = frame_ticker.tick() => {
                 let mut latest: Option<Vec<u8>> = None;
                 while let Ok(jpeg) = frame_rx.try_recv() {
@@ -864,6 +913,7 @@ fn handle_server_command(
     shared_cfg: &Arc<Mutex<Config>>,
     config_tx: &tokio::sync::watch::Sender<Option<Config>>,
     out_tx: mpsc::Sender<Message>,
+    shared_rules: &app_block::SharedRules,
 ) {
     let val: serde_json::Value = match serde_json::from_str(text) {
         Ok(v) => v,
@@ -1019,6 +1069,27 @@ fn handle_server_command(
                         info!("Network policy updated from server (blocked={blocked}).");
                     }
                     Err(e) => warn!("Failed to save config (network policy): {e}"),
+                }
+            }
+        }
+        "set_app_block_rules" => {
+            let rules: Vec<app_block::BlockRule> = val["rules"]
+                .as_array()
+                .unwrap_or(&vec![])
+                .iter()
+                .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                .collect();
+            {
+                let mut lock = shared_rules.lock().unwrap();
+                *lock = rules.clone();
+            }
+            if let Ok(mut c) = shared_cfg.lock() {
+                c.app_block_rules = rules.iter().map(|r| r.to_stored()).collect();
+                match crate::config::save_config(&c) {
+                    Ok(()) => {
+                        info!("App block rules updated from server ({} rules).", rules.len());
+                    }
+                    Err(e) => warn!("Failed to save app block rules to config: {e}"),
                 }
             }
         }
