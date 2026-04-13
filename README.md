@@ -40,8 +40,6 @@ cp .env.example .env
 docker compose up -d
 ```
 
-Use **`docker compose up -d --build`** to build the server image from this repo instead of pulling GHCR.
-
 Open **[http://localhost:9000](http://localhost:9000)** on the Docker host (or `http://<LAN-IP>:9000` from another machine). Extended deploy options (mDNS, Traefik, TLS): **[wiki → Deployment](https://github.com/gladsonsam/Sentinel/wiki/Deployment)**.
 
 ## Documentation
