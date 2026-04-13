@@ -206,6 +206,7 @@ function AgentDetailRoute({
   removeNotification,
   toolsOpen,
   setToolsOpen,
+  updateAgentInfo,
 }: {
   agents: Record<string, Agent>;
   agentInfo: Record<string, AgentInfo | null>;
@@ -226,6 +227,7 @@ function AgentDetailRoute({
   removeNotification: (id: string) => void;
   toolsOpen: boolean;
   setToolsOpen: (open: boolean) => void;
+  updateAgentInfo: (id: string, info: AgentInfo | null) => void;
 }) {
   const { agentId } = useParams();
   const navigate = useNavigate();
@@ -234,7 +236,7 @@ function AgentDetailRoute({
   const activeTab = useMemo<TabKey>(() => {
     const tab = searchParams.get("tab");
     if (tab === "screen") return "live";
-    return isTabKey(tab) ? tab : "live";
+    return isTabKey(tab) ? tab : "activity";
   }, [searchParams]);
 
   useEffect(() => {
@@ -295,6 +297,7 @@ function AgentDetailRoute({
         currentUser={sessionToNavUser(currentUser)}
         dashboardRole={currentUser?.role ?? null}
         highlightTimestamp={highlightTimestamp}
+        onAgentInfoCommit={updateAgentInfo}
       />
     </Suspense>
   );
@@ -699,7 +702,7 @@ export function App() {
   };
 
   const handleSelectAgent = (agentId: string) => {
-    navigate(`/agents/${agentId}?tab=live`);
+    navigate(`/agents/${agentId}?tab=activity`);
   };
 
   const handleOpenScreen = (agentId: string) => {
@@ -848,6 +851,7 @@ export function App() {
             removeNotification={removeNotification}
             toolsOpen={toolsOpen}
             setToolsOpen={setToolsOpen}
+            updateAgentInfo={updateAgentInfo}
           />
         }
       />

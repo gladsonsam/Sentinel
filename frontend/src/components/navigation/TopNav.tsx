@@ -50,34 +50,38 @@ export function TopNav({
     const canOpenReleases =
       hasData && (releasesUrlRaw.startsWith("https://") || releasesUrlRaw.startsWith("http://"));
 
-    const serverMenuItem: ButtonDropdownProps.Item = canOpenReleases
-      ? {
-          id: MENU_SERVER_VERSION_ID,
-          text: "Server version",
-          ariaLabel:
-            remoteVersion != null
-              ? `Server v${versionLabel}. Latest GitHub release v${remoteVersion}. Opens GitHub releases in a new tab.`
-              : `Server v${versionLabel}. Opens GitHub releases in a new tab.`,
-          href: releasesUrlRaw,
-          external: true,
-          externalIconAriaLabel: "Opens in a new tab",
-        }
-      : {
-          id: MENU_SERVER_VERSION_ID,
-          text: "Server version",
-          ariaLabel: hasData
-            ? "Server version (GitHub releases link unavailable)."
-            : "Loading server version.",
-          disabled: true,
-        };
+    const displayName = currentUser
+      ? (currentUser.display_name?.trim() || currentUser.username)
+      : "Account";
+    const roleLabel = currentUser ? dashboardRoleLabel(currentUser.role) : null;
+
+    const withVPrefix = (v: string | null | undefined) => {
+      if (v == null) return "";
+      const t = String(v).trim().replace(/^v/i, "");
+      return t ? `v${t}` : "";
+    };
+
+    const serverMenuItem: ButtonDropdownProps.Item = {
+      id: MENU_SERVER_VERSION_ID,
+      text: "Account and server",
+      disabled: true,
+      ariaLabel: [
+        `${displayName}${roleLabel ? `, ${roleLabel}` : ""}`,
+        hasData
+          ? remoteVersion != null
+            ? `Server v${versionLabel}. Latest on GitHub v${remoteVersion}.`
+            : `Server v${versionLabel}.`
+          : "Server version loading.",
+        canOpenReleases && updateAvailable
+          ? "Click update available to open releases."
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    };
 
     const renderItem: ButtonDropdownProps.ItemRenderer = ({ item }) => {
       if (item.type !== "action" || item.option.id !== MENU_SERVER_VERSION_ID) return null;
-      const title = !hasData
-        ? "Loading server version"
-        : canOpenReleases
-          ? "Open GitHub releases in a new tab"
-          : `Server v${versionLabel}`;
 
       return (
         <div
@@ -86,30 +90,63 @@ export function TopNav({
             updateAvailable && hasData && "sentinel-account-menu-version--update",
             !hasData && "sentinel-account-menu-version--loading",
           )}
-          title={title}
         >
-          <div className="sentinel-account-menu-version__eyebrow">Server</div>
-          <div className="sentinel-account-menu-version__row">
+          <div className="sentinel-account-menu-version__head">
+            <div className="sentinel-account-menu-version__titles">
+              <div className="sentinel-account-menu-version__account-name">{displayName}</div>
+              {roleLabel ? (
+                <div className="sentinel-account-menu-version__account-role">{roleLabel}</div>
+              ) : null}
+              {hasData ? (
+                <div className="sentinel-account-menu-version__server-ver">{withVPrefix(versionLabel)}</div>
+              ) : (
+                <span className="sentinel-account-menu-version__muted">Checking version…</span>
+              )}
+            </div>
             {hasData ? (
-              <>
-                <span className="sentinel-account-menu-version__ver">v{versionLabel}</span>
+              <div className="sentinel-account-menu-version__actions">
                 {updateAvailable ? (
-                  <span className="sentinel-account-menu-version__pill">Update available</span>
+                  canOpenReleases ? (
+                    <a
+                      href={releasesUrlRaw}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className={clsx(
+                        "sentinel-account-menu-version__pill",
+                        remoteVersion != null && "sentinel-account-menu-version__pill--stack",
+                      )}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <span className="sentinel-account-menu-version__pill-line">Update available</span>
+                      {remoteVersion != null ? (
+                        <span className="sentinel-account-menu-version__pill-sub">{withVPrefix(remoteVersion)}</span>
+                      ) : null}
+                    </a>
+                  ) : (
+                    <span
+                      className={clsx(
+                        "sentinel-account-menu-version__pill",
+                        remoteVersion != null && "sentinel-account-menu-version__pill--stack",
+                      )}
+                    >
+                      <span className="sentinel-account-menu-version__pill-line">Update available</span>
+                      {remoteVersion != null ? (
+                        <span className="sentinel-account-menu-version__pill-sub">{withVPrefix(remoteVersion)}</span>
+                      ) : null}
+                    </span>
+                  )
                 ) : (
                   <span className="sentinel-account-menu-version__ok">Up to date</span>
                 )}
-              </>
-            ) : (
-              <span className="sentinel-account-menu-version__muted">Checking version…</span>
-            )}
+              </div>
+            ) : null}
           </div>
-          {hasData && remoteVersion != null ? (
-            <div className="sentinel-account-menu-version__latest">Latest on GitHub: v{remoteVersion}</div>
-          ) : hasData ? (
+          {hasData && !updateAvailable && remoteVersion == null ? (
             <div className="sentinel-account-menu-version__latest sentinel-account-menu-version__latest--muted">
-              Latest on GitHub: not reported
+              GitHub latest: not reported
             </div>
           ) : null}
+          <div className="sentinel-account-menu-version__hr" aria-hidden="true" />
         </div>
       );
     };

@@ -1,5 +1,3 @@
-#![cfg(target_os = "windows")]
-
 use std::time::Duration;
 
 use anyhow::{Context, Result};

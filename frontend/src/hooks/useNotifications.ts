@@ -12,6 +12,10 @@ let notificationIdCounter = 0;
 export function useNotifications() {
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
 
+  const removeNotification = useCallback((id: string) => {
+    setNotifications((prev) => prev.filter((n) => n.id !== id));
+  }, []);
+
   const addNotification = useCallback(
     (
       type: NotificationType,
@@ -48,12 +52,8 @@ export function useNotifications() {
 
       return id;
     },
-    []
+    [removeNotification]
   );
-
-  const removeNotification = useCallback((id: string) => {
-    setNotifications((prev) => prev.filter((n) => n.id !== id));
-  }, []);
 
   const clearAll = useCallback(() => {
     setNotifications([]);

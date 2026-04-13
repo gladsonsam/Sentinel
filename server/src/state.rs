@@ -60,6 +60,10 @@ pub struct AppState {
     /// MJPEG viewer refcount per agent; drives `start_capture` / `stop_capture`.
     pub capture_viewers: Mutex<HashMap<Uuid, u32>>,
 
+    /// Active MJPEG HTTP sessions (`?session=<uuid>` → agent id). Used so explicit “leave”
+    /// can drop refcount immediately (browser may delay closing the image request).
+    pub mjpeg_sessions: Mutex<HashMap<Uuid, Uuid>>,
+
     pub allow_insecure_dashboard_open: bool,
     pub agent_secret: Option<String>,
     pub allow_insecure_agent_auth: bool,
@@ -98,20 +102,34 @@ pub struct Frame {
     pub jpeg: Bytes,
 }
 
+/// Constructor input for [`AppState::new`].
+pub struct AppStateParams {
+    pub db: PgPool,
+    pub allow_insecure_dashboard_open: bool,
+    pub agent_secret: Option<String>,
+    pub allow_insecure_agent_auth: bool,
+    pub wol_min_interval: Duration,
+    pub allow_remote_script: bool,
+    pub metrics: Option<Arc<crate::metrics::AppMetrics>>,
+    pub notify_hub: crate::notify::NotifyHub,
+    pub integration_api_token: Option<String>,
+    pub public_base_url: Option<String>,
+}
+
 impl AppState {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        db: PgPool,
-        allow_insecure_dashboard_open: bool,
-        agent_secret: Option<String>,
-        allow_insecure_agent_auth: bool,
-        wol_min_interval: Duration,
-        allow_remote_script: bool,
-        metrics: Option<Arc<crate::metrics::AppMetrics>>,
-        notify_hub: crate::notify::NotifyHub,
-        integration_api_token: Option<String>,
-        public_base_url: Option<String>,
-    ) -> Self {
+    pub fn new(p: AppStateParams) -> Self {
+        let AppStateParams {
+            db,
+            allow_insecure_dashboard_open,
+            agent_secret,
+            allow_insecure_agent_auth,
+            wol_min_interval,
+            allow_remote_script,
+            metrics,
+            notify_hub,
+            integration_api_token,
+            public_base_url,
+        } = p;
         let (tx, _) = broadcast::channel(4096);
         Self {
             db,
@@ -120,6 +138,7 @@ impl AppState {
             frames: Mutex::new(HashMap::new()),
             agent_cmds: Mutex::new(HashMap::new()),
             capture_viewers: Mutex::new(HashMap::new()),
+            mjpeg_sessions: Mutex::new(HashMap::new()),
             allow_insecure_dashboard_open,
             agent_secret,
             allow_insecure_agent_auth,

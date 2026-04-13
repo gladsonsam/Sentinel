@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Box from "@cloudscape-design/components/box";
 import Button from "@cloudscape-design/components/button";
 import Header from "@cloudscape-design/components/header";
@@ -54,7 +54,7 @@ export function AuditTab({
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState(STATUS_OPTIONS[0]);
 
-  const fetchAudit = async () => {
+  const fetchAudit = useCallback(async () => {
     try {
       setLoading(true);
       const params = new URLSearchParams();
@@ -85,11 +85,11 @@ export function AuditTab({
     } finally {
       setLoading(false);
     }
-  };
+  }, [agentId, statusFilter.value]);
 
   useEffect(() => {
-    fetchAudit();
-  }, [agentId, statusFilter.value]);
+    void fetchAudit();
+  }, [fetchAudit]);
 
   const scopedRows = useMemo(() => {
     if (agentId) return rows;

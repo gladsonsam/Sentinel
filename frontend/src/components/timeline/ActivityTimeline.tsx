@@ -981,7 +981,7 @@ export function ActivityTimeline({ sessions, loading, onRefresh, highlightTimest
       ? `${filteredSorted.length} of ${sorted.length} sessions`
       : `${sorted.length} sessions`;
     return `${base} tracked${highlightTimestamp ? " · scrolled to alert time" : ""}`;
-  }, [filteredSorted.length, sorted.length, isFiltered, highlightTimestamp, jumpRangeValue]);
+  }, [filteredSorted.length, sorted.length, isFiltered, highlightTimestamp]);
 
   if (loading && sessions.length === 0) {
     return (

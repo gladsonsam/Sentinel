@@ -215,18 +215,18 @@ async fn main() -> anyhow::Result<()> {
         info!(public_base_url = %base, "Public base URL configured for external deep links");
     }
 
-    let state = Arc::new(state::AppState::new(
-        pool,
+    let state = Arc::new(state::AppState::new(state::AppStateParams {
+        db: pool,
         allow_insecure_dashboard_open,
         agent_secret,
         allow_insecure_agent_auth,
         wol_min_interval,
         allow_remote_script,
-        prom_metrics.clone(),
+        metrics: prom_metrics.clone(),
         notify_hub,
         integration_api_token,
         public_base_url,
-    ));
+    }));
 
     if let Some(ref m) = prom_metrics {
         let st = state.clone();

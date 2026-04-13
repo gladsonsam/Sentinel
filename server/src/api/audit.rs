@@ -43,20 +43,23 @@ pub async fn audit_log(
     .await
     {
         Ok(rows) => {
+            let detail = serde_json::json!({
+                "action_filter": p.action,
+                "status_filter": p.status,
+                "limit": p.limit,
+                "offset": p.offset
+            });
             db::insert_audit_log_dedup_traced(
                 &s.db,
-                user.username.as_str(),
-                p.agent_id,
-                "view_audit_log",
-                "ok",
-                &serde_json::json!({
-                    "action_filter": p.action,
-                    "status_filter": p.status,
-                    "limit": p.limit,
-                    "offset": p.offset
-                }),
-                10,
-                ip.as_deref(),
+                db::AuditLogDedup {
+                    actor: user.username.as_str(),
+                    agent_id: p.agent_id,
+                    action: "view_audit_log",
+                    status: "ok",
+                    detail: &detail,
+                    dedup_window_secs: 10,
+                    client_ip: ip.as_deref(),
+                },
             )
             .await;
             Json(serde_json::json!({ "rows": rows })).into_response()

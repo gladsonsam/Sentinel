@@ -257,13 +257,15 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>, user: &AuthUser) {
         tokio::spawn(async move {
             crate::db::insert_audit_log_dedup_traced(
                 &pool,
-                &actor,
-                Some(agent_id),
-                "control_command",
-                "rejected",
-                &detail,
-                2,
-                None,
+                crate::db::AuditLogDedup {
+                    actor: actor.as_str(),
+                    agent_id: Some(agent_id),
+                    action: "control_command",
+                    status: "rejected",
+                    detail: &detail,
+                    dedup_window_secs: 2,
+                    client_ip: None,
+                },
             )
             .await;
         });
@@ -292,17 +294,19 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>, user: &AuthUser) {
     });
     let pool = state.db.clone();
     let actor = user.username.clone();
-    let dedup_window_secs = if cmd_type == "MouseMove" { 5 } else { 2 };
+    let dedup_window_secs: i64 = if cmd_type == "MouseMove" { 5 } else { 2 };
     tokio::spawn(async move {
         crate::db::insert_audit_log_dedup_traced(
             &pool,
-            &actor,
-            Some(agent_id),
-            "control_command",
-            status,
-            &detail,
-            dedup_window_secs,
-            None,
+            crate::db::AuditLogDedup {
+                actor: actor.as_str(),
+                agent_id: Some(agent_id),
+                action: "control_command",
+                status,
+                detail: &detail,
+                dedup_window_secs,
+                client_ip: None,
+            },
         )
         .await;
     });

@@ -113,7 +113,7 @@ export function createCardDefinitions(
               <div className="sentinel-agent-card-main-top">
                 <Box className="sentinel-agent-card-block sentinel-agent-card-block-details">
                   <Box variant="h3">Details</Box>
-                  <SpaceBetween size="xs">
+                  <SpaceBetween size="xs" className="sentinel-agent-card-detail-stack">
                     <Box>
                       <Box variant="awsui-key-label">{leftLabel}</Box>
                       <Box>{leftValue}</Box>

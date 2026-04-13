@@ -59,6 +59,8 @@ interface AgentDetailPageProps {
   onOpenAgentGroups?: () => void;
   /** Current dashboard role; used to explain screen/script permission limits. */
   dashboardRole?: DashboardRole | null;
+  /** Merge refreshed agent info into local UI and the global agent cache (overview, WS parity). */
+  onAgentInfoCommit?: (agentId: string, info: AgentInfo | null) => void;
 }
 
 export function AgentDetailPage({
@@ -77,6 +79,7 @@ export function AgentDetailPage({
   isAdmin = false,
   onOpenAgentGroups,
   dashboardRole = null,
+  onAgentInfoCommit,
 }: AgentDetailPageProps) {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(false);
@@ -320,9 +323,9 @@ export function AgentDetailPage({
   }, [agent.id]);
   useEffect(() => {
     if (activeTab === "activity" || activeTab === "live") {
-      loadActivityData();
+      void loadActivityData();
     }
-  }, [activeTab, agent.id]);
+  }, [activeTab, agent.id, loadActivityData]);
 
   useEffect(() => {
     if (activeTab !== "activity" && activeTab !== "live") return;
@@ -573,7 +576,14 @@ export function AgentDetailPage({
           onRunAction={runAgentAction}
         />
 
-        <GeneralConfig agent={agent} info={resolvedInfo} />
+        <GeneralConfig
+          agent={agent}
+          info={resolvedInfo}
+          onAgentInfoRefreshed={(next) => {
+            setResolvedInfo(next);
+            onAgentInfoCommit?.(agent.id, next);
+          }}
+        />
 
         <Tabs
           ariaLabel="Agent views"

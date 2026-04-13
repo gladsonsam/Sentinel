@@ -73,8 +73,8 @@ pub fn collect_agent_info() -> serde_json::Value {
     let cpu_cores = sys.cpus().len() as u32;
 
     // sysinfo 0.37 returns memory in bytes; convert to MB for the payload.
-    let total_mem_mb = (sys.total_memory() / 1024 / 1024) as u64;
-    let used_mem_mb = (sys.used_memory() / 1024 / 1024) as u64;
+    let total_mem_mb = sys.total_memory() / 1024 / 1024;
+    let used_mem_mb = sys.used_memory() / 1024 / 1024;
     let uptime_secs = System::uptime();
 
     let disks = Disks::new_with_refreshed_list();

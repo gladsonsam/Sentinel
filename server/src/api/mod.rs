@@ -96,6 +96,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/agents/:id/screen", get(agents_capture::agent_screen))
         .route("/agents/:id/mjpeg", get(agents_capture::agent_mjpeg))
         .route(
+            "/agents/:id/mjpeg/leave",
+            post(agents_capture::agent_mjpeg_leave),
+        )
+        .route(
             "/settings/retention",
             get(retention::retention_global_get).put(retention::retention_global_put),
         )

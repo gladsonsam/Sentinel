@@ -47,18 +47,10 @@ pub struct WindowEvent {
 // Tracker
 // ─────────────────────────────────────────────────────────────────────────────
 
+#[derive(Default)]
 pub struct WindowTracker {
     last_hwnd: usize,
     last_title: String,
-}
-
-impl Default for WindowTracker {
-    fn default() -> Self {
-        Self {
-            last_hwnd: 0,
-            last_title: String::new(),
-        }
-    }
 }
 
 impl WindowTracker {

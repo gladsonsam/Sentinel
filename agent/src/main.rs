@@ -250,10 +250,8 @@ fn main() {
         use windows::Win32::System::Threading::CreateMutexW;
 
         let name = crate::service::to_wide_z("Global\\SentinelAgentMain");
-        let h: HANDLE = match unsafe { CreateMutexW(None, false, PCWSTR(name.as_ptr())) } {
-            Ok(h) => h,
-            Err(_) => HANDLE::default(),
-        };
+        let h: HANDLE = unsafe { CreateMutexW(None, false, PCWSTR(name.as_ptr())) }
+            .unwrap_or_default();
         if h.is_invalid() {
             warn!("CreateMutexW failed; continuing without single-instance guard.");
         } else {
@@ -473,16 +471,15 @@ async fn run_agent_loop(
                     Ok((ws_stream, response)) => {
                         set_status(&status, AgentStatus::Connected);
                         info!("WebSocket connected (HTTP {}).", response.status().as_u16());
-                        match run_session(
+                        match run_session(RunSessionArgs {
                             ws_stream,
-                            &frame_tx,
-                            &mut frame_rx,
-                            &mut key_rx,
-                            &mut capture_stop,
-                            cfg.agent_name.clone(),
-                            shared_cfg.clone(),
-                            config_tx.clone(),
-                        )
+                            frame_tx: &frame_tx,
+                            frame_rx: &mut frame_rx,
+                            key_rx: &mut key_rx,
+                            capture_stop: &mut capture_stop,
+                            shared_cfg: shared_cfg.clone(),
+                            config_tx: config_tx.clone(),
+                        })
                         .await
                         {
                             Ok(()) => info!("Session closed gracefully."),
@@ -524,21 +521,32 @@ async fn connect_ws(
     WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
     tokio_tungstenite::tungstenite::handshake::client::Response,
 )> {
-    Ok(connect_async(ws_url)
+    connect_async(ws_url)
         .await
-        .context("WebSocket connect failed")?)
+        .context("WebSocket connect failed")
 }
 
-async fn run_session(
+/// Bundles handles for [`run_session`] so the entry point stays under Clippy's argument limit.
+struct RunSessionArgs<'a> {
     ws_stream: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
-    frame_tx: &mpsc::Sender<Vec<u8>>,
-    frame_rx: &mut mpsc::Receiver<Vec<u8>>,
-    key_rx: &mut mpsc::UnboundedReceiver<InputEvent>,
-    capture_stop: &mut Option<Arc<AtomicBool>>,
-    _agent_name: String,
+    frame_tx: &'a mpsc::Sender<Vec<u8>>,
+    frame_rx: &'a mut mpsc::Receiver<Vec<u8>>,
+    key_rx: &'a mut mpsc::UnboundedReceiver<InputEvent>,
+    capture_stop: &'a mut Option<Arc<AtomicBool>>,
     shared_cfg: Arc<Mutex<Config>>,
     config_tx: tokio::sync::watch::Sender<Option<Config>>,
-) -> Result<()> {
+}
+
+async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
+    let RunSessionArgs {
+        ws_stream,
+        frame_tx,
+        frame_rx,
+        key_rx,
+        capture_stop,
+        shared_cfg,
+        config_tx,
+    } = args;
     let (mut ws_tx, mut ws_rx) = ws_stream.split();
 
     // ── Outbound message bus ──────────────────────────────────────────────
@@ -850,7 +858,7 @@ fn handle_server_command(
             if let Some(hash) = val["hash"].as_str() {
                 if let Ok(mut c) = shared_cfg.lock() {
                     c.ui_password_hash = hash.to_string();
-                    match crate::config::save_config(&*c) {
+                    match crate::config::save_config(&c) {
                         Ok(()) => {
                             let new_cfg = c.clone();
                             drop(c);
@@ -866,7 +874,7 @@ fn handle_server_command(
             if let Some(enabled) = val["enabled"].as_bool() {
                 if let Ok(mut c) = shared_cfg.lock() {
                     c.auto_update_enabled = enabled;
-                    match crate::config::save_config(&*c) {
+                    match crate::config::save_config(&c) {
                         Ok(()) => {
                             let new_cfg = c.clone();
                             drop(c);
@@ -1118,7 +1126,7 @@ fn handle_server_command(
                 let total_chunks = if file_len == 0 {
                     1usize
                 } else {
-                    ((file_len as usize) + REMOTE_FILE_CHUNK_BYTES - 1) / REMOTE_FILE_CHUNK_BYTES
+                    (file_len as usize).div_ceil(REMOTE_FILE_CHUNK_BYTES)
                 };
 
                 if file_len == 0 {

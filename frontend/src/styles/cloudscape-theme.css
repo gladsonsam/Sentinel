@@ -183,6 +183,38 @@
   border-color: #6b5a00;
 }
 
+/* Top bar: flex children can shrink without clipping — do NOT set overflow:hidden here:
+   Cloudscape’s account MenuDropdown renders its panel inside the header; clipping would hide it. */
+#sentinel-top-nav.sentinel-top-nav {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+#sentinel-top-nav.sentinel-top-nav > div {
+  min-width: 0;
+  max-width: 100%;
+}
+
+#sentinel-top-nav.sentinel-top-nav [class*="context-top-navigation"],
+#sentinel-top-nav.sentinel-top-nav header[class*="awsui_top-navigation"] {
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+#sentinel-top-nav.sentinel-top-nav [class*="awsui_padding-box"] {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+#sentinel-top-nav.sentinel-top-nav [class*="awsui_utilities"] {
+  min-width: 0;
+  flex-shrink: 1;
+}
+
 /* TopNavigation: full product title (override Cloudscape title ellipsis; #id+.class beats :not(#\9)). */
 #sentinel-top-nav.sentinel-top-nav [class*="awsui_title"] {
   overflow: visible;
@@ -203,6 +235,8 @@
 /* Account dropdown trigger: custom avatar in icon slot (photo / Lucide / initials) */
 #sentinel-top-nav.sentinel-top-nav [class*="awsui_utility-type-menu-dropdown"] [class*="awsui_icon"] .sentinel-top-nav-account-avatar {
   flex-shrink: 0;
+  /* Cloudscape’s label stack sits high vs the icon box; lift the circle so the name lines up with its vertical center */
+  transform: translateY(-3px);
 }
 
 #sentinel-top-nav.sentinel-top-nav .sentinel-top-nav-account-avatar.sentinel-user-avatar--initials {
@@ -229,13 +263,83 @@
   min-width: 0;
 }
 
+/* Account MenuDropdown: Cloudscape “limited width” matches the trigger (avatar column), which
+   can shrink the flyout to ~56px — flex children then wrap one character per line. */
+#sentinel-top-nav.sentinel-top-nav [class*="awsui_utility-type-menu-dropdown"] [class*="awsui_dropdown-content-wrapper"] {
+  min-inline-size: 280px;
+  max-inline-size: min(380px, calc(100vw - 24px));
+  /* Avoid nested scroll containers (double scrollbars) with Cloudscape’s max-height + overflow-y. */
+  max-block-size: none !important;
+  overflow: visible !important;
+  box-sizing: border-box;
+}
+
+#sentinel-top-nav.sentinel-top-nav [class*="awsui_utility-type-menu-dropdown"] [class*="awsui_dropdown-content"] {
+  max-block-size: none !important;
+  overflow-x: clip;
+  overflow-y: visible !important;
+  box-sizing: border-box;
+}
+
+#sentinel-top-nav.sentinel-top-nav [class*="awsui_utility-type-menu-dropdown"] ul[class*="awsui_options-list"] {
+  min-inline-size: 100%;
+  max-block-size: none !important;
+  overflow-x: clip;
+  overflow-y: visible !important;
+  box-sizing: border-box;
+  /* Replace spacing from the hidden duplicate header (account title + role). */
+  padding-block-start: var(--space-xs, 8px);
+  /* Breathing room under the last item (e.g. Logout). */
+  padding-block-end: var(--space-xs, 8px);
+}
+
+/* Merged panel: account + server live in the first item; hide Cloudscape’s separate header. */
+#sentinel-top-nav.sentinel-top-nav [class*="awsui_utility-type-menu-dropdown"] [class*="awsui_dropdown-content"] > [class*="awsui_header"] {
+  display: none !important;
+}
+
+/* First options row = merged account/server panel (no stable test id on <li>). */
+#sentinel-top-nav.sentinel-top-nav
+  [class*="awsui_utility-type-menu-dropdown"]
+  ul[class*="awsui_options-list"]
+  > li:first-child:has(.sentinel-account-menu-version)
+  :is(a, span, button)[class*="awsui_menu-item"] {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* Some builds set max-height on the floating root as well as the inner wrapper — second scrollbar. */
+#sentinel-top-nav.sentinel-top-nav [class*="awsui_utility-type-menu-dropdown"] [class*="awsui_dropdown"][class*="awsui_open"] {
+  max-block-size: none !important;
+  overflow: visible !important;
+}
+
+/* Narrow viewports: Cloudscape can leave the account flyout’s left edge at the trigger (near the
+   screen edge) while the panel is 250–380px wide, so it spills past the viewport and widens the
+   document. Anchor to the right gutter and drop translate so the menu sits fully on-screen. */
+@media (max-width: 768px) {
+  #sentinel-top-nav.sentinel-top-nav [class*="awsui_utility-type-menu-dropdown"] [class*="awsui_dropdown"][class*="awsui_open"] {
+    inset-inline-start: auto !important;
+    inset-inline-end: max(8px, env(safe-area-inset-right, 0px)) !important;
+    max-inline-size: min(380px, calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))) !important;
+    box-sizing: border-box;
+    transform: none !important;
+  }
+
+  /* Kill accidental horizontal page scroll from off-screen positioned UI + wide children. */
+  body {
+    overflow-x: hidden;
+  }
+}
+
 /* Account menu (TopNav user dropdown): server version — flat strip, full width (no inset rounded card) */
 .sentinel-account-menu-version {
   margin: 0;
-  padding: 12px 16px 12px;
+  padding: 8px 16px 8px;
   border-radius: 0;
   border: none;
-  border-bottom: 1px solid var(--awsui-color-border-divider-default);
   background: linear-gradient(
     180deg,
     color-mix(in srgb, var(--awsui-color-text-status-info, #0972d3) 10%, transparent) 0%,
@@ -245,6 +349,8 @@
   box-sizing: border-box;
   max-width: none;
   width: 100%;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
 .awsui-dark-mode .sentinel-account-menu-version {
@@ -257,12 +363,6 @@
 }
 
 .sentinel-account-menu-version--update {
-  border-bottom-color: color-mix(
-    in srgb,
-    var(--awsui-color-text-status-warning, #d9a000) 45%,
-    var(--awsui-color-border-divider-default)
-  );
-  box-shadow: none;
   border-left: 3px solid var(--awsui-color-text-status-warning, #d9a000);
   padding-left: 13px;
   background: linear-gradient(
@@ -282,48 +382,105 @@
   );
 }
 
-/* Bleed to the dropdown panel edges (cancels list + panel inset) */
-#sentinel-top-nav [class*="awsui_dropdown-content"] li[data-testid="sentinel_menu_server_version"] .sentinel-account-menu-version {
+.sentinel-account-menu-version__hr {
+  display: block;
+  height: 1px;
+  margin-block-start: 10px;
+  margin-inline: calc(-1 * (16px + var(--space-s, 12px)));
+  width: calc(100% + 2 * (16px + var(--space-s, 12px)));
+  box-sizing: border-box;
+  background-color: var(--awsui-color-border-divider-default);
+  pointer-events: none;
+}
+
+.awsui-dark-mode .sentinel-account-menu-version__hr {
+  background-color: rgba(234, 237, 242, 0.34);
+}
+
+.sentinel-account-menu-version--update .sentinel-account-menu-version__hr {
+  background-color: color-mix(
+    in srgb,
+    var(--awsui-color-text-status-warning, #d9a000) 42%,
+    var(--awsui-color-border-divider-default)
+  );
+}
+
+.awsui-dark-mode .sentinel-account-menu-version--update .sentinel-account-menu-version__hr {
+  background-color: color-mix(
+    in srgb,
+    var(--awsui-color-text-status-warning, #e0c349) 48%,
+    rgba(234, 237, 242, 0.34)
+  );
+}
+
+/* Full-bleed strip: cancel list/panel horizontal inset. */
+#sentinel-top-nav.sentinel-top-nav
+  [class*="awsui_utility-type-menu-dropdown"]
+  [class*="awsui_dropdown-content"]
+  ul[class*="awsui_options-list"]
+  > li:first-child:has(.sentinel-account-menu-version)
+  .sentinel-account-menu-version {
   margin-inline: calc(-1 * var(--space-s, 12px));
   width: calc(100% + 2 * var(--space-s, 12px));
   padding-inline: calc(16px + var(--space-s, 12px));
 }
 
-#sentinel-top-nav [class*="awsui_dropdown-content"] li[data-testid="sentinel_menu_server_version"] .sentinel-account-menu-version--update {
+#sentinel-top-nav.sentinel-top-nav
+  [class*="awsui_utility-type-menu-dropdown"]
+  [class*="awsui_dropdown-content"]
+  ul[class*="awsui_options-list"]
+  > li:first-child:has(.sentinel-account-menu-version)
+  .sentinel-account-menu-version--update {
   padding-left: calc(13px + var(--space-s, 12px));
 }
 
-/* First row: square hit target so focus/hover isn’t a rounded capsule around a square block */
-#sentinel-top-nav li[data-testid="sentinel_menu_server_version"] {
+#sentinel-top-nav.sentinel-top-nav
+  [class*="awsui_utility-type-menu-dropdown"]
+  ul[class*="awsui_options-list"]
+  > li:first-child:has(.sentinel-account-menu-version) {
   border-radius: 0 !important;
+  border: none !important;
 }
 
-#sentinel-top-nav li[data-testid="sentinel_menu_server_version"][class*="awsui_highlighted"] {
+#sentinel-top-nav.sentinel-top-nav
+  [class*="awsui_utility-type-menu-dropdown"]
+  ul[class*="awsui_options-list"]
+  > li:first-child:has(.sentinel-account-menu-version)[class*="awsui_highlighted"] {
   background-color: transparent !important;
-  border-color: transparent !important;
+  border: none !important;
 }
 
-#sentinel-top-nav
-  li[data-testid="sentinel_menu_server_version"][class*="awsui_highlighted"]
+#sentinel-top-nav.sentinel-top-nav
+  [class*="awsui_utility-type-menu-dropdown"]
+  ul[class*="awsui_options-list"]
+  > li:first-child:has(.sentinel-account-menu-version)[class*="awsui_highlighted"]
   .sentinel-account-menu-version {
   background-color: var(--awsui-color-background-dropdown-item-hover, rgba(0, 0, 0, 0.06));
 }
 
 .awsui-dark-mode
-  #sentinel-top-nav
-  li[data-testid="sentinel_menu_server_version"][class*="awsui_highlighted"]
+  #sentinel-top-nav.sentinel-top-nav
+  [class*="awsui_utility-type-menu-dropdown"]
+  ul[class*="awsui_options-list"]
+  > li:first-child:has(.sentinel-account-menu-version)[class*="awsui_highlighted"]
   .sentinel-account-menu-version {
   background-color: var(--awsui-color-background-dropdown-item-hover, rgba(255, 255, 255, 0.06));
 }
 
 /* No focus ring on server row (hover fill is enough; avoids double box vs. flat strip) */
-#sentinel-top-nav li[data-testid="sentinel_menu_server_version"][class*="awsui_is-focused"] {
-  border-color: transparent !important;
+#sentinel-top-nav.sentinel-top-nav
+  [class*="awsui_utility-type-menu-dropdown"]
+  ul[class*="awsui_options-list"]
+  > li:first-child:has(.sentinel-account-menu-version)[class*="awsui_is-focused"] {
+  border: none !important;
   box-shadow: none !important;
 }
 
-#sentinel-top-nav li[data-testid="sentinel_menu_server_version"] span[class*="awsui_menu-item"]:focus,
-#sentinel-top-nav li[data-testid="sentinel_menu_server_version"] span[class*="awsui_menu-item"]:focus-visible {
+#sentinel-top-nav.sentinel-top-nav
+  [class*="awsui_utility-type-menu-dropdown"]
+  ul[class*="awsui_options-list"]
+  > li:first-child:has(.sentinel-account-menu-version)
+  span[class*="awsui_menu-item"]:is(:focus, :focus-visible) {
   outline: none;
 }
 
@@ -331,28 +488,53 @@
   opacity: 0.92;
 }
 
-.sentinel-account-menu-version__eyebrow {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--awsui-color-text-body-secondary);
-  margin-bottom: 4px;
+.sentinel-account-menu-version__account-name {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--awsui-color-text-body-default);
+  margin-bottom: 2px;
 }
 
-.sentinel-account-menu-version__row {
+.sentinel-account-menu-version__account-role {
+  font-size: 12px;
+  line-height: 1.3;
+  color: var(--awsui-color-text-body-secondary);
+  margin-bottom: 2px;
+}
+
+/* Installed server version — same scale as role, under administrator line. */
+.sentinel-account-menu-version__server-ver {
+  font-size: 12px;
+  line-height: 1.3;
+  font-weight: 500;
+  color: var(--awsui-color-text-body-secondary);
+  white-space: nowrap;
+}
+
+/* One row: left = name / role / version; right = update pill / up-to-date. */
+.sentinel-account-menu-version__head {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: 8px 10px;
+  gap: 10px;
+  width: 100%;
   min-width: 0;
 }
 
-.sentinel-account-menu-version__ver {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--awsui-color-text-body-default);
-  font-variant-numeric: tabular-nums;
+.sentinel-account-menu-version__titles {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.sentinel-account-menu-version__actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 0 auto;
 }
 
 .sentinel-account-menu-version__pill {
@@ -365,6 +547,44 @@
   color: var(--awsui-color-text-status-warning, #b2911c);
   background: color-mix(in srgb, var(--awsui-color-text-status-warning, #d9a000) 14%, transparent);
   border: 1px solid color-mix(in srgb, var(--awsui-color-text-status-warning, #d9a000) 35%, transparent);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+a.sentinel-account-menu-version__pill {
+  text-decoration: none;
+  cursor: pointer;
+  color: inherit;
+}
+
+a.sentinel-account-menu-version__pill:hover {
+  filter: brightness(1.12);
+}
+
+a.sentinel-account-menu-version__pill:focus-visible {
+  outline: 2px solid var(--awsui-color-border-item-focused, #0972d3);
+  outline-offset: 2px;
+}
+
+.sentinel-account-menu-version__pill--stack {
+  flex-direction: column;
+  align-items: flex-start;
+  text-align: start;
+  gap: 1px;
+  padding-block: 4px;
+  border-radius: 8px;
+  white-space: normal;
+}
+
+.sentinel-account-menu-version__pill-line {
+  line-height: 1.2;
+}
+
+.sentinel-account-menu-version__pill-sub {
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  color: var(--awsui-color-text-body-secondary);
 }
 
 .awsui-dark-mode .sentinel-account-menu-version__pill {
@@ -374,6 +594,8 @@
 .sentinel-account-menu-version__ok {
   font-size: 12px;
   color: var(--awsui-color-text-body-secondary);
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .sentinel-account-menu-version__muted {
@@ -382,10 +604,10 @@
 }
 
 .sentinel-account-menu-version__latest {
-  margin-top: 8px;
-  font-size: 12px;
-  line-height: 1.35;
-  font-weight: 600;
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.3;
+  font-weight: 500;
   color: var(--awsui-color-text-body-default);
 }
 
@@ -393,6 +615,27 @@
   font-weight: 500;
   color: var(--awsui-color-text-body-secondary);
 }
+/* Overview “Agents” full-page header: when the content column is narrow, actions wrap
+   under the title — add space so the heading isn’t flush against the button row. */
+.sentinel-overview-cards-header {
+  container-type: inline-size;
+  container-name: sentinel-overview-cards-header;
+}
+
+@container sentinel-overview-cards-header (max-width: 720px) {
+  .sentinel-overview-cards-header [class*="awsui_actions-variant-h1"] {
+    margin-top: 0.75rem;
+  }
+}
+
+@supports not (container-type: inline-size) {
+  @media (max-width: 720px) {
+    .sentinel-overview-cards-header [class*="awsui_actions-variant-h1"] {
+      margin-top: 0.75rem;
+    }
+  }
+}
+
 @media (max-width: 768px) {
   .sentinel-overview-cards-header {
     padding-top: 0.5rem;
@@ -556,6 +799,90 @@
   gap: 8px;
 }
 
+/* Agent overview: compact cards on phones so ~3 cards fit in the viewport. */
+@media (max-width: 768px) {
+  .sentinel-overview-root ol[class*="awsui_list"][class*="list-grid"] {
+    gap: 8px;
+  }
+
+  .sentinel-overview-root li[class*="awsui_card"] > div[class*="awsui_root"] > div[class*="awsui_body"] {
+    padding-block: 8px;
+    padding-inline: 10px;
+  }
+
+  .sentinel-overview-root .sentinel-agent-card-main {
+    min-height: 0;
+  }
+
+  .sentinel-overview-root .sentinel-agent-card-main-top {
+    gap: 6px;
+  }
+
+  .sentinel-overview-root .sentinel-agent-icon-lg {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+  }
+
+  .sentinel-overview-root .sentinel-agent-icon-lg svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  .sentinel-overview-root .sentinel-agent-card-header {
+    gap: 8px;
+  }
+
+  .sentinel-overview-root .sentinel-agent-card-header-meta {
+    gap: 2px;
+  }
+
+  .sentinel-overview-root .sentinel-agent-card-header-meta a[class*="awsui_link"] {
+    font-size: 15px;
+    line-height: 1.25;
+  }
+
+  .sentinel-overview-root .sentinel-agent-card-block {
+    padding: 8px 10px;
+    border-radius: 8px;
+  }
+
+  .sentinel-overview-root .sentinel-agent-card-block > [class*="awsui_header"] {
+    margin-bottom: 4px;
+    font-size: 13px;
+    line-height: 1.2;
+  }
+
+  .sentinel-overview-root .sentinel-agent-card-detail-stack[class*="awsui_spaceBetween"] {
+    gap: 2px;
+  }
+
+  .sentinel-overview-root .sentinel-agent-card-block-details [class*="awsui_key-label"] {
+    font-size: 11px;
+    line-height: 1.2;
+  }
+
+  .sentinel-overview-root .sentinel-last-window {
+    -webkit-line-clamp: 1;
+    min-height: 1.35em;
+  }
+
+  .sentinel-overview-root .sentinel-agent-card-actions-bottom {
+    padding-top: 4px;
+  }
+
+  .sentinel-overview-root .sentinel-qa-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+  }
+
+  .sentinel-overview-root .sentinel-qa-icon svg {
+    width: 15px;
+    height: 15px;
+  }
+}
+
 .sentinel-qa-icon {
   appearance: none;
   border: 1px solid var(--awsui-color-border-divider-default);
@@ -618,6 +945,8 @@
   width: 100%;
   display: block;
   line-height: 0;
+  /* Before the first JPEG arrives (or after a failed load), avoid a ~0px-tall strip. */
+  min-block-size: 8rem;
 }
 
 .sentinel-screen-image {

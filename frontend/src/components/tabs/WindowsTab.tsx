@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Table from "@cloudscape-design/components/table";
 import Box from "@cloudscape-design/components/box";
 import Header from "@cloudscape-design/components/header";
@@ -36,17 +36,13 @@ export function WindowsTab({ agentId }: WindowsTabProps) {
   const [topItems, setTopItems] = useState<TopWindowRow[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchWindows();
-  }, [agentId]);
-
-  const fetchWindows = async () => {
+  const fetchWindows = useCallback(async () => {
     try {
       setLoading(true);
       const response = await fetch(apiUrl(`/agents/${agentId}/windows?limit=500`), {
         credentials: "include",
       });
-      
+
       if (response.ok) {
         const data = await response.json();
         const rows = Array.isArray(data?.rows) ? data.rows : Array.isArray(data) ? data : [];
@@ -82,7 +78,11 @@ export function WindowsTab({ agentId }: WindowsTabProps) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [agentId]);
+
+  useEffect(() => {
+    void fetchWindows();
+  }, [fetchWindows]);
 
   const { items: displayItems, collectionProps, filterProps, paginationProps } = useCollection(
     items,

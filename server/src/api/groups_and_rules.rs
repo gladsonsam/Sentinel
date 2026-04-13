@@ -367,19 +367,18 @@ pub async fn alert_rules_create_h(
                 .into_response();
         }
     };
-    match db::alert_rule_create_with_scopes(
-        &s.db,
-        body.name.trim(),
-        body.channel.trim(),
-        body.pattern.trim(),
-        body.match_mode.trim(),
-        body.case_insensitive,
-        body.cooldown_secs,
-        body.enabled,
-        body.take_screenshot,
-        &scopes,
-    )
-    .await
+    let params = db::AlertRuleUpsert {
+        name: body.name.trim(),
+        channel: body.channel.trim(),
+        pattern: body.pattern.trim(),
+        match_mode: body.match_mode.trim(),
+        case_insensitive: body.case_insensitive,
+        cooldown_secs: body.cooldown_secs,
+        enabled: body.enabled,
+        take_screenshot: body.take_screenshot,
+        scopes: scopes.as_slice(),
+    };
+    match db::alert_rule_create_with_scopes(&s.db, &params).await
     {
         Ok(id) => (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response(),
         Err(e) => err500(e),
@@ -421,20 +420,18 @@ pub async fn alert_rules_update_h(
                 .into_response();
         }
     };
-    match db::alert_rule_update_with_scopes(
-        &s.db,
-        rule_id,
-        body.name.trim(),
-        body.channel.trim(),
-        body.pattern.trim(),
-        body.match_mode.trim(),
-        body.case_insensitive,
-        body.cooldown_secs,
-        body.enabled,
-        body.take_screenshot,
-        &scopes,
-    )
-    .await
+    let params = db::AlertRuleUpsert {
+        name: body.name.trim(),
+        channel: body.channel.trim(),
+        pattern: body.pattern.trim(),
+        match_mode: body.match_mode.trim(),
+        case_insensitive: body.case_insensitive,
+        cooldown_secs: body.cooldown_secs,
+        enabled: body.enabled,
+        take_screenshot: body.take_screenshot,
+        scopes: scopes.as_slice(),
+    };
+    match db::alert_rule_update_with_scopes(&s.db, rule_id, &params).await
     {
         Ok(true) => Json(serde_json::json!({ "ok": true })).into_response(),
         Ok(false) => (

@@ -428,7 +428,7 @@ pub fn run_tauri(
                                 .windows
                                 .iter()
                                 .find(|w| w.label == "main")
-                                .or_else(|| handle.config().app.windows.get(0))
+                                .or_else(|| handle.config().app.windows.first())
                                 .cloned();
 
                             let Some(conf) = cfg else { return };

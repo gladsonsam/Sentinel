@@ -1,5 +1,3 @@
-#![cfg(target_os = "windows")]
-
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 

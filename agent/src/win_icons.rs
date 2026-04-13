@@ -82,8 +82,8 @@ pub fn icon_png_from_exe_path(exe_path: &str, size_px: u32) -> Result<Vec<u8>> {
         anyhow::bail!("GetObjectW failed");
     }
 
-    let width = bmp.bmWidth.max(1) as i32;
-    let height = bmp.bmHeight.abs().max(1) as i32;
+    let width = bmp.bmWidth.max(1);
+    let height = bmp.bmHeight.abs().max(1);
 
     // Prepare BITMAPINFO for 32-bit BGRA.
     let mut bi = BITMAPINFO {
@@ -93,7 +93,7 @@ pub fn icon_png_from_exe_path(exe_path: &str, size_px: u32) -> Result<Vec<u8>> {
             biHeight: -height, // top-down
             biPlanes: 1,
             biBitCount: 32,
-            biCompression: BI_RGB.0 as u32,
+            biCompression: BI_RGB.0,
             biSizeImage: 0,
             biXPelsPerMeter: 0,
             biYPelsPerMeter: 0,

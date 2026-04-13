@@ -55,6 +55,25 @@ function csrfHeaders(): Record<string, string> {
   }
 }
 
+/** Multipart MJPEG URL; `session` must match {@link notifyMjpegViewerLeft}. */
+export function mjpegStreamUrl(agentId: string, session: string): string {
+  return apiUrl(`/agents/${agentId}/mjpeg?session=${encodeURIComponent(session)}`);
+}
+
+/** Tell the server this dashboard tab stopped viewing live screen (sends `stop_capture` when last viewer). */
+export function notifyMjpegViewerLeft(agentId: string, session: string): void {
+  if (!session) return;
+  void fetch(apiUrl(`/agents/${agentId}/mjpeg/leave`), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...csrfHeaders() },
+    body: JSON.stringify({ session }),
+    credentials: "include",
+    keepalive: true,
+  }).catch(() => {
+    /* best-effort */
+  });
+}
+
 async function get<T>(path: string): Promise<T> {
   const res = await fetch(apiUrl(path), { credentials: "include" });
   const ct = res.headers.get("Content-Type") ?? "";
@@ -228,7 +247,8 @@ export const api = {
   clearAgentHistory: (id: string): Promise<{ cleared_rows: number }> =>
     postEmpty(`/agents/${id}/history/clear`),
 
-  mjpegUrl: (id: string) => apiUrl(`/agents/${id}/mjpeg`),
+  /** @deprecated Use {@link mjpegStreamUrl} with a per-tab `session` UUID. */
+  mjpegUrl: (id: string, session: string) => mjpegStreamUrl(id, session),
 
   // ── Retention (server) ───────────────────────────────────────────────────
 

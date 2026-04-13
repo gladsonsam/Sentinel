@@ -36,15 +36,18 @@ pub async fn agent_windows(
     let ip = audit_ip(&headers, addr);
     match db::query_windows(&s.db, id, p.limit, p.offset).await {
         Ok(rows) => {
+            let detail = serde_json::json!({ "limit": p.limit, "offset": p.offset });
             db::insert_audit_log_dedup_traced(
                 &s.db,
-                user.username.as_str(),
-                Some(id),
-                "view_windows",
-                "ok",
-                &serde_json::json!({ "limit": p.limit, "offset": p.offset }),
-                10,
-                ip.as_deref(),
+                db::AuditLogDedup {
+                    actor: user.username.as_str(),
+                    agent_id: Some(id),
+                    action: "view_windows",
+                    status: "ok",
+                    detail: &detail,
+                    dedup_window_secs: 10,
+                    client_ip: ip.as_deref(),
+                },
             )
             .await;
             Json(serde_json::json!({ "rows": rows })).into_response()
@@ -71,15 +74,18 @@ pub async fn agent_keys(
     let ip = audit_ip(&headers, addr);
     match db::query_keys(&s.db, id, p.limit, p.offset).await {
         Ok(rows) => {
+            let detail = serde_json::json!({ "limit": p.limit, "offset": p.offset });
             db::insert_audit_log_dedup_traced(
                 &s.db,
-                user.username.as_str(),
-                Some(id),
-                "view_keys",
-                "ok",
-                &serde_json::json!({ "limit": p.limit, "offset": p.offset }),
-                10,
-                ip.as_deref(),
+                db::AuditLogDedup {
+                    actor: user.username.as_str(),
+                    agent_id: Some(id),
+                    action: "view_keys",
+                    status: "ok",
+                    detail: &detail,
+                    dedup_window_secs: 10,
+                    client_ip: ip.as_deref(),
+                },
             )
             .await;
             Json(serde_json::json!({ "rows": rows })).into_response()
@@ -106,15 +112,18 @@ pub async fn agent_urls(
     let ip = audit_ip(&headers, addr);
     match db::query_urls(&s.db, id, p.limit, p.offset).await {
         Ok(rows) => {
+            let detail = serde_json::json!({ "limit": p.limit, "offset": p.offset });
             db::insert_audit_log_dedup_traced(
                 &s.db,
-                user.username.as_str(),
-                Some(id),
-                "view_urls",
-                "ok",
-                &serde_json::json!({ "limit": p.limit, "offset": p.offset }),
-                10,
-                ip.as_deref(),
+                db::AuditLogDedup {
+                    actor: user.username.as_str(),
+                    agent_id: Some(id),
+                    action: "view_urls",
+                    status: "ok",
+                    detail: &detail,
+                    dedup_window_secs: 10,
+                    client_ip: ip.as_deref(),
+                },
             )
             .await;
             Json(serde_json::json!({ "rows": rows })).into_response()
@@ -148,15 +157,19 @@ pub async fn alert_rule_events_for_rule_h(
     let ip = audit_ip(&headers, addr);
     match db::alert_rule_events_list_for_rule(&s.db, rule_id, p.limit, p.offset).await {
         Ok(rows) => {
+            let detail =
+                serde_json::json!({ "rule_id": rule_id, "limit": p.limit, "offset": p.offset });
             db::insert_audit_log_dedup_traced(
                 &s.db,
-                user.username.as_str(),
-                None,
-                "view_alert_rule_events_by_rule",
-                "ok",
-                &serde_json::json!({ "rule_id": rule_id, "limit": p.limit, "offset": p.offset }),
-                10,
-                ip.as_deref(),
+                db::AuditLogDedup {
+                    actor: user.username.as_str(),
+                    agent_id: None,
+                    action: "view_alert_rule_events_by_rule",
+                    status: "ok",
+                    detail: &detail,
+                    dedup_window_secs: 10,
+                    client_ip: ip.as_deref(),
+                },
             )
             .await;
             Json(serde_json::json!({ "rows": rows })).into_response()
@@ -183,15 +196,18 @@ pub async fn agent_alert_rule_events(
     let ip = audit_ip(&headers, addr);
     match db::alert_rule_events_list_for_agent(&s.db, id, p.limit, p.offset).await {
         Ok(rows) => {
+            let detail = serde_json::json!({ "limit": p.limit, "offset": p.offset });
             db::insert_audit_log_dedup_traced(
                 &s.db,
-                user.username.as_str(),
-                Some(id),
-                "view_alert_rule_events",
-                "ok",
-                &serde_json::json!({ "limit": p.limit, "offset": p.offset }),
-                10,
-                ip.as_deref(),
+                db::AuditLogDedup {
+                    actor: user.username.as_str(),
+                    agent_id: Some(id),
+                    action: "view_alert_rule_events",
+                    status: "ok",
+                    detail: &detail,
+                    dedup_window_secs: 10,
+                    client_ip: ip.as_deref(),
+                },
             )
             .await;
             Json(serde_json::json!({ "rows": rows })).into_response()
@@ -237,15 +253,18 @@ pub async fn agent_activity(
     let ip = audit_ip(&headers, addr);
     match db::query_activity(&s.db, id, p.limit, p.offset).await {
         Ok(rows) => {
+            let detail = serde_json::json!({ "limit": p.limit, "offset": p.offset });
             db::insert_audit_log_dedup_traced(
                 &s.db,
-                user.username.as_str(),
-                Some(id),
-                "view_activity",
-                "ok",
-                &serde_json::json!({ "limit": p.limit, "offset": p.offset }),
-                10,
-                ip.as_deref(),
+                db::AuditLogDedup {
+                    actor: user.username.as_str(),
+                    agent_id: Some(id),
+                    action: "view_activity",
+                    status: "ok",
+                    detail: &detail,
+                    dedup_window_secs: 10,
+                    client_ip: ip.as_deref(),
+                },
             )
             .await;
             Json(serde_json::json!({ "rows": rows })).into_response()
@@ -264,15 +283,18 @@ pub async fn agent_info(
     let ip = audit_ip(&headers, addr);
     match db::get_agent_info(&s.db, id).await {
         Ok(info) => {
+            let detail = serde_json::json!({});
             db::insert_audit_log_dedup_traced(
                 &s.db,
-                user.username.as_str(),
-                Some(id),
-                "view_specs",
-                "ok",
-                &serde_json::json!({}),
-                15,
-                ip.as_deref(),
+                db::AuditLogDedup {
+                    actor: user.username.as_str(),
+                    agent_id: Some(id),
+                    action: "view_specs",
+                    status: "ok",
+                    detail: &detail,
+                    dedup_window_secs: 15,
+                    client_ip: ip.as_deref(),
+                },
             )
             .await;
             Json(serde_json::json!({ "info": info })).into_response()

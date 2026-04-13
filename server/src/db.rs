@@ -80,6 +80,32 @@ pub struct AuditRecord {
     pub detail: serde_json::Value,
 }
 
+/// Arguments for [`insert_audit_log_dedup`] and [`insert_audit_log_dedup_traced`].
+#[derive(Clone, Copy)]
+pub struct AuditLogDedup<'a> {
+    pub actor: &'a str,
+    pub agent_id: Option<Uuid>,
+    pub action: &'a str,
+    pub status: &'a str,
+    pub detail: &'a serde_json::Value,
+    pub dedup_window_secs: i64,
+    pub client_ip: Option<&'a str>,
+}
+
+/// Arguments for [`alert_rule_create_with_scopes`] and [`alert_rule_update_with_scopes`].
+#[derive(Clone, Copy)]
+pub struct AlertRuleUpsert<'a> {
+    pub name: &'a str,
+    pub channel: &'a str,
+    pub pattern: &'a str,
+    pub match_mode: &'a str,
+    pub case_insensitive: bool,
+    pub cooldown_secs: i32,
+    pub enabled: bool,
+    pub take_screenshot: bool,
+    pub scopes: &'a [(String, Option<Uuid>, Option<Uuid>)],
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct UrlTopRow {
     pub url: String,
@@ -968,17 +994,7 @@ pub async fn insert_audit_log(
 ///
 /// "Identical" means same actor/agent/action/status/detail JSON and within
 /// `dedup_window_secs` from now.
-#[allow(clippy::too_many_arguments)]
-pub async fn insert_audit_log_dedup(
-    pool: &PgPool,
-    actor: &str,
-    agent_id: Option<Uuid>,
-    action: &str,
-    status: &str,
-    detail: &serde_json::Value,
-    dedup_window_secs: i64,
-    client_ip: Option<&str>,
-) -> Result<()> {
+pub async fn insert_audit_log_dedup(pool: &PgPool, row: AuditLogDedup<'_>) -> Result<()> {
     let exists: Option<i64> = sqlx::query_scalar(
         r#"
         SELECT id
@@ -994,18 +1010,27 @@ pub async fn insert_audit_log_dedup(
         LIMIT 1
         "#,
     )
-    .bind(actor)
-    .bind(agent_id)
-    .bind(action)
-    .bind(status)
-    .bind(detail)
-    .bind(dedup_window_secs)
-    .bind(client_ip)
+    .bind(row.actor)
+    .bind(row.agent_id)
+    .bind(row.action)
+    .bind(row.status)
+    .bind(row.detail)
+    .bind(row.dedup_window_secs)
+    .bind(row.client_ip)
     .fetch_optional(pool)
     .await?;
 
     if exists.is_none() {
-        insert_audit_log(pool, actor, agent_id, action, status, detail, client_ip).await?;
+        insert_audit_log(
+            pool,
+            row.actor,
+            row.agent_id,
+            row.action,
+            row.status,
+            row.detail,
+            row.client_ip,
+        )
+        .await?;
     }
 
     Ok(())
@@ -1029,30 +1054,9 @@ pub async fn insert_audit_log_traced(
 }
 
 /// Like [`insert_audit_log_dedup`], but warns on failure.
-#[allow(clippy::too_many_arguments)]
-pub async fn insert_audit_log_dedup_traced(
-    pool: &PgPool,
-    actor: &str,
-    agent_id: Option<Uuid>,
-    action: &str,
-    status: &str,
-    detail: &serde_json::Value,
-    dedup_window_secs: i64,
-    client_ip: Option<&str>,
-) {
-    if let Err(e) = insert_audit_log_dedup(
-        pool,
-        actor,
-        agent_id,
-        action,
-        status,
-        detail,
-        dedup_window_secs,
-        client_ip,
-    )
-    .await
-    {
-        tracing::warn!(error = %e, action, "audit log dedup insert failed");
+pub async fn insert_audit_log_dedup_traced(pool: &PgPool, row: AuditLogDedup<'_>) {
+    if let Err(e) = insert_audit_log_dedup(pool, row).await {
+        tracing::warn!(error = %e, action = row.action, "audit log dedup insert failed");
     }
 }
 
@@ -2197,18 +2201,9 @@ async fn alert_rule_scopes_write_tx(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn alert_rule_create_with_scopes(
     pool: &PgPool,
-    name: &str,
-    channel: &str,
-    pattern: &str,
-    match_mode: &str,
-    case_insensitive: bool,
-    cooldown_secs: i32,
-    enabled: bool,
-    take_screenshot: bool,
-    scopes: &[(String, Option<Uuid>, Option<Uuid>)],
+    params: &AlertRuleUpsert<'_>,
 ) -> Result<i64> {
     let mut tx = pool.begin().await?;
     let id: i64 = sqlx::query_scalar(
@@ -2218,34 +2213,25 @@ pub async fn alert_rule_create_with_scopes(
         RETURNING id
         "#,
     )
-    .bind(name)
-    .bind(channel)
-    .bind(pattern)
-    .bind(match_mode)
-    .bind(case_insensitive)
-    .bind(cooldown_secs)
-    .bind(enabled)
-    .bind(take_screenshot)
+    .bind(params.name)
+    .bind(params.channel)
+    .bind(params.pattern)
+    .bind(params.match_mode)
+    .bind(params.case_insensitive)
+    .bind(params.cooldown_secs)
+    .bind(params.enabled)
+    .bind(params.take_screenshot)
     .fetch_one(tx.deref_mut())
     .await?;
-    alert_rule_scopes_write_tx(&mut tx, id, scopes).await?;
+    alert_rule_scopes_write_tx(&mut tx, id, params.scopes).await?;
     tx.commit().await?;
     Ok(id)
 }
 
-#[allow(clippy::too_many_arguments)]
 pub async fn alert_rule_update_with_scopes(
     pool: &PgPool,
     rule_id: i64,
-    name: &str,
-    channel: &str,
-    pattern: &str,
-    match_mode: &str,
-    case_insensitive: bool,
-    cooldown_secs: i32,
-    enabled: bool,
-    take_screenshot: bool,
-    scopes: &[(String, Option<Uuid>, Option<Uuid>)],
+    params: &AlertRuleUpsert<'_>,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
     let r = sqlx::query(
@@ -2257,21 +2243,21 @@ pub async fn alert_rule_update_with_scopes(
         "#,
     )
     .bind(rule_id)
-    .bind(name)
-    .bind(channel)
-    .bind(pattern)
-    .bind(match_mode)
-    .bind(case_insensitive)
-    .bind(cooldown_secs)
-    .bind(enabled)
-    .bind(take_screenshot)
+    .bind(params.name)
+    .bind(params.channel)
+    .bind(params.pattern)
+    .bind(params.match_mode)
+    .bind(params.case_insensitive)
+    .bind(params.cooldown_secs)
+    .bind(params.enabled)
+    .bind(params.take_screenshot)
     .execute(tx.deref_mut())
     .await?;
     if r.rows_affected() == 0 {
         tx.rollback().await?;
         return Ok(false);
     }
-    alert_rule_scopes_write_tx(&mut tx, rule_id, scopes).await?;
+    alert_rule_scopes_write_tx(&mut tx, rule_id, params.scopes).await?;
     tx.commit().await?;
     Ok(true)
 }

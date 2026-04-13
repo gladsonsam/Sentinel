@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useServerVersionPayload } from "../../lib/serverVersionStore";
 import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
@@ -16,15 +16,24 @@ import { api } from "../../lib/api";
 interface GeneralConfigProps {
   agent: Agent;
   info: AgentInfo | null;
+  /** Called when fresh agent info is loaded from the server (e.g. after Update now). */
+  onAgentInfoRefreshed?: (info: AgentInfo | null) => void;
 }
 
-export function GeneralConfig({ agent, info }: GeneralConfigProps) {
+export function GeneralConfig({ agent, info, onAgentInfoRefreshed }: GeneralConfigProps) {
   const agentVersion = info?.agent_version || "—";
   const versionPayload = useServerVersionPayload();
   const [versionFetchSettled, setVersionFetchSettled] = useState(false);
   const [updateNow, setUpdateNow] = useState(false);
   const [updateNowErr, setUpdateNowErr] = useState<string | null>(null);
   const [updateNowOk, setUpdateNowOk] = useState<string | null>(null);
+  const pollSessionRef = useRef(0);
+
+  useEffect(() => {
+    return () => {
+      pollSessionRef.current += 1;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -59,12 +68,43 @@ export function GeneralConfig({ agent, info }: GeneralConfigProps) {
     setUpdateNowErr(null);
     setUpdateNowOk(null);
     setUpdateNow(true);
+    const baseline = normalizeVersion(agentVersion);
+    pollSessionRef.current += 1;
+    const session = pollSessionRef.current;
+    const targetLatest = normalizeVersion(latestAgentVersion);
+
+    const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+    const pollUntilVersionReflects = async () => {
+      const deadline = Date.now() + 120_000;
+      const tryFetch = async (): Promise<boolean> => {
+        const { info: next } = await api.agentInfo(agent.id);
+        onAgentInfoRefreshed?.(next ?? null);
+        const nowV = normalizeVersion(next?.agent_version);
+        if (nowV && targetLatest && nowV === targetLatest) return true;
+        if (nowV && baseline && nowV !== baseline) return true;
+        return false;
+      };
+      let first = true;
+      while (Date.now() < deadline && pollSessionRef.current === session) {
+        await sleep(first ? 1000 : 2500);
+        first = false;
+        if (pollSessionRef.current !== session) return;
+        try {
+          if (await tryFetch()) return;
+        } catch {
+          /* keep polling */
+        }
+      }
+    };
+
     api
       .agentUpdateNow(agent.id)
       .then(() => {
         setUpdateNowOk(
           "Update triggered. If the agent is connected, it will download and install the latest release.",
         );
+        void pollUntilVersionReflects();
       })
       .catch((e) => setUpdateNowErr(String(e)))
       .finally(() => setUpdateNow(false));
@@ -73,10 +113,7 @@ export function GeneralConfig({ agent, info }: GeneralConfigProps) {
   return (
     <Container
       header={
-        <Header
-          variant="h2"
-          description="General agent summary and system details."
-        >
+        <Header variant="h2">
           General configuration
         </Header>
       }

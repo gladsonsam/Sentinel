@@ -32,6 +32,7 @@ interface Props {
   onToolsChange: (open: boolean) => void;
   /** ISO timestamp to scroll to and highlight in the activity timeline */
   highlightTimestamp?: string | null;
+  onAgentInfoCommit?: (agentId: string, info: AgentInfo | null) => void;
 }
 
 export function AuthenticatedAgentDetail({
@@ -60,6 +61,7 @@ export function AuthenticatedAgentDetail({
   toolsOpen,
   onToolsChange,
   highlightTimestamp,
+  onAgentInfoCommit,
 }: Props) {
   return (
     <DashboardLayout
@@ -87,6 +89,7 @@ export function AuthenticatedAgentDetail({
           isAdmin={currentUser?.role === "admin"}
           onOpenAgentGroups={onOpenAgentGroups}
           dashboardRole={dashboardRole}
+          onAgentInfoCommit={onAgentInfoCommit}
         />
       }
       onLogout={onLogout}

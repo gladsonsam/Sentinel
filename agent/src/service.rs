@@ -1,5 +1,3 @@
-#![cfg(target_os = "windows")]
-
 use std::ffi::OsStr;
 use std::os::windows::ffi::OsStrExt;
 use std::sync::{mpsc, Mutex};
@@ -120,7 +118,7 @@ fn create_sentinel_updater_pipe_server(
             &mut p_sd,
             None,
         )
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, format!("updater pipe SDDL: {e}")))?;
+        .map_err(|e| io::Error::other(format!("updater pipe SDDL: {e}")))?;
     }
 
     let mut sa = SECURITY_ATTRIBUTES {
@@ -214,7 +212,7 @@ fn run_service() -> windows_service::Result<()> {
         .worker_threads(2)
         .enable_all()
         .build()
-        .map_err(|e| windows_service::Error::Winapi(e.into()))?;
+        .map_err(windows_service::Error::Winapi)?;
 
     rt.block_on(async move {
         use std::os::windows::process::CommandExt;
@@ -463,9 +461,11 @@ fn launch_user_agent_in_session(session_id: u32) -> Result<()> {
     let mut cmdline_w = to_wide_z(&cmdline);
     let desktop_w = to_wide_z("winsta0\\default");
 
-    let mut startup = STARTUPINFOW::default();
-    startup.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
-    startup.lpDesktop = PWSTR(desktop_w.as_ptr() as *mut _);
+    let startup = STARTUPINFOW {
+        cb: std::mem::size_of::<STARTUPINFOW>() as u32,
+        lpDesktop: PWSTR(desktop_w.as_ptr() as *mut _),
+        ..Default::default()
+    };
 
     // Critical: the user-agent relies on per-user env vars (LOCALAPPDATA) for config + WebView2.
     // When launched from LocalSystem, we must build an environment block for the target user.
@@ -624,7 +624,7 @@ fn enable_privileges(names: &[&str]) -> Result<()> {
             .ok()
             .with_context(|| format!("LookupPrivilegeValueW failed for {name}"))?;
 
-        let mut tp = TOKEN_PRIVILEGES {
+        let tp = TOKEN_PRIVILEGES {
             PrivilegeCount: 1,
             Privileges: [windows::Win32::Security::LUID_AND_ATTRIBUTES {
                 Luid: luid,
@@ -632,7 +632,7 @@ fn enable_privileges(names: &[&str]) -> Result<()> {
             }],
         };
 
-        unsafe { AdjustTokenPrivileges(token, false, Some(&mut tp), 0, None, None) }
+        unsafe { AdjustTokenPrivileges(token, false, Some(&tp), 0, None, None) }
             .ok()
             .with_context(|| format!("AdjustTokenPrivileges failed for {name}"))?;
     }

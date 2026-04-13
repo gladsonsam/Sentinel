@@ -19,6 +19,22 @@ interface FilesTabProps {
   sendWsMessage: (msg: unknown) => void;
 }
 
+/** Payload from `window.dispatchEvent(new CustomEvent("sentinel-ws-event", { detail }))`. */
+interface SentinelFileWsDetail {
+  agent_id?: string;
+  event?: string;
+  data?: {
+    path?: string;
+    items?: FileItem[];
+    ok?: boolean;
+    error?: unknown;
+    is_error?: boolean;
+    chunk_index?: number;
+    total_chunks?: number;
+    data?: string;
+  };
+}
+
 /** Raw bytes per upload chunk — must match agent `REMOTE_FILE_CHUNK_BYTES` in `agent/src/main.rs`. */
 const REMOTE_FILE_CHUNK_BYTES = 3 * 1024 * 1024;
 
@@ -40,10 +56,6 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
     resolve: (outcome: { ok: boolean; error?: string }) => void;
   } | null>(null);
 
-  useEffect(() => {
-    loadDirectory(currentPath);
-  }, [currentPath]);
-
   const loadDirectory = useCallback((path: string) => {
     setLoading(true);
     sendWsMessage({
@@ -54,36 +66,42 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
   }, [agentId, sendWsMessage]);
 
   useEffect(() => {
+    loadDirectory(currentPath);
+  }, [currentPath, loadDirectory]);
+
+  useEffect(() => {
     const onWsEvent = (event: Event) => {
-      const customEvent = event as CustomEvent<any>;
-      const data = customEvent.detail;
+      const data = (event as CustomEvent<SentinelFileWsDetail>).detail;
       if (!data || data.agent_id !== agentId) return;
 
       if (data.event === "dir_list") {
-        const path = typeof data?.data?.path === "string" ? data.data.path : "";
+        const payload = data.data;
+        if (!payload) return;
+        const path = typeof payload.path === "string" ? payload.path : "";
         // When `currentPath` is empty we asked the agent to pick a sensible default
         // (usually Documents). Accept the first reply and lock onto that path.
         if (!currentPath) {
           if (path) setCurrentPath(path);
-          setItems(data.data.items || []);
+          setItems(payload.items || []);
           setLoading(false);
           return;
         }
         if (path && path.toLowerCase() === currentPath.toLowerCase()) {
-          setItems(data.data.items || []);
+          setItems(payload.items || []);
           setLoading(false);
         }
       }
 
       if (data.event === "file_upload_result") {
         if (data.agent_id !== agentId) return;
-        const p = data.data?.path;
+        const payload = data.data;
+        const p = payload?.path;
         const w = uploadWaiterRef.current;
-        if (!w || !p) return;
+        if (!w || !p || !payload) return;
         if (p.toLowerCase() === w.destPath.toLowerCase()) {
           w.resolve({
-            ok: !!data.data.ok,
-            error: typeof data.data.error === "string" ? data.data.error : undefined,
+            ok: !!payload.ok,
+            error: typeof payload.error === "string" ? payload.error : undefined,
           });
           uploadWaiterRef.current = null;
         }
@@ -91,19 +109,30 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
       }
 
       if (data.event === "file_chunk") {
-        if (data.data.is_error) {
+        const payload = data.data;
+        if (!payload) return;
+        if (payload.is_error) {
           setDownloading(null);
           setChunksByPath({});
           setDownloadProgress(0);
           return;
         }
-        const path = data.data.path;
-        const index = data.data.chunk_index;
-        const total = data.data.total_chunks;
+        const path = payload.path;
+        const index = payload.chunk_index;
+        const total = payload.total_chunks;
+        const chunkData = payload.data;
+        if (
+          typeof path !== "string" ||
+          typeof index !== "number" ||
+          typeof total !== "number" ||
+          typeof chunkData !== "string"
+        ) {
+          return;
+        }
 
         setChunksByPath((prev) => {
           const chunks = prev[path] ? [...prev[path]] : new Array(total).fill("");
-          chunks[index] = data.data.data;
+          chunks[index] = chunkData;
           const received = chunks.filter((chunk) => chunk !== "").length;
           setDownloadProgress(Math.round((received / total) * 100));
 

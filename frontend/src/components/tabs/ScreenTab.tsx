@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useCallback, useState, useRef, useEffect, useLayoutEffect, useMemo } from "react";
 import Container from "@cloudscape-design/components/container";
 import Header from "@cloudscape-design/components/header";
 import Box from "@cloudscape-design/components/box";
@@ -8,7 +8,7 @@ import Toggle from "@cloudscape-design/components/toggle";
 import FormField from "@cloudscape-design/components/form-field";
 import Modal from "@cloudscape-design/components/modal";
 import Input from "@cloudscape-design/components/input";
-import { apiUrl } from "../../lib/api";
+import { mjpegStreamUrl, notifyMjpegViewerLeft } from "../../lib/api";
 import { StreamStatus } from "../common/StatusIndicator";
 import Alert from "@cloudscape-design/components/alert";
 import type { DashboardRole } from "../../lib/types";
@@ -35,20 +35,51 @@ export function ScreenTab({
   const [notificationMessage, setNotificationMessage] = useState("");
   const imgRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  /** Latest abort — avoids effect cleanups tied to `abortMjpeg` identity (session changes) clearing `<img src>`. */
+  const abortMjpegRef = useRef<() => void>(() => {});
 
-  const streamUrl = apiUrl(`/agents/${agentId}/mjpeg`);
+  /** Per visit to the screen tab; server ties MJPEG GET + explicit leave to this id. */
+  const [mjpegStreamSession, setMjpegStreamSession] = useState("");
+
   const blockedByRole = dashboardRole === "viewer";
   const streamEnabled = streamActive && !blockedByRole;
+
+  useEffect(() => {
+    if (!streamEnabled) return;
+    setMjpegStreamSession(crypto.randomUUID());
+  }, [agentId, streamEnabled]);
+
+  const streamUrl = useMemo(
+    () => (streamEnabled && mjpegStreamSession ? mjpegStreamUrl(agentId, mjpegStreamSession) : ""),
+    [streamEnabled, agentId, mjpegStreamSession],
+  );
 
   useEffect(() => {
     if (!streamActive) setRemoteControl(false);
   }, [streamActive]);
 
+  /** Drop MJPEG and notify the server immediately so the agent gets `stop_capture` without waiting on the browser. */
+  const abortMjpeg = useCallback(() => {
+    const el = imgRef.current;
+    if (el) {
+      el.removeAttribute("src");
+      el.src = "";
+      el.removeAttribute("srcset");
+    }
+    setStreaming(false);
+    if (mjpegStreamSession) {
+      notifyMjpegViewerLeft(agentId, mjpegStreamSession);
+    }
+  }, [agentId, mjpegStreamSession]);
+
+  abortMjpegRef.current = abortMjpeg;
+
+  useLayoutEffect(() => {
+    if (!streamEnabled) abortMjpegRef.current();
+  }, [streamEnabled]);
+
   useEffect(() => {
     if (!streamEnabled) {
-      const el = imgRef.current;
-      if (el) el.src = "";
-      setStreaming(false);
       const wrap = containerRef.current;
       if (wrap && document.fullscreenElement === wrap) {
         void document.exitFullscreen();
@@ -58,8 +89,7 @@ export function ScreenTab({
 
   useEffect(() => {
     return () => {
-      const el = imgRef.current;
-      if (el) el.src = "";
+      abortMjpegRef.current();
     };
   }, []);
 
@@ -215,6 +245,11 @@ export function ScreenTab({
         >
           <div className="sentinel-screen-frame">
             <img
+              key={
+                streamEnabled && mjpegStreamSession
+                  ? `${agentId}-mjpeg-${mjpegStreamSession}`
+                  : `${agentId}-mjpeg-off`
+              }
               ref={imgRef}
               src={streamEnabled ? streamUrl : ""}
               alt="Agent screen"

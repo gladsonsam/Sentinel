@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Table from "@cloudscape-design/components/table";
 import Box from "@cloudscape-design/components/box";
 import Header from "@cloudscape-design/components/header";
@@ -31,17 +31,13 @@ export function KeysTab({ agentId }: KeysTabProps) {
   const [loading, setLoading] = useState(true);
   const [showCorrected, setShowCorrected] = useState(false);
 
-  useEffect(() => {
-    fetchKeystrokes();
-  }, [agentId]);
-
-  const fetchKeystrokes = async () => {
+  const fetchKeystrokes = useCallback(async () => {
     try {
       setLoading(true);
       const response = await fetch(apiUrl(`/agents/${agentId}/keys?limit=500`), {
         credentials: "include",
       });
-      
+
       if (response.ok) {
         const data = await response.json();
         const rows = Array.isArray(data?.rows) ? data.rows : Array.isArray(data) ? data : [];
@@ -61,7 +57,11 @@ export function KeysTab({ agentId }: KeysTabProps) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [agentId]);
+
+  useEffect(() => {
+    void fetchKeystrokes();
+  }, [fetchKeystrokes]);
 
   const applyBackspaceCorrection = (text: string): string => {
     const stack: string[] = [];

@@ -135,10 +135,9 @@ pub fn collect_items() -> Vec<Value> {
 }
 
 pub async fn send_inventory(out_tx: mpsc::Sender<Message>) {
-    let items = match tokio::task::spawn_blocking(collect_items).await {
-        Ok(items) => items,
-        Err(_) => Vec::new(),
-    };
+    let items = tokio::task::spawn_blocking(collect_items)
+        .await
+        .unwrap_or_default();
     let n = items.len();
     let payload = serde_json::json!({
         "type": "software_inventory",
