@@ -1022,6 +1022,219 @@ fn handle_server_command(
                 info!("Screen capture stopped (no viewers remaining).");
             }
         }
+        "ListLogSources" => {
+            let request_id = val["request_id"].as_str().unwrap_or("").trim().to_string();
+            if request_id.is_empty() {
+                return;
+            }
+            let out = out_tx.clone();
+            tokio::spawn(async move {
+                fn sources() -> Vec<serde_json::Value> {
+                    let mut out = Vec::new();
+
+                    #[cfg(windows)]
+                    let local = crate::config::program_data_sentinel_dir().join("agent.log");
+                    #[cfg(not(windows))]
+                    let local = {
+                        let mut p = crate::config::config_path();
+                        p.pop();
+                        p.push("agent.log");
+                        p
+                    };
+                    out.push(serde_json::json!({
+                        "id": "local_agent",
+                        "label": "Interactive agent (agent.log, with config)",
+                        "path": local.display().to_string(),
+                    }));
+
+                    #[cfg(windows)]
+                    {
+                        let pd = crate::config::program_data_sentinel_dir();
+                        out.push(serde_json::json!({
+                            "id": "user_agent",
+                            "label": "User session started by service (user-agent.log)",
+                            "path": pd.join("user-agent.log").display().to_string(),
+                        }));
+                        out.push(serde_json::json!({
+                            "id": "service",
+                            "label": "Windows service (service.log)",
+                            "path": pd.join("service.log").display().to_string(),
+                        }));
+                    }
+
+                    if let Ok(p) = std::env::var("AGENT_LOG_FILE") {
+                        let t = p.trim();
+                        if !t.is_empty() {
+                            out.push(serde_json::json!({
+                                "id": "env",
+                                "label": "This process (AGENT_LOG_FILE)",
+                                "path": t.to_string(),
+                            }));
+                        }
+                    }
+
+                    out
+                }
+
+                let payload = serde_json::json!({
+                    "type": "log_sources",
+                    "request_id": request_id,
+                    "sources": sources(),
+                })
+                .to_string();
+                let _ = out.send(Message::Text(payload)).await;
+            });
+        }
+        "ReadLogTail" => {
+            const MAX_LOG_KIND_CHARS: usize = 64;
+            const MAX_KB_DEFAULT: u32 = 512;
+            const MAX_KB_LIMIT: u32 = 2048;
+
+            let request_id = val["request_id"].as_str().unwrap_or("").trim().to_string();
+            if request_id.is_empty() {
+                return;
+            }
+            let kind = val["kind"]
+                .as_str()
+                .unwrap_or("local_agent")
+                .trim()
+                .chars()
+                .take(MAX_LOG_KIND_CHARS)
+                .collect::<String>();
+            if kind.is_empty() {
+                return;
+            }
+            let max_kb = val["max_kb"]
+                .as_u64()
+                .map(|u| u as u32)
+                .unwrap_or(MAX_KB_DEFAULT)
+                .min(MAX_KB_LIMIT);
+            let max_bytes = (max_kb as usize).saturating_mul(1024);
+
+            fn resolve_log_kind(kind: &str) -> Result<std::path::PathBuf, String> {
+                match kind {
+                    "local_agent" => {
+                        #[cfg(windows)]
+                        {
+                            Ok(crate::config::program_data_sentinel_dir().join("agent.log"))
+                        }
+                        #[cfg(not(windows))]
+                        {
+                            let mut p = crate::config::config_path();
+                            p.pop();
+                            p.push("agent.log");
+                            Ok(p)
+                        }
+                    }
+                    "service" => {
+                        #[cfg(windows)]
+                        {
+                            Ok(crate::config::program_data_sentinel_dir().join("service.log"))
+                        }
+                        #[cfg(not(windows))]
+                        {
+                            Err("service.log is only used on Windows".into())
+                        }
+                    }
+                    "user_agent" => {
+                        #[cfg(windows)]
+                        {
+                            Ok(crate::config::program_data_sentinel_dir().join("user-agent.log"))
+                        }
+                        #[cfg(not(windows))]
+                        {
+                            Err("user-agent.log is only used on Windows".into())
+                        }
+                    }
+                    "env" => std::env::var("AGENT_LOG_FILE")
+                        .map_err(|_| "AGENT_LOG_FILE is not set in this process".into())
+                        .map(std::path::PathBuf::from),
+                    _ => Err(format!("unknown log source: {kind}")),
+                }
+            }
+
+            fn strip_ansi_escapes(input: &str) -> String {
+                let mut out = String::with_capacity(input.len());
+                let mut chars = input.chars().peekable();
+                while let Some(c) = chars.next() {
+                    if c == '\u{1b}' {
+                        if chars.peek() == Some(&'[') {
+                            chars.next();
+                            while let Some(&ch) = chars.peek() {
+                                chars.next();
+                                if ch.is_ascii_alphabetic() {
+                                    break;
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                    out.push(c);
+                }
+                out
+            }
+
+            let out = out_tx.clone();
+            tokio::spawn(async move {
+                let path = match resolve_log_kind(kind.as_str()) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        let payload = serde_json::json!({
+                            "type": "log_tail",
+                            "request_id": request_id,
+                            "kind": kind,
+                            "text": format!("(Could not resolve log source: {e})"),
+                        })
+                        .to_string();
+                        let _ = out.send(Message::Text(payload)).await;
+                        return;
+                    }
+                };
+
+                let read_res = tokio::task::spawn_blocking(move || -> String {
+                    use std::fs::File;
+                    use std::io::{Read, Seek, SeekFrom};
+                    use std::path::Path;
+
+                    fn read_file_tail(path: &Path, max_bytes: usize) -> std::io::Result<String> {
+                        let mut f = File::open(path)?;
+                        let len = f.metadata()?.len();
+                        let start = len.saturating_sub(max_bytes as u64);
+                        f.seek(SeekFrom::Start(start))?;
+                        let mut buf = Vec::new();
+                        f.read_to_end(&mut buf)?;
+                        Ok(String::from_utf8_lossy(&buf).into_owned())
+                    }
+
+                    if !path.exists() {
+                        return format!(
+                            "(File not found: {})\n\nLogs appear here after that component writes its first line.",
+                            path.display()
+                        );
+                    }
+                    match read_file_tail(&path, max_bytes) {
+                        Ok(s) if s.is_empty() => "(Log file is empty.)".into(),
+                        Ok(s) => strip_ansi_escapes(&s),
+                        Err(e) => format!("(Could not read log: {e})"),
+                    }
+                })
+                .await;
+
+                let text = match read_res {
+                    Ok(s) => s,
+                    Err(e) => format!("(Log read task failed: {e})"),
+                };
+
+                let payload = serde_json::json!({
+                    "type": "log_tail",
+                    "request_id": request_id,
+                    "kind": kind,
+                    "text": text,
+                })
+                .to_string();
+                let _ = out.send(Message::Text(payload)).await;
+            });
+        }
         "ListDir" => {
             const MAX_DIR_PATH_CHARS: usize = 1024;
             const MAX_DIR_ENTRIES: usize = 5_000;

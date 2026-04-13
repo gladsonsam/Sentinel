@@ -87,12 +87,12 @@ function isTabKey(v: string | null): v is TabKey {
     v === "specs" ||
     v === "software" ||
     v === "scripts" ||
+    v === "logs" ||
     v === "keys" ||
     v === "windows" ||
     v === "urls" ||
     v === "alerts" ||
     v === "files" ||
-    v === "audit" ||
     v === "settings"
   );
 }

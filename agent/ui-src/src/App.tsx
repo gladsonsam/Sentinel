@@ -221,7 +221,9 @@ function SettingsPanel() {
   const [logText, setLogText] = useState("");
   const [logsManualRefresh, setLogsManualRefresh] = useState(false);
   const [logAutoRefresh, setLogAutoRefresh] = useState(true);
-  const logPreRef = useRef<HTMLPreElement | null>(null);
+  const logViewportRef = useRef<HTMLDivElement | null>(null);
+  const logStickToBottomRef = useRef(true);
+  const logInitialScrollDoneRef = useRef(false);
 
   const sideNavItems: SideNavigationProps.Item[] = useMemo(
     () => [
@@ -306,6 +308,9 @@ function SettingsPanel() {
 
   useEffect(() => {
     if (nav !== "logs") return;
+    // When entering logs, start pinned to bottom.
+    logStickToBottomRef.current = true;
+    logInitialScrollDoneRef.current = false;
     void refreshLogs(false);
   }, [nav, logSourceId, refreshLogs]);
 
@@ -317,8 +322,20 @@ function SettingsPanel() {
 
   useEffect(() => {
     if (!logAutoRefresh) return;
-    const el = logPreRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+    const el = logViewportRef.current;
+    if (!el) return;
+
+    // First render after (re-)entering logs: jump to bottom once.
+    if (!logInitialScrollDoneRef.current) {
+      el.scrollTop = el.scrollHeight;
+      logInitialScrollDoneRef.current = true;
+      return;
+    }
+
+    // Only keep auto-scrolling if the user is already at bottom.
+    if (logStickToBottomRef.current) {
+      el.scrollTop = el.scrollHeight;
+    }
   }, [logText, logAutoRefresh]);
 
   const logSourceOptions: SelectProps.Options = useMemo(
@@ -592,16 +609,7 @@ function SettingsPanel() {
         />
       </div>
 
-      <div
-        style={{
-          flex: 1,
-          minHeight: 0,
-          minWidth: 0,
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" }}>
+      <div style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
           <AppLayout
             headerSelector="#sentinel-agent-top-nav"
             footerSelector="#sentinel-agent-settings-footer"
@@ -617,40 +625,40 @@ function SettingsPanel() {
             }
             navigationWidth={260}
             maxContentWidth={Number.MAX_VALUE}
-            contentType="default"
+            contentType={nav === "logs" ? "table" : "default"}
             disableContentPaddings
             toolsHide
             content={
-              <div className="sentinel-agent-main" style={{ height: "100%", minHeight: 0, display: "flex" }}>
-                <Box
-                  padding={{ horizontal: "m", top: "m", bottom: "s" }}
-                  nativeAttributes={{
-                    style: {
-                      flex: 1,
-                      minHeight: 0,
-                      minWidth: 0,
-                      display: "flex",
-                      flexDirection: "column",
-                    },
-                  }}
-                >
+              /* Plain divs here — Cloudscape Box + nativeAttributes.style is unreliable for
+                 flex height chains. contentType="table" on logs disables AppLayout's own
+                 overflow:auto so our inner viewport is the sole scroll container. */
+              <div
+                style={{
+                  height: "100%",
+                  display: "flex",
+                  flexDirection: "column",
+                  padding: "16px 16px 8px",
+                  boxSizing: "border-box",
+                  minHeight: 0,
+                }}
+              >
+                <div style={{ flexShrink: 0 }}>
                   <Header variant="h1" description={pageDesc}>
                     {pageTitle}
                   </Header>
+                </div>
 
-                  <Box
-                    margin={{ top: "l" }}
-                    nativeAttributes={{
-                      style: {
-                        flex: 1,
-                        minHeight: 0,
-                        minWidth: 0,
-                        overflow: nav === "logs" ? "hidden" : "auto",
-                        display: "flex",
-                        flexDirection: "column",
-                      },
-                    }}
-                  >
+                <div
+                  style={{
+                    flex: 1,
+                    minHeight: 0,
+                    minWidth: 0,
+                    marginTop: "20px",
+                    overflow: nav === "logs" ? "hidden" : "auto",
+                    display: "flex",
+                    flexDirection: "column",
+                  }}
+                >
                   {nav === "dashboard" && (
                     <Container header={<Header variant="h2">Overview</Header>}>
                       <KeyValuePairs columns={2} minColumnWidth={200} items={[...dashboardPairs]} />
@@ -779,51 +787,37 @@ function SettingsPanel() {
 
                   {nav === "logs" && (
                     <div
-                      className="sentinel-agent-logs-root"
                       style={{
                         flex: 1,
                         minHeight: 0,
                         display: "flex",
                         flexDirection: "column",
-                        width: "100%",
-                        boxSizing: "border-box",
                       }}
                     >
-                      <div style={{ flexShrink: 0 }}>
-                      <Container
-                        header={
-                          <Header
-                            variant="h2"
-                            actions={
-                              <SpaceBetween direction="horizontal" size="xs" alignItems="center">
-                                <Toggle
-                                  checked={logAutoRefresh}
-                                  onChange={({ detail }) => setLogAutoRefresh(detail.checked)}
-                                >
-                                  Auto-refresh
-                                </Toggle>
-                                <Button onClick={() => void refreshLogs(true)} loading={logsManualRefresh}>
-                                  Refresh
-                                </Button>
-                              </SpaceBetween>
-                            }
-                          >
-                            Agent logs
-                          </Header>
-                        }
-                      >
-                        <SpaceBetween size="m" direction="vertical">
-                          <Box variant="p" color="text-body-secondary" fontSize="body-s">
-                            Tails the on-disk log (last ~512 KiB). Pick which file to follow — e.g.{" "}
-                            <Box variant="code">service.log</Box> for the Windows service,{" "}
-                            <Box variant="code">user-agent.log</Box> when the service starts the user session, or{" "}
-                            <Box variant="code">agent.log</Box> in the same folder as machine-wide config (
-                            <Box variant="code">%ProgramData%\Sentinel</Box>) for a normal interactive run. If you see{" "}
-                            <Box variant="code">Another Sentinel agent instance is already running</Box>, a second copy
-                            of the settings app was started while one user agent is already running — only one
-                            interactive agent runs at a time (the service is separate).
-                          </Box>
-                          <FormField label="Log file">
+                      <div style={{ flexShrink: 0, marginBottom: "12px" }}>
+                        <Container
+                          header={
+                            <Header
+                              variant="h2"
+                              actions={
+                                <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+                                  <Toggle
+                                    checked={logAutoRefresh}
+                                    onChange={({ detail }) => setLogAutoRefresh(detail.checked)}
+                                  >
+                                    Auto-refresh
+                                  </Toggle>
+                                  <Button onClick={() => void refreshLogs(true)} loading={logsManualRefresh}>
+                                    Refresh
+                                  </Button>
+                                </SpaceBetween>
+                              }
+                            >
+                              Agent logs
+                            </Header>
+                          }
+                        >
+                          <FormField label="Log file" description="Last ~512 KiB. Logs are in %ProgramData%\Sentinel.">
                             <Select
                               selectedOption={selectedLogSourceOption}
                               options={logSourceOptions}
@@ -835,74 +829,74 @@ function SettingsPanel() {
                               }}
                             />
                           </FormField>
-                        </SpaceBetween>
-                      </Container>
+                        </Container>
                       </div>
-                      <div className="sentinel-agent-log-viewport">
-                        <pre
-                          ref={logPreRef}
-                          className="sentinel-agent-log-pre"
-                        >
+                      <div
+                        ref={logViewportRef}
+                        className="sentinel-agent-log-viewport"
+                        style={{ flex: 1, minHeight: 0, overflowY: "auto" }}
+                        onScroll={() => {
+                          const el = logViewportRef.current;
+                          if (!el) return;
+                          const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+                          logStickToBottomRef.current = distanceFromBottom <= 8;
+                        }}
+                      >
+                        <pre className="sentinel-agent-log-pre">
                           {logText || "Loading…"}
                         </pre>
                       </div>
                     </div>
                   )}
-                </Box>
-                </Box>
+                </div>
               </div>
             }
           />
-        </div>
+      </div>
 
-        <Box
-          padding={{ top: "m", bottom: "m", horizontal: "m" }}
-          nativeAttributes={{
-            id: "sentinel-agent-settings-footer",
-            className: "sentinel-agent-settings-footer",
-            style: {
-              flexShrink: 0,
-              width: "100%",
-              boxSizing: "border-box",
-              display: "flex",
-              alignItems: "center",
-              alignContent: "center",
-              gap: "12px",
-            },
-          }}
-        >
-          <Button variant="primary" onClick={() => void handleSave()} loading={saving}>
-            Save
-          </Button>
-          <Button variant="link" onClick={handleClose}>
-            Hide
-          </Button>
-          {saveMsg ? (
-            <Box
-              variant="span"
-              fontSize="body-s"
-              color={saveMsg.ok ? "text-status-success" : "text-status-error"}
-            >
-              {saveMsg.text}
-            </Box>
-          ) : null}
-          <div style={{ flex: 1, minWidth: 8 }} />
+      <Box
+        padding={{ top: "m", bottom: "m", horizontal: "m" }}
+        nativeAttributes={{
+          id: "sentinel-agent-settings-footer",
+          className: "sentinel-agent-settings-footer",
+          style: {
+            display: "flex",
+            alignItems: "center",
+            gap: "12px",
+          },
+        }}
+      >
+        <Button variant="primary" onClick={() => void handleSave()} loading={saving}>
+          Save
+        </Button>
+        <Button variant="link" onClick={handleClose}>
+          Hide
+        </Button>
+        {saveMsg ? (
           <Box
             variant="span"
             fontSize="body-s"
-            color="text-body-secondary"
-            nativeAttributes={{
-              className: "sentinel-agent-settings-footer__hint",
-              style: { textAlign: "right" },
-            }}
+            color={saveMsg.ok ? "text-status-success" : "text-status-error"}
           >
-            You can open this window anytime with <span className="sentinel-kbd">Ctrl+Shift+F12</span>.
+            {saveMsg.text}
           </Box>
-          <Button variant="normal" onClick={handleExit}>
-            Exit agent
-          </Button>
+        ) : null}
+        <div style={{ flex: 1, minWidth: 8 }} />
+        <Box
+          variant="span"
+          fontSize="body-s"
+          color="text-body-secondary"
+          nativeAttributes={{
+            className: "sentinel-agent-settings-footer__hint",
+            style: { textAlign: "right" },
+          }}
+        >
+          You can open this window anytime with <span className="sentinel-kbd">Ctrl+Shift+F12</span>.
         </Box>
-      </div>
+        <Button variant="normal" onClick={handleExit}>
+          Exit agent
+        </Button>
+      </Box>
 
       <Modal
         visible={updateDialog !== null}

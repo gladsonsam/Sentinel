@@ -3,6 +3,7 @@
 mod agent_enrollment;
 mod agents_capture;
 mod agents_list;
+mod agents_logs;
 mod agents_telemetry;
 mod assets;
 mod audit;
@@ -50,6 +51,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/identities/:id/unlink", post(users::identity_unlink))
         .route("/agents/bulk-script", post(software_scripts::agents_bulk_script))
         .route("/agents/:id/info", get(agents_telemetry::agent_info))
+        .route("/agents/:id/logs/sources", get(agents_logs::agent_log_sources))
+        .route("/agents/:id/logs/tail", get(agents_logs::agent_log_tail))
         .route("/agents/:id/windows", get(agents_telemetry::agent_windows))
         .route("/agents/:id/keys", get(agents_telemetry::agent_keys))
         .route(

@@ -448,6 +448,35 @@ export const api = {
     body: { shell: string; script: string; timeout_secs?: number },
   ): Promise<Record<string, unknown>> => postJsonRes(`/agents/${id}/script`, body),
 
+  agentLogSources: (
+    id: string,
+  ): Promise<{
+    sources: { id: string; label: string; path: string }[];
+  }> =>
+    get(`/agents/${id}/logs/sources`).then((r: any) => ({
+      sources: Array.isArray(r?.sources)
+        ? r.sources.map((s: any) => ({
+            id: String(s?.id ?? ""),
+            label: String(s?.label ?? s?.id ?? ""),
+            path: String(s?.path ?? ""),
+          }))
+        : [],
+    })),
+
+  agentLogTail: (
+    id: string,
+    params?: { kind?: string; maxKb?: number },
+  ): Promise<{ kind: string; text: string }> => {
+    const q = new URLSearchParams();
+    if (params?.kind) q.set("kind", params.kind);
+    if (params?.maxKb != null) q.set("max_kb", String(params.maxKb));
+    const qs = q.toString();
+    return get(`/agents/${id}/logs/tail${qs ? `?${qs}` : ""}`).then((r: any) => ({
+      kind: String(r?.kind ?? params?.kind ?? ""),
+      text: String(r?.text ?? ""),
+    }));
+  },
+
   bulkAgentScript: (body: {
     agent_ids: string[];
     shell: string;

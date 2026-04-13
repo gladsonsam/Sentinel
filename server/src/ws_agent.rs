@@ -298,6 +298,17 @@ async fn dispatch_text(text: &str, agent_id: uuid::Uuid, name: &str, state: &Arc
 
     let kind = val["type"].as_str().unwrap_or("");
 
+    // One-shot RPC responses (agent -> server -> HTTP). Do not persist to DB; do not broadcast.
+    if kind == "log_tail" || kind == "log_sources" {
+        if let Some(rid) = val["request_id"]
+            .as_str()
+            .and_then(|s| uuid::Uuid::parse_str(s).ok())
+        {
+            let _ = state.try_complete_log_waiter(rid, val);
+        }
+        return;
+    }
+
     let result = match kind {
         "keys" => {
             let too_long = val["text"]

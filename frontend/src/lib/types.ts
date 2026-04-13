@@ -311,10 +311,10 @@ export type TabKey =
   | "specs"
   | "software"
   | "scripts"
+  | "logs"
   | "keys"
   | "windows"
   | "urls"
   | "alerts"
   | "files"
-  | "audit"
   | "settings";

@@ -30,7 +30,7 @@ export const AGENT_LIVE_SUBTABS: TabKey[] = ["activity", "live"];
 export const AGENT_SYSTEM_SUBTABS: TabKey[] = ["specs", "software", "scripts", "files"];
 
 /** Sub-views under “Data” (telemetry / history). */
-export const AGENT_DATA_SUBTABS: TabKey[] = ["keys", "windows", "urls", "alerts", "audit"];
+export const AGENT_DATA_SUBTABS: TabKey[] = ["keys", "windows", "urls", "alerts", "logs"];
 
 export function agentSectionFromTabKey(tab: TabKey): AgentSectionId {
   if (tab === "live" || tab === "activity") return "live";
@@ -81,7 +81,7 @@ export const AGENT_TAB_ORDER: TabKey[] = [
   "windows",
   "urls",
   "alerts",
-  "audit",
+  "logs",
   "settings",
 ];
 
@@ -123,6 +123,12 @@ export const AGENT_TAB_META: Record<TabKey, AgentTabDefinition> = {
     breadcrumbLabel: "Scripts",
     icon: Terminal,
   },
+  logs: {
+    tabLabel: "Logs",
+    sideNavLabel: "Logs",
+    breadcrumbLabel: "Logs",
+    icon: ScrollText,
+  },
   keys: {
     tabLabel: "Keys",
     sideNavLabel: "Keystrokes",
@@ -152,12 +158,6 @@ export const AGENT_TAB_META: Record<TabKey, AgentTabDefinition> = {
     sideNavLabel: "Files",
     breadcrumbLabel: "Files",
     icon: FolderOpen,
-  },
-  audit: {
-    tabLabel: "Audit",
-    sideNavLabel: "Audit log",
-    breadcrumbLabel: "Audit log",
-    icon: ScrollText,
   },
   settings: {
     tabLabel: "Settings",

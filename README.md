@@ -36,11 +36,9 @@ Tab-by-tab UI tour (with more detail): **[wiki → Features](https://github.com/
 
 ```bash
 cp .env.example .env
-# edit .env — set strong POSTGRES_PASSWORD, ADMIN_PASSWORD, AGENT_SECRET
 docker compose up -d
 ```
 
-Open **[http://localhost:9000](http://localhost:9000)** on the Docker host (or `http://<LAN-IP>:9000` from another machine). Extended deploy options (mDNS, Traefik, TLS): **[wiki → Deployment](https://github.com/gladsonsam/Sentinel/wiki/Deployment)**.
 
 ## Documentation
 

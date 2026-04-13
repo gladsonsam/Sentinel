@@ -188,24 +188,17 @@ img {
   color: var(--color-primary);
 }
 
-/* Logs tab: flex column fills the main panel; viewport scrolls internally (avoid vh-based height vs footer). */
-.sentinel-agent-logs-root {
-  min-height: 0;
-  overflow: hidden;
-}
-
-/* Logs tab: use app tokens so dark mode isn’t light panel + washed-out text (awsui vars + fallbacks were wrong here). */
+/* ── Logs viewport ────────────────────────────────────────────────────────
+   flex/overflow/height are set via inline style on the element for reliability
+   across Cloudscape AppLayout content types. Only colours live here. */
 .sentinel-agent-log-viewport {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: 4px;
-  margin-top: 16px;
   padding: 12px;
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
   overscroll-behavior: contain;
 }
+
 .sentinel-agent-log-pre {
   color: var(--color-primary);
   display: block;
@@ -217,10 +210,19 @@ img {
   line-height: 1.45;
 }
 
-/* Footer: keep a stable single-row layout (avoid wrapping when scrollbars appear). */
+/* ── Footer ───────────────────────────────────────────────────────────────
+   Fixed to viewport bottom so Cloudscape footerSelector offset works correctly.
+   AppLayout adds a matching bottom padding to its scroll areas via the selector. */
 .sentinel-agent-settings-footer {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 1001;
   background: var(--color-surface);
   border-top: 1px solid var(--color-border);
+  box-sizing: border-box;
+  width: 100%;
   flex-wrap: nowrap !important;
 }
 

@@ -24,7 +24,7 @@ import { WindowsTab } from "../components/tabs/WindowsTab";
 import { UrlsTab } from "../components/tabs/UrlsTab";
 import { AlertsTab } from "../components/tabs/AlertsTab";
 import { FilesTab } from "../components/tabs/FilesTab";
-import { AuditTab } from "../components/tabs/AuditTab";
+import { AgentLogsTab } from "../components/tabs/AgentLogsTab";
 import { SoftwareTab } from "../components/tabs/SoftwareTab";
 import { ScriptsTab } from "../components/tabs/ScriptsTab";
 import {
@@ -459,13 +459,8 @@ export function AgentDetailPage({
         );
       case "files":
         return <FilesTab agentId={agent.id} sendWsMessage={sendWsMessage} />;
-      case "audit":
-        return (
-          <AuditTab
-            agentId={agent.id}
-            subheader="Same central audit log as Activity log (top bar), filtered to this agent."
-          />
-        );
+      case "logs":
+        return <AgentLogsTab agentId={agent.id} />;
       case "settings":
         return (
           <AgentSettingsTab

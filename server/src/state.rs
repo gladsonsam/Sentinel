@@ -78,6 +78,8 @@ pub struct AppState {
     pub wol_min_interval: Duration,
     pub allow_remote_script: bool,
     pub script_waiters: Mutex<HashMap<Uuid, oneshot::Sender<serde_json::Value>>>,
+    /// One-shot waiters for agent log RPC responses (`log_tail`, `log_sources`).
+    pub log_waiters: Mutex<HashMap<Uuid, oneshot::Sender<serde_json::Value>>>,
     pub(crate) login_failures: Mutex<HashMap<String, Vec<Instant>>>,
     /// Per (rule_id, agent_id) last fire time for alert cooldowns.
     pub alert_match_cooldowns: Mutex<HashMap<(i64, Uuid), Instant>>,
@@ -158,6 +160,7 @@ impl AppState {
             wol_min_interval,
             allow_remote_script,
             script_waiters: Mutex::new(HashMap::new()),
+            log_waiters: Mutex::new(HashMap::new()),
             login_failures: Mutex::new(HashMap::new()),
             alert_match_cooldowns: Mutex::new(HashMap::new()),
             metrics,
@@ -253,6 +256,23 @@ impl AppState {
     /// Deliver an agent `script_result` to a waiting HTTP request, if any.
     pub fn try_complete_script_waiter(&self, id: Uuid, payload: serde_json::Value) -> bool {
         if let Some(tx) = self.script_waiters.lock().remove(&id) {
+            let _ = tx.send(payload);
+            return true;
+        }
+        false
+    }
+
+    pub fn register_log_waiter(&self, id: Uuid, sender: oneshot::Sender<serde_json::Value>) {
+        self.log_waiters.lock().insert(id, sender);
+    }
+
+    pub fn remove_log_waiter(&self, id: Uuid) {
+        self.log_waiters.lock().remove(&id);
+    }
+
+    /// Deliver an agent log RPC response (`log_tail` / `log_sources`) to a waiting HTTP request, if any.
+    pub fn try_complete_log_waiter(&self, id: Uuid, payload: serde_json::Value) -> bool {
+        if let Some(tx) = self.log_waiters.lock().remove(&id) {
             let _ = tx.send(payload);
             return true;
         }
