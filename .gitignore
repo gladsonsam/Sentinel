@@ -32,5 +32,6 @@ server/static/
 Thumbs.db
 .idea/
 .vscode/
+.cursor/
 *.swp
 *.swo
