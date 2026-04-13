@@ -14,6 +14,35 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Draft release notes (commits since previous tag)
+        id: rel_notes
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME}"
+          prev="$(git describe --tags --abbrev=0 --exclude="$tag" 2>/dev/null || true)"
+          delim="REL_BODY_EOF"
+          {
+            echo "body<<$delim"
+            echo "Draft for **${tag}**. Edit below, then publish when ready."
+            echo ""
+            echo "_Note: while this release is a draft, \`.../releases/latest/download/latest.json\` still serves the **last published** release — that is expected._"
+            echo ""
+            if [ -n "$prev" ]; then
+              echo "### Commits since ${prev}"
+              echo ""
+              git log --no-merges --pretty=format:'- %s (%h)' "${prev}..${tag}"
+            else
+              echo "### Recent commits"
+              echo ""
+              git log --no-merges --pretty=format:'- %s (%h)' -n 40 "${tag}"
+            fi
+            echo ""
+            echo "$delim"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -73,10 +102,6 @@ jobs:
           projectPath: agent
           tagName: ${{ github.ref_name }}
           releaseName: Sentinel Agent ${{ github.ref_name }}
-          releaseBody: |
-            Draft release for ${{ github.ref_name }}.
-
-            - Fill in release notes + announcement
-            - Publish when ready
+          releaseBody: ${{ steps.rel_notes.outputs.body }}
           releaseDraft: true
           prerelease: false

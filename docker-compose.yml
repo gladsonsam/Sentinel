@@ -1,9 +1,3 @@
-# Copy `.env.example` → `.env`, then: docker compose up -d
-#
-# Build server from this tree: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
-#
-# Traefik, etc.: https://github.com/gladsonsam/Sentinel/wiki/Deployment
-
 services:
   db:
     image: postgres:16-alpine
@@ -11,9 +5,11 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-monitor}
       POSTGRES_USER: ${POSTGRES_USER:-monitor}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env — see .env.example}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env and set POSTGRES_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-monitor} -d ${POSTGRES_DB:-monitor}"]
       interval: 5s
@@ -22,17 +18,19 @@ services:
 
   server:
     image: ghcr.io/gladsonsam/sentinel/server:latest
+    build:
+      context: .
+      dockerfile: server/Dockerfile
     restart: unless-stopped
+    network_mode: host
     env_file:
       - .env
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-monitor}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-monitor}
+      DATABASE_URL: postgres://${POSTGRES_USER:-monitor}:${POSTGRES_PASSWORD}@127.0.0.1:5432/${POSTGRES_DB:-monitor}
       LOG_FORCE_COLOR: "1"
     depends_on:
       db:
         condition: service_healthy
-    ports:
-      - "${PUBLISH_PORT:-9000}:9000"
 
 volumes:
   pgdata:

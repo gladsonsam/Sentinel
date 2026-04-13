@@ -72,13 +72,10 @@ pub fn verify_msi_signature(msi_bytes: &[u8], signature: &str) -> Result<()> {
     Ok(())
 }
 
-/// Per-user staging directory (no elevation). The Windows service is allowed to read these paths
-/// when we ask it to run `msiexec`.
-fn user_update_staging_dir() -> PathBuf {
-    dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from(std::env::var_os("TEMP").unwrap_or_default()))
-        .join("sentinel")
-        .join("updates")
+/// Machine-wide staging under `%ProgramData%\Sentinel\updates`. Service and user agent must be
+/// able to read/write this folder (MSI ACLs).
+fn update_staging_dir() -> PathBuf {
+    crate::config::updates_staging_dir()
 }
 
 enum LocalDownloadResult {
@@ -86,8 +83,8 @@ enum LocalDownloadResult {
     Ready(PathBuf),
 }
 
-/// 1–2: fetch manifest, download MSI to **user** temp/staging, verify signature.
-async fn download_update_msi_to_user_staging() -> Result<LocalDownloadResult> {
+/// 1–2: fetch manifest, download MSI to ProgramData staging, verify signature.
+async fn download_update_msi_to_staging() -> Result<LocalDownloadResult> {
     let latest = crate::updater_manifest::fetch_latest_info().await?;
     let current = env!("CARGO_PKG_VERSION");
     let pub_v = latest.version.trim_start_matches('v');
@@ -100,7 +97,7 @@ async fn download_update_msi_to_user_staging() -> Result<LocalDownloadResult> {
         return Ok(LocalDownloadResult::UpToDate);
     }
 
-    let dir = user_update_staging_dir();
+    let dir = update_staging_dir();
     tokio::fs::create_dir_all(&dir)
         .await
         .with_context(|| format!("create {}", dir.display()))?;
@@ -236,10 +233,10 @@ async fn pipe_call_install_msi(msi_path: &Path) -> Result<UpdateViaServiceOutcom
     parse_pipe_reply(&buf)
 }
 
-/// Download + verify under `%LOCALAPPDATA%\\sentinel\\updates`, then ask the LocalSystem service
+/// Download + verify under `%ProgramData%\\Sentinel\\updates`, then ask the LocalSystem service
 /// to run `msiexec` via the updater named pipe.
 pub async fn update_via_service() -> Result<UpdateViaServiceOutcome> {
-    let o = match download_update_msi_to_user_staging().await? {
+    let o = match download_update_msi_to_staging().await? {
         LocalDownloadResult::UpToDate => UpdateViaServiceOutcome::UpToDate,
         LocalDownloadResult::Ready(msi_path) => pipe_call_install_msi(&msi_path).await?,
     };

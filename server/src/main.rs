@@ -2,7 +2,9 @@
 //!
 //! Configuration is via environment variables; see `.env.example` in the repository root and the wiki (Configuration + Environment template).
 
+mod agent_enroll_http;
 mod alert_rules;
+mod mdns_broadcast;
 mod api;
 mod auth;
 mod config;
@@ -158,11 +160,11 @@ async fn main() -> anyhow::Result<()> {
         .map(|v| parse_bool(&v))
         .unwrap_or(false);
     if agent_secret.is_some() {
-        info!("Agent authentication enabled (AGENT_SECRET set).");
+        info!("AGENT_SECRET is set (optional shared secret for agents that are not enrolled with a per-device token).");
     } else if allow_insecure_agent_auth {
-        info!("Agent authentication disabled (insecure opt-in).");
+        info!("Agent WebSocket auth: disabled (ALLOW_INSECURE_AGENT_AUTH — insecure).");
     } else {
-        info!("Agent authentication disabled (deny agent connections; set AGENT_SECRET).");
+        info!("Agent WebSocket auth: per-device tokens only (AGENT_SECRET unset). Admins create enrollment codes at POST /api/settings/agent-enrollment-tokens.");
     }
 
     let wol_min_interval_secs: u64 = std::env::var("WOL_MIN_INTERVAL_SECS")
@@ -226,7 +228,10 @@ async fn main() -> anyhow::Result<()> {
         notify_hub,
         integration_api_token,
         public_base_url,
+        agent_listen_port: cfg.listen.port(),
     }));
+
+    mdns_broadcast::spawn_sentinel_mdns_if_enabled(cfg.listen.port());
 
     if let Some(ref m) = prom_metrics {
         let st = state.clone();
@@ -287,11 +292,29 @@ async fn main() -> anyhow::Result<()> {
         )
         .with_state(state.clone());
 
-    let api_inner = if cfg.api_rate_limit_per_second > 0 {
-        use tower_governor::governor::GovernorConfigBuilder;
-        use tower_governor::key_extractor::SmartIpKeyExtractor;
-        use tower_governor::GovernorLayer;
+    use tower_governor::governor::GovernorConfigBuilder;
+    use tower_governor::key_extractor::SmartIpKeyExtractor;
+    use tower_governor::GovernorLayer;
 
+    let enroll_routes = Router::new()
+        .route(
+            "/api/agent/enroll",
+            post(agent_enroll_http::agent_enroll_handler),
+        )
+        .layer(GovernorLayer {
+            config: std::sync::Arc::new(
+                GovernorConfigBuilder::default()
+                    // Short 6-digit codes: keep enroll attempts expensive to brute-force per IP.
+                    .per_second(1)
+                    .burst_size(8)
+                    .key_extractor(SmartIpKeyExtractor)
+                    .finish()
+                    .unwrap(),
+            ),
+        })
+        .with_state(state.clone());
+
+    let api_inner = if cfg.api_rate_limit_per_second > 0 {
         let n = cfg.api_rate_limit_per_second.clamp(1, 500);
         let burst_u = (n * 2).min(1000).max(n).min(u32::MAX as u64) as u32;
         let governor_conf = std::sync::Arc::new(
@@ -325,6 +348,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(metrics_routes)
         .merge(auth_routes)
         .merge(integration_routes)
+        .merge(enroll_routes)
         .merge(protected)
         .route_service("/agents", ServeFile::new(index_path.clone()))
         .route_service("/agents/*path", ServeFile::new(index_path.clone()))

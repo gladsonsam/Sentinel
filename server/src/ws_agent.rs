@@ -34,7 +34,7 @@ use crate::{
 
 // Conservative bounds to mitigate memory/DB-flood DoS.
 // These can be tuned later (or moved to env/config).
-const MAX_AGENT_NAME_CHARS: usize = 128;
+pub const MAX_AGENT_NAME_CHARS: usize = 128;
 /// ~3 MiB raw chunk → ~4.1 MiB base64 + JSON overhead (see agent `REMOTE_FILE_CHUNK_BYTES`).
 const MAX_AGENT_TEXT_BYTES: usize = 8 * 1024 * 1024;
 const MAX_AGENT_BINARY_BYTES: usize = 8 * 1024 * 1024; // JPEG frames
@@ -56,21 +56,7 @@ pub async fn handler(
     Query(params): Query<AgentQuery>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    // Enforce agent authentication when configured.
-    if let Some(expected) = state.agent_secret.as_deref() {
-        let provided = params.secret.as_deref().unwrap_or("");
-
-        if !secrets::ct_compare_secret(provided, expected) {
-            return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
-        }
-    } else if !state.allow_insecure_agent_auth {
-        return (
-            StatusCode::UNAUTHORIZED,
-            "Agent auth not configured (set AGENT_SECRET)",
-        )
-            .into_response();
-    }
-
+    let provided = params.secret.as_deref().unwrap_or("").trim();
     let name = params
         .name
         .unwrap_or_else(|| "unknown".into())
@@ -78,7 +64,37 @@ pub async fn handler(
         .chars()
         .take(MAX_AGENT_NAME_CHARS)
         .collect::<String>();
+
+    if !agent_ws_authorized(&state, &name, provided).await {
+        return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
+    }
+
     ws.on_upgrade(move |socket| run(socket, name, state))
+}
+
+/// Per-agent API token (after enrollment) takes precedence over the shared `AGENT_SECRET`.
+async fn agent_ws_authorized(state: &Arc<AppState>, agent_name: &str, provided: &str) -> bool {
+    if state.allow_insecure_agent_auth {
+        return true;
+    }
+
+    let row = match db::get_agent_auth_by_name(&state.db, agent_name).await {
+        Ok(r) => r,
+        Err(e) => {
+            error!(error = %e, "get_agent_auth_by_name failed");
+            return false;
+        }
+    };
+
+    if let Some((_, Some(ref api_hash))) = row {
+        return db::verify_dashboard_password(api_hash, provided);
+    }
+
+    if let Some(global) = state.agent_secret.as_deref() {
+        return secrets::ct_compare_secret(provided, global);
+    }
+
+    false
 }
 
 async fn run(mut ws: WebSocket, name: String, state: Arc<AppState>) {

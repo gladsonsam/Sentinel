@@ -72,6 +72,7 @@ export function AuthenticatedOverview({
           onBatchShutdown={onBatchShutdown}
           adminBulkGroupAssignment={currentUser?.role === "admin"}
           onOpenAgentGroups={onOpenAgentGroups}
+          showAddAgent={currentUser?.role === "admin"}
         />
       }
       onLogout={onLogout}

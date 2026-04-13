@@ -24,7 +24,12 @@
 //! | `exit_agent`         | never                    | Kill the process                     |
 //! | `check_manual_update`| `ManualUpdateCheckResponse` | Compare build to `latest.json` (Windows) |
 //! | `apply_manual_update`| `ManualApplyUpdateResponse` | Download + service `msiexec` (Windows) |
+//! | `list_log_sources`   | `Vec<LogSourceDesc>`     | Known on-disk log files for the Logs tab   |
+//! | `read_log_file_tail` | `String`                 | Tail of a log file (see `kind` + `max_kb`) |
 
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::sync::OnceLock;
 
@@ -79,6 +84,23 @@ fn default_auto_update_enabled() -> bool {
     false
 }
 
+/// Quick adoption: exchange dashboard enrollment code for a per-device token (no shared server secret).
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AdoptEnrollmentPayload {
+    pub server_url: String,
+    pub enrollment_code: String,
+    #[serde(default)]
+    pub agent_name: Option<String>,
+}
+
+#[derive(serde::Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscoverMdnsOpts {
+    #[serde(default)]
+    pub timeout_ms: Option<u64>,
+}
+
 #[derive(serde::Serialize)]
 pub struct ManualUpdateCheckResponse {
     pub update_available: bool,
@@ -92,7 +114,157 @@ pub struct ManualApplyUpdateResponse {
     pub outcome: String,
 }
 
+#[derive(serde::Serialize)]
+pub struct LogSourceDesc {
+    pub id: String,
+    pub label: String,
+    pub path: String,
+}
+
 // ─── Tauri commands ────────────────────────────────────────────────────────────
+
+fn resolve_log_kind(kind: &str) -> Result<PathBuf, String> {
+    match kind {
+        "local_agent" => {
+            #[cfg(windows)]
+            {
+                Ok(crate::config::program_data_sentinel_dir().join("agent.log"))
+            }
+            #[cfg(not(windows))]
+            {
+                let mut p = crate::config::config_path();
+                p.pop();
+                p.push("agent.log");
+                Ok(p)
+            }
+        }
+        "service" => {
+            #[cfg(windows)]
+            {
+                Ok(crate::config::program_data_sentinel_dir().join("service.log"))
+            }
+            #[cfg(not(windows))]
+            {
+                Err("service.log is only used on Windows".into())
+            }
+        }
+        "user_agent" => {
+            #[cfg(windows)]
+            {
+                Ok(crate::config::program_data_sentinel_dir().join("user-agent.log"))
+            }
+            #[cfg(not(windows))]
+            {
+                Err("user-agent.log is only used on Windows".into())
+            }
+        }
+        "env" => std::env::var("AGENT_LOG_FILE")
+            .map_err(|_| "AGENT_LOG_FILE is not set in this process".into())
+            .map(PathBuf::from),
+        _ => Err(format!("unknown log source: {kind}")),
+    }
+}
+
+fn read_file_tail(path: &Path, max_bytes: usize) -> std::io::Result<String> {
+    let mut f = File::open(path)?;
+    let len = f.metadata()?.len();
+    let start = len.saturating_sub(max_bytes as u64);
+    f.seek(SeekFrom::Start(start))?;
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf)?;
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
+/// Strip CSI `ESC [ … letter` sequences so log tails are readable in the plain-text UI.
+fn strip_ansi_escapes(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                while let Some(&ch) = chars.peek() {
+                    chars.next();
+                    if ch.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+                continue;
+            }
+        }
+        out.push(c);
+    }
+    out
+}
+
+fn read_log_tail_display(path: &Path, max_bytes: usize) -> Result<String, String> {
+    if !path.exists() {
+        return Ok(format!(
+            "(File not found: {})\n\nLogs appear here after that component writes its first line.",
+            path.display()
+        ));
+    }
+    let s = read_file_tail(path, max_bytes).map_err(|e| e.to_string())?;
+    if s.is_empty() {
+        return Ok("(Log file is empty.)".into());
+    }
+    Ok(strip_ansi_escapes(&s))
+}
+
+#[tauri::command]
+fn list_log_sources() -> Vec<LogSourceDesc> {
+    let mut out = Vec::new();
+
+    #[cfg(windows)]
+    let local = crate::config::program_data_sentinel_dir().join("agent.log");
+    #[cfg(not(windows))]
+    let local = {
+        let mut p = crate::config::config_path();
+        p.pop();
+        p.push("agent.log");
+        p
+    };
+    out.push(LogSourceDesc {
+        id: "local_agent".into(),
+        label: "Interactive agent (agent.log, with config)".into(),
+        path: local.display().to_string(),
+    });
+
+    #[cfg(windows)]
+    {
+        let pd = crate::config::program_data_sentinel_dir();
+        out.push(LogSourceDesc {
+            id: "user_agent".into(),
+            label: "User session started by service (user-agent.log)".into(),
+            path: pd.join("user-agent.log").display().to_string(),
+        });
+        out.push(LogSourceDesc {
+            id: "service".into(),
+            label: "Windows service (service.log)".into(),
+            path: pd.join("service.log").display().to_string(),
+        });
+    }
+
+    if let Ok(p) = std::env::var("AGENT_LOG_FILE") {
+        let t = p.trim();
+        if !t.is_empty() {
+            out.push(LogSourceDesc {
+                id: "env".into(),
+                label: "This process (AGENT_LOG_FILE)".into(),
+                path: t.to_string(),
+            });
+        }
+    }
+
+    out
+}
+
+#[tauri::command]
+fn read_log_file_tail(kind: String, max_kb: Option<u32>) -> Result<String, String> {
+    let max_bytes = (max_kb.unwrap_or(512).min(2048) as usize).saturating_mul(1024);
+    let path = resolve_log_kind(kind.trim())?;
+    read_log_tail_display(&path, max_bytes)
+}
 
 #[tauri::command]
 fn get_config(stored: State<StoredConfig>) -> Config {
@@ -254,6 +426,61 @@ async fn apply_manual_update() -> Result<ManualApplyUpdateResponse, String> {
     Err("Sentinel MSI installs from the settings UI are only supported on Windows.".into())
 }
 
+#[tauri::command]
+fn discover_sentinel_mdns_servers(
+    opts: DiscoverMdnsOpts,
+) -> Vec<crate::mdns_discover::DiscoveredServer> {
+    #[cfg(target_os = "windows")]
+    {
+        crate::mdns_discover::discover_sentinel_servers(opts.timeout_ms.unwrap_or(3500))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Vec::new()
+    }
+}
+
+#[tauri::command]
+async fn adopt_with_enrollment_code(
+    payload: AdoptEnrollmentPayload,
+    stored: State<'_, StoredConfig>,
+    config_tx: State<'_, SharedConfigTx>,
+) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let name = payload
+            .agent_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                std::env::var("COMPUTERNAME").unwrap_or_else(|_| "agent".into())
+            });
+        let cfg = crate::enrollment::adopt_with_enrollment(
+            payload.server_url.trim(),
+            payload.enrollment_code.trim(),
+            &name,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        *stored.0.lock().unwrap() = cfg.clone();
+        let watch = if cfg.server_url.is_empty() {
+            None
+        } else {
+            Some(cfg)
+        };
+        let _ = config_tx.0.send(watch);
+        info!("Adopted via enrollment code; config hot-reloaded.");
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (stored, config_tx, payload);
+        Err("Enrollment is only supported on Windows.".into())
+    }
+}
+
 // ─── Public entry point ────────────────────────────────────────────────────────
 
 /// Build and run the Tauri event loop.  **Blocks the calling thread forever**
@@ -294,6 +521,10 @@ pub fn run_tauri(
             exit_agent,
             check_manual_update,
             apply_manual_update,
+            discover_sentinel_mdns_servers,
+            adopt_with_enrollment_code,
+            list_log_sources,
+            read_log_file_tail,
         ])
         // ── Setup ────────────────────────────────────────────────────────────
         .setup(move |app| {
@@ -414,7 +645,6 @@ pub fn run_tauri(
                                     let _ = w.emit("lock_ui", ());
                                     let _ = w.destroy();
                                 } else {
-                                    let _ = w.emit("lock_ui", ());
                                     let _ = w.show();
                                     let _ = w.set_focus();
                                 }
@@ -436,7 +666,6 @@ pub fn run_tauri(
                                 .and_then(|b| b.build());
 
                             if let Some(w) = handle.get_webview_window("main") {
-                                let _ = w.emit("lock_ui", ());
                                 let _ = w.show();
                                 let _ = w.set_focus();
                             }
@@ -459,16 +688,6 @@ pub fn run_tauri(
                     // Destroy to reclaim WebView2 memory; recreate on demand.
                     if let Some(w) = window.app_handle().get_webview_window(window.label()) {
                         let _ = w.destroy();
-                    }
-                }
-                // Minimize doesn't have a dedicated event; but if it loses focus and is minimized,
-                // destroy the window to release memory.
-                tauri::WindowEvent::Focused(false) => {
-                    if window.is_minimized().unwrap_or(false) {
-                        let _ = window.emit("lock_ui", ());
-                        if let Some(w) = window.app_handle().get_webview_window(window.label()) {
-                            let _ = w.destroy();
-                        }
                     }
                 }
                 _ => {}

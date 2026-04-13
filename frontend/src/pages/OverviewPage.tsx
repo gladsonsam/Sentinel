@@ -1,7 +1,9 @@
 import { useState } from "react";
 import ContentLayout from "@cloudscape-design/components/content-layout";
+import Button from "@cloudscape-design/components/button";
 import type { Agent, AgentInfo, AgentLiveStatus } from "../lib/types";
 import { AgentCard } from "../components/overview/AgentCard";
+import { AddAgentModal } from "../components/overview/AddAgentModal";
 import { BulkScriptModal } from "../components/overview/BulkScriptModal";
 import { BulkAddToGroupModal } from "../components/overview/BulkAddToGroupModal";
 import { LoadingAgentsState, NoAgentsState } from "../components/common/EmptyState";
@@ -22,6 +24,8 @@ interface OverviewPageProps {
   adminBulkGroupAssignment?: boolean;
   /** Admin: open the dedicated agent groups page. */
   onOpenAgentGroups?: () => void;
+  /** Admin: show Add agent (enrollment) on the overview. */
+  showAddAgent?: boolean;
 }
 
 export function OverviewPage({
@@ -38,10 +42,12 @@ export function OverviewPage({
   onBatchShutdown,
   adminBulkGroupAssignment,
   onOpenAgentGroups,
+  showAddAgent = false,
 }: OverviewPageProps) {
   const hasAgents = Object.keys(agents).length > 0;
   const [bulkScriptIds, setBulkScriptIds] = useState<string[] | null>(null);
   const [bulkGroupIds, setBulkGroupIds] = useState<string[] | null>(null);
+  const [addAgentOpen, setAddAgentOpen] = useState(false);
 
   return (
     <ContentLayout>
@@ -65,9 +71,18 @@ export function OverviewPage({
               adminBulkGroupAssignment ? (ids) => setBulkGroupIds(ids) : undefined
             }
             onOpenAgentGroups={onOpenAgentGroups}
+            onAddAgent={showAddAgent ? () => setAddAgentOpen(true) : undefined}
           />
         ) : (
-          <NoAgentsState />
+          <NoAgentsState
+            primaryAction={
+              showAddAgent ? (
+                <Button variant="primary" onClick={() => setAddAgentOpen(true)}>
+                  Add agent
+                </Button>
+              ) : undefined
+            }
+          />
         )}
       </div>
       {bulkScriptIds && bulkScriptIds.length > 0 && (
@@ -76,6 +91,9 @@ export function OverviewPage({
       {bulkGroupIds && bulkGroupIds.length > 0 && (
         <BulkAddToGroupModal agentIds={bulkGroupIds} onDismiss={() => setBulkGroupIds(null)} />
       )}
+      {showAddAgent ? (
+        <AddAgentModal visible={addAgentOpen} onDismiss={() => setAddAgentOpen(false)} />
+      ) : null}
     </ContentLayout>
   );
 }

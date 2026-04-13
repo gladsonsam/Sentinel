@@ -1,38 +1,34 @@
 /**
- * Sentinel Agent – Settings Webview
- *
- * Communicates with the Rust backend through Tauri's IPC `invoke()` API.
- *
- * Commands exposed by Rust:
- *   get_config()  -> Config
- *   save_config(config: Config) -> void
- *   get_status()  -> { status: "Connected"|"Connecting"|"Disconnected"|"Error", message?: string }
- *   exit_agent()  -> never
- *   hide_window() -> void
- *   check_manual_update() -> { update_available, published_version?, running_version }
- *   apply_manual_update() -> { outcome: "up_to_date" | "install_started" }
+ * Sentinel Agent – Settings webview using Cloudscape (same stack as the server dashboard).
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { LogicalSize } from "@tauri-apps/api/dpi";
-import {
-  Save,
-  X,
-  Power,
-  Lock,
-  Eye,
-  EyeOff,
-  ChevronDown,
-  ChevronUp,
-  Wifi,
-  WifiOff,
-  Loader2,
-  Settings,
-  AlertTriangle,
-} from "lucide-react";
+import { applyMode, Mode } from "@cloudscape-design/global-styles";
+import AppLayout from "@cloudscape-design/components/app-layout";
+import TopNavigation from "@cloudscape-design/components/top-navigation";
+import type { TopNavigationProps } from "@cloudscape-design/components/top-navigation";
+import SideNavigation from "@cloudscape-design/components/side-navigation";
+import type { SideNavigationProps } from "@cloudscape-design/components/side-navigation";
+import Box from "@cloudscape-design/components/box";
+import Button from "@cloudscape-design/components/button";
+import SpaceBetween from "@cloudscape-design/components/space-between";
+import Header from "@cloudscape-design/components/header";
+import Container from "@cloudscape-design/components/container";
+import ColumnLayout from "@cloudscape-design/components/column-layout";
+import FormField from "@cloudscape-design/components/form-field";
+import Input from "@cloudscape-design/components/input";
+import Select from "@cloudscape-design/components/select";
+import type { SelectProps } from "@cloudscape-design/components/select";
+import Toggle from "@cloudscape-design/components/toggle";
+import Modal from "@cloudscape-design/components/modal";
+import StatusIndicator from "@cloudscape-design/components/status-indicator";
+import Alert from "@cloudscape-design/components/alert";
+import Spinner from "@cloudscape-design/components/spinner";
+import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -61,6 +57,17 @@ interface ManualApplyUpdateResponse {
   outcome: string;
 }
 
+interface LogSourceDesc {
+  id: string;
+  label: string;
+  path: string;
+}
+
+interface DiscoveredServer {
+  instanceName: string;
+  wssUrl: string;
+}
+
 type UpdateDialogState =
   | null
   | { phase: "checking" }
@@ -69,96 +76,44 @@ type UpdateDialogState =
   | { phase: "error"; message: string }
   | { phase: "installing" };
 
+type NavId = "dashboard" | "connection" | "security" | "logs";
+
+/** Cloudscape + Tailwind auth shell: follow OS light/dark (prefers-color-scheme). */
+function useSystemColorScheme() {
+  useEffect(() => {
+    const sync = () => {
+      const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      const mode = dark ? Mode.Dark : Mode.Light;
+      applyMode(mode);
+      document.documentElement.classList.toggle("dark", dark);
+      document.documentElement.style.colorScheme = dark ? "dark" : "light";
+    };
+
+    sync();
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    mq.addEventListener("change", sync);
+    return () => mq.removeEventListener("change", sync);
+  }, []);
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function StatusBadge({
-  status,
-  message,
-  className = "",
-}: {
-  status: ConnectionStatus;
-  message?: string;
-  className?: string;
-}) {
-  const configs: Record<ConnectionStatus, { color: string; icon: React.ReactNode; label: string }> = {
-    Connected: {
-      color: "text-ok",
-      icon: <Wifi size={12} />,
-      label: "Connected",
-    },
-    Connecting: {
-      color: "text-warn",
-      icon: <Loader2 size={12} className="animate-spin" />,
-      label: "Connecting…",
-    },
-    Disconnected: {
-      color: "text-muted",
-      icon: <WifiOff size={12} />,
-      label: "Disconnected",
-    },
-    Error: {
-      color: "text-danger",
-      icon: <AlertTriangle size={12} />,
-      label: message ? `Error: ${message}` : "Error",
-    },
+function ConnectionStatusIndicator({ status, message }: StatusResponse) {
+  const map: Record<
+    ConnectionStatus,
+    { type: NonNullable<React.ComponentProps<typeof StatusIndicator>["type"]>; children: string }
+  > = {
+    Connected: { type: "success", children: "Connected" },
+    Connecting: { type: "in-progress", children: "Connecting" },
+    Disconnected: { type: "stopped", children: "Disconnected" },
+    Error: { type: "error", children: message ? `Error: ${message}` : "Error" },
   };
-
-  const cfg = configs[status];
-
+  const m = map[status];
   return (
-    <div className={`flex items-center gap-1.5 text-xs font-medium ${cfg.color} ${className}`.trim()}>
-      {cfg.icon}
-      <span className="truncate max-w-[180px]">{cfg.label}</span>
-    </div>
+    <StatusIndicator type={m.type} wrapText={false}>
+      {m.children}
+    </StatusIndicator>
   );
-}
-
-function PasswordInput({
-  id,
-  value,
-  onChange,
-  placeholder,
-  disabled,
-}: {
-  id: string;
-  value: string;
-  onChange: (v: string) => void;
-  placeholder?: string;
-  disabled?: boolean;
-}) {
-  const [show, setShow] = useState(false);
-  return (
-    <div className="relative">
-      <input
-        id={id}
-        type={show ? "text" : "password"}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        disabled={disabled}
-        style={{ paddingRight: "2.5rem" }}
-      />
-      <button
-        type="button"
-        onClick={() => setShow((s) => !s)}
-        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted hover:text-primary transition-colors"
-      >
-        {show ? <EyeOff size={14} /> : <Eye size={14} />}
-      </button>
-    </div>
-  );
-}
-
-function Label({ htmlFor, children }: { htmlFor?: string; children: React.ReactNode }) {
-  return (
-    <label htmlFor={htmlFor} className="text-sm font-medium text-primary block mb-1.5">
-      {children}
-    </label>
-  );
-}
-
-function FormGroup({ children }: { children: React.ReactNode }) {
-  return <div className="flex flex-col gap-1 mb-4">{children}</div>;
 }
 
 // ── Password Gate ─────────────────────────────────────────────────────────────
@@ -190,30 +145,32 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
         <div className="sentinel-agent-auth-card-content">
           <div className="sentinel-agent-auth-card-brand">
             <img src="/favicon.svg" alt="" className="sentinel-agent-auth-logo" />
-            <h1 className="sentinel-agent-auth-title">Sentinel</h1>
+            <h1 className="sentinel-agent-auth-title">Sentinel Agent</h1>
             <p className="sentinel-agent-auth-subtitle">Sign in to continue</p>
           </div>
 
           <p className="sentinel-agent-auth-hint">Enter the UI access password for this agent.</p>
 
-          <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-            <PasswordInput
-              id="gate-password"
-              value={pw}
-              onChange={setPw}
-              placeholder="Password"
-            />
-
-            {error && (
-              <p className="text-xs text-danger flex items-center gap-1.5">
-                <AlertTriangle size={12} />
-                Wrong password — try again
-              </p>
-            )}
-
-            <button type="submit" disabled={checking || !pw} className="sentinel-btn-primary w-full py-2.5">
-              {checking ? "Checking…" : "Unlock"}
-            </button>
+          <form onSubmit={handleSubmit}>
+            <SpaceBetween size="m" direction="vertical">
+              {error ? (
+                <Alert type="error" header="Wrong password">
+                  Try again.
+                </Alert>
+              ) : null}
+              <FormField label="Password">
+                <Input
+                  value={pw}
+                  onChange={({ detail }) => setPw(detail.value)}
+                  type="password"
+                  placeholder="Password"
+                  autoComplete="current-password"
+                />
+              </FormField>
+              <Button variant="primary" disabled={checking || !pw} loading={checking} formAction="submit">
+                Unlock
+              </Button>
+            </SpaceBetween>
           </form>
         </div>
       </div>
@@ -221,9 +178,18 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
   );
 }
 
-// ── Settings Panel ────────────────────────────────────────────────────────────
+const NAV_HREF: Record<NavId, string> = {
+  dashboard: "#dashboard",
+  connection: "#connection",
+  security: "#security",
+  logs: "#logs",
+};
+
+// ── Settings shell ───────────────────────────────────────────────────────────
 
 function SettingsPanel() {
+  const [nav, setNav] = useState<NavId>("dashboard");
+  const [navOpen, setNavOpen] = useState(true);
   const [config, setConfig] = useState<AgentConfig>({
     server_url: "",
     agent_name: "",
@@ -236,14 +202,49 @@ function SettingsPanel() {
   const [saveMsg, setSaveMsg] = useState<{ text: string; ok: boolean } | null>(null);
 
   const [status, setStatus] = useState<StatusResponse>({ status: "Disconnected" });
-  const [pwOpen, setPwOpen] = useState(false);
   const [newPw, setNewPw] = useState("");
   const [confirmPw, setConfirmPw] = useState("");
   const [updateDialog, setUpdateDialog] = useState<UpdateDialogState>(null);
 
+  const [adoptCode, setAdoptCode] = useState("");
+  const [adoptBusy, setAdoptBusy] = useState(false);
+  const [adoptMsg, setAdoptMsg] = useState<{ text: string; ok: boolean } | null>(null);
+  const [discovered, setDiscovered] = useState<DiscoveredServer[]>([]);
+  const [scanning, setScanning] = useState(false);
+
   const saveMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // ── Load config on mount ────────────────────────────────────────────────────
+  const [appVersion, setAppVersion] = useState<string>("");
+
+  const [logSources, setLogSources] = useState<LogSourceDesc[]>([]);
+  const [logSourceId, setLogSourceId] = useState("local_agent");
+  const [logText, setLogText] = useState("");
+  const [logsManualRefresh, setLogsManualRefresh] = useState(false);
+  const [logAutoRefresh, setLogAutoRefresh] = useState(true);
+  const logPreRef = useRef<HTMLPreElement | null>(null);
+
+  const sideNavItems: SideNavigationProps.Item[] = useMemo(
+    () => [
+      { type: "link", text: "Dashboard", href: NAV_HREF.dashboard },
+      { type: "link", text: "Connection", href: NAV_HREF.connection },
+      { type: "link", text: "Security", href: NAV_HREF.security },
+      { type: "link", text: "Logs", href: NAV_HREF.logs },
+    ],
+    [],
+  );
+
+  const lanOptions: SelectProps.Options = useMemo(() => {
+    const opts: SelectProps.Options = [
+      { label: "Select discovered server…", value: "", disabled: false },
+      ...discovered.map((d) => ({
+        label: d.instanceName?.trim() || d.wssUrl,
+        value: d.wssUrl,
+        description: d.instanceName?.trim() ? d.wssUrl : undefined,
+      })),
+    ];
+    return opts;
+  }, [discovered]);
+
   useEffect(() => {
     invoke<AgentConfig>("get_config").then((cfg) => {
       setConfig(cfg);
@@ -251,7 +252,11 @@ function SettingsPanel() {
     });
   }, []);
 
-  // ── Poll status every 2 s ───────────────────────────────────────────────────
+  useEffect(() => {
+    const win = getCurrentWebviewWindow();
+    void win.setSize(new LogicalSize(1100, 720));
+  }, []);
+
   useEffect(() => {
     const poll = async () => {
       try {
@@ -266,14 +271,71 @@ function SettingsPanel() {
     return () => clearInterval(id);
   }, []);
 
-  const [appVersion, setAppVersion] = useState<string>("");
   useEffect(() => {
     invoke<string>("get_app_version")
       .then((v) => setAppVersion(v))
       .catch(() => setAppVersion(""));
   }, []);
 
-  // ── Save ────────────────────────────────────────────────────────────────────
+  useEffect(() => {
+    void invoke<LogSourceDesc[]>("list_log_sources").then(setLogSources).catch(() => setLogSources([]));
+  }, []);
+
+  useEffect(() => {
+    if (logSources.length === 0) return;
+    if (!logSources.some((s) => s.id === logSourceId)) {
+      setLogSourceId(logSources[0].id);
+    }
+  }, [logSources, logSourceId]);
+
+  const refreshLogs = useCallback(async (manual: boolean) => {
+    if (manual) setLogsManualRefresh(true);
+    try {
+      const text = await invoke<string>("read_log_file_tail", {
+        kind: logSourceId,
+        maxKb: 512,
+      });
+      setLogText(text);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setLogText(`(Could not read log: ${msg})`);
+    } finally {
+      if (manual) setLogsManualRefresh(false);
+    }
+  }, [logSourceId]);
+
+  useEffect(() => {
+    if (nav !== "logs") return;
+    void refreshLogs(false);
+  }, [nav, logSourceId, refreshLogs]);
+
+  useEffect(() => {
+    if (nav !== "logs" || !logAutoRefresh) return;
+    const id = setInterval(() => void refreshLogs(false), 2000);
+    return () => clearInterval(id);
+  }, [nav, logAutoRefresh, refreshLogs]);
+
+  useEffect(() => {
+    if (!logAutoRefresh) return;
+    const el = logPreRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [logText, logAutoRefresh]);
+
+  const logSourceOptions: SelectProps.Options = useMemo(
+    () =>
+      logSources.map((s) => ({
+        label: s.label,
+        value: s.id,
+        description: s.path,
+      })),
+    [logSources],
+  );
+
+  const selectedLogSourceOption = useMemo(
+    () => logSourceOptions.find((o) => o.value === logSourceId) ?? null,
+    [logSourceOptions, logSourceId],
+  );
+
   const handleSave = useCallback(async () => {
     if (newPw && newPw !== confirmPw) {
       setSaveMsg({ text: "Passwords don't match", ok: false });
@@ -287,10 +349,9 @@ function SettingsPanel() {
         ...(newPw ? { new_password: newPw } : {}),
       };
       await invoke("save_config", { config: payload });
-      setSaveMsg({ text: "Settings saved ✓", ok: true });
+      setSaveMsg({ text: "Settings saved.", ok: true });
       setNewPw("");
       setConfirmPw("");
-      // Reload config so ui_password_hash is up-to-date
       const fresh = await invoke<AgentConfig>("get_config");
       setConfig(fresh);
     } catch (e: unknown) {
@@ -349,285 +410,590 @@ function SettingsPanel() {
     });
   }, []);
 
+  const scanLanServers = useCallback(async () => {
+    setScanning(true);
+    setAdoptMsg(null);
+    try {
+      const list = await invoke<DiscoveredServer[]>("discover_sentinel_mdns_servers", {
+        opts: { timeoutMs: 4000 },
+      });
+      setDiscovered(list);
+      if (list.length === 1) {
+        setConfig((c) => ({ ...c, server_url: list[0].wssUrl }));
+        setAdoptMsg({ text: "Filled server URL from LAN discovery.", ok: true });
+      } else if (list.length === 0) {
+        setAdoptMsg({
+          text: "No servers found on LAN (Docker/host mDNS limits apply). Use your server wss:// URL.",
+          ok: false,
+        });
+      } else {
+        setAdoptMsg({
+          text: `Found ${list.length} servers — pick one in the list.`,
+          ok: true,
+        });
+      }
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      setAdoptMsg({ text: `Discovery failed: ${message}`, ok: false });
+    } finally {
+      setScanning(false);
+    }
+  }, []);
+
+  const adoptWithCode = useCallback(async () => {
+    const url = config.server_url.trim();
+    const code = adoptCode.trim();
+    if (!url.startsWith("wss://")) {
+      setAdoptMsg({ text: "Server URL must start with wss://", ok: false });
+      return;
+    }
+    if (!code) {
+      setAdoptMsg({ text: "Enter the enrollment code from the dashboard.", ok: false });
+      return;
+    }
+    setAdoptBusy(true);
+    setAdoptMsg(null);
+    try {
+      const agentName = config.agent_name.trim();
+      await invoke("adopt_with_enrollment_code", {
+        payload: {
+          serverUrl: url,
+          enrollmentCode: code,
+          agentName: agentName.length > 0 ? agentName : null,
+        },
+      });
+      setAdoptCode("");
+      const fresh = await invoke<AgentConfig>("get_config");
+      setConfig(fresh);
+      setAdoptMsg({
+        text: "Connected — per-device token saved.",
+        ok: true,
+      });
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      setAdoptMsg({ text: message, ok: false });
+    } finally {
+      setAdoptBusy(false);
+    }
+  }, [config.server_url, config.agent_name, adoptCode]);
+
+  const onSideNavFollow: SideNavigationProps["onFollow"] = (event) => {
+    event.preventDefault();
+    const href = event.detail.href;
+    if (href === "#") return;
+    if (href === NAV_HREF.dashboard) setNav("dashboard");
+    else if (href === NAV_HREF.connection) setNav("connection");
+    else if (href === NAV_HREF.security) setNav("security");
+    else if (href === NAV_HREF.logs) setNav("logs");
+  };
+
+  const topUtilities: TopNavigationProps.Utility[] = useMemo(
+    () => [
+      {
+        type: "button",
+        variant: "link",
+        text: appVersion ? `v${appVersion}` : "Version",
+        title: "Check for updates",
+        onClick: () => {
+          void openUpdateCheck();
+        },
+      },
+    ],
+    [appVersion, openUpdateCheck],
+  );
+
+  const pageDesc =
+    nav === "dashboard"
+      ? "Connection status and agent details."
+      : nav === "connection"
+        ? "Server URL, enrollment, and credentials."
+        : nav === "security"
+          ? "Local password for this settings window."
+          : "Tracing output buffered in memory for this session.";
+
+  const pageTitle =
+    nav === "dashboard"
+      ? "Dashboard"
+      : nav === "connection"
+        ? "Connection"
+        : nav === "security"
+          ? "Security"
+          : "Logs";
+
+  const dashboardPairs = useMemo(
+    () =>
+      [
+        {
+          label: "Connection",
+          value: <ConnectionStatusIndicator {...status} />,
+        },
+        {
+          label: "Agent name",
+          value: (
+            <Box variant="span" fontWeight="bold">
+              {config.agent_name.trim() || "—"}
+            </Box>
+          ),
+        },
+        {
+          label: "Server URL",
+          value: (
+            <Box variant="span" margin={{ right: "n" }} nativeAttributes={{ title: config.server_url }}>
+              {config.server_url.trim() || "—"}
+            </Box>
+          ),
+        },
+        {
+          label: "Updates",
+          value: (
+            <Box display="block" margin={{ top: "s" }}>
+              <Button
+                variant="normal"
+                disabled={updateDialog?.phase === "checking" || updateDialog?.phase === "installing"}
+                onClick={() => void openUpdateCheck()}
+              >
+                Check for updates
+              </Button>
+            </Box>
+          ),
+        },
+      ] as const,
+    [status, config.agent_name, config.server_url, updateDialog?.phase, openUpdateCheck],
+  );
+
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-bg">
-        <Loader2 size={28} className="animate-spin text-muted" />
-      </div>
+      <Box
+        textAlign="center"
+        padding="xxl"
+        nativeAttributes={{
+          style: { height: "100%", display: "flex", alignItems: "center", justifyContent: "center" },
+        }}
+      >
+        <Spinner size="large" />
+      </Box>
     );
   }
 
   return (
-    <div className="bg-bg flex flex-col min-h-0 animate-fade-in">
-      <header className="sentinel-agent-topnav">
-        <div className="sentinel-agent-topnav-identity">
-          <img src="/favicon.svg" alt="" width={22} height={22} />
-          <span className="sentinel-agent-topnav-title">Sentinel</span>
-          <div className="sentinel-agent-topnav-agent-row" title="Check for updates">
-            <span className="sentinel-agent-topnav-agent-label">Agent</span>
-            {appVersion ? (
-              <>
-                <span className="sentinel-agent-topnav-agent-sep" aria-hidden>
-                  |
-                </span>
-                <button
-                  type="button"
-                  className="sentinel-agent-topnav-version-btn"
-                  onClick={() => void openUpdateCheck()}
-                  disabled={
-                    updateDialog?.phase === "checking" || updateDialog?.phase === "installing"
-                  }
-                >
-                  v{appVersion}
-                </button>
-              </>
-            ) : null}
-          </div>
-        </div>
-        <StatusBadge
-          status={status.status}
-          message={status.message}
-          className="sentinel-agent-nav-status"
+    <div
+      className="animate-fade-in"
+      style={{ height: "100%", display: "flex", flexDirection: "column", minHeight: 0 }}
+    >
+      <div id="sentinel-agent-top-nav" className="sentinel-agent-top-nav">
+        <TopNavigation
+          identity={{
+            href: "#",
+            title: "Sentinel Agent",
+            logo: { src: `${import.meta.env.BASE_URL}favicon.svg`, alt: "" },
+            onFollow: (e) => e.preventDefault(),
+          }}
+          utilities={topUtilities}
         />
-      </header>
+      </div>
 
-      {/* ── Body ── */}
-      <main className="flex-1 p-5 min-h-0 overflow-auto">
-
-        {/* ── Connection section ── */}
-        <section className="mb-5">
-          <h2 className="sentinel-agent-section-label">
-            <Settings size={14} className="opacity-80" aria-hidden />
-            Connection
-          </h2>
-
-          <div className="sentinel-agent-panel">
-            <FormGroup>
-              <Label htmlFor="server-url">Server URL</Label>
-              <input
-                id="server-url"
-                type="text"
-                value={config.server_url}
-                onChange={(e) => setConfig((c) => ({ ...c, server_url: e.target.value }))}
-                placeholder="wss://host:port/ws/agent"
+      <div
+        style={{
+          flex: 1,
+          minHeight: 0,
+          minWidth: 0,
+          display: "flex",
+          flexDirection: "column",
+        }}
+      >
+        <div style={{ flex: 1, minHeight: 0, minWidth: 0, display: "flex", flexDirection: "column" }}>
+          <AppLayout
+            headerSelector="#sentinel-agent-top-nav"
+            footerSelector="#sentinel-agent-settings-footer"
+            navigationOpen={navOpen}
+            onNavigationChange={({ detail }) => setNavOpen(detail.open)}
+            navigation={
+              <SideNavigation
+                header={{ text: "Settings", href: "#" }}
+                activeHref={NAV_HREF[nav]}
+                items={sideNavItems}
+                onFollow={onSideNavFollow}
               />
-            </FormGroup>
+            }
+            navigationWidth={260}
+            maxContentWidth={Number.MAX_VALUE}
+            contentType="default"
+            disableContentPaddings
+            toolsHide
+            content={
+              <div className="sentinel-agent-main" style={{ height: "100%", minHeight: 0, display: "flex" }}>
+                <Box
+                  padding={{ horizontal: "m", top: "m", bottom: "s" }}
+                  nativeAttributes={{
+                    style: {
+                      flex: 1,
+                      minHeight: 0,
+                      minWidth: 0,
+                      display: "flex",
+                      flexDirection: "column",
+                    },
+                  }}
+                >
+                  <Header variant="h1" description={pageDesc}>
+                    {pageTitle}
+                  </Header>
 
-            <FormGroup>
-              <Label htmlFor="agent-name">Agent Name</Label>
-              <input
-                id="agent-name"
-                type="text"
-                value={config.agent_name}
-                onChange={(e) => setConfig((c) => ({ ...c, agent_name: e.target.value }))}
-                placeholder="My-PC"
-              />
-            </FormGroup>
+                  <Box
+                    margin={{ top: "l" }}
+                    nativeAttributes={{
+                      style: {
+                        flex: 1,
+                        minHeight: 0,
+                        minWidth: 0,
+                        overflow: nav === "logs" ? "hidden" : "auto",
+                        display: "flex",
+                        flexDirection: "column",
+                      },
+                    }}
+                  >
+                  {nav === "dashboard" && (
+                    <Container header={<Header variant="h2">Overview</Header>}>
+                      <KeyValuePairs columns={2} minColumnWidth={200} items={[...dashboardPairs]} />
+                    </Container>
+                  )}
 
-            <FormGroup>
-              <Label htmlFor="agent-password">Agent Password</Label>
-              <PasswordInput
-                id="agent-password"
-                value={config.agent_password}
-                onChange={(v) => setConfig((c) => ({ ...c, agent_password: v }))}
-                placeholder="Server auth secret"
-              />
-            </FormGroup>
+                  {nav === "connection" && (
+                    <ColumnLayout columns={2} minColumnWidth={280} variant="default">
+                      <Container header={<Header variant="h2">Enrollment</Header>}>
+                        <SpaceBetween size="m" direction="vertical">
+                          <Box variant="p" color="text-body-secondary" fontSize="body-s">
+                            Dashboard <strong>Add agent</strong> → six-digit code and a{" "}
+                            <Box variant="code" tagOverride="code">
+                              wss://
+                            </Box>{" "}
+                            URL.
+                          </Box>
+                          <FormField label="Server URL" description="WebSocket URL from the server.">
+                            <Input
+                              value={config.server_url}
+                              onChange={({ detail }) => setConfig((c) => ({ ...c, server_url: detail.value }))}
+                              placeholder="wss://host/ws/agent"
+                              type="text"
+                            />
+                          </FormField>
+                          {discovered.length > 0 ? (
+                            <FormField label="LAN discovery">
+                              <Select
+                                selectedOption={null}
+                                filteringType="manual"
+                                options={lanOptions}
+                                placeholder="Select discovered server"
+                                onChange={({ detail }) => {
+                                  const v = detail.selectedOption?.value;
+                                  if (v) setConfig((c) => ({ ...c, server_url: v }));
+                                }}
+                              />
+                            </FormField>
+                          ) : null}
+                          <div>
+                            <Button onClick={() => void scanLanServers()} loading={scanning}>
+                              Find on network
+                            </Button>
+                          </div>
+                          <FormField label="Enrollment code (6 digits)">
+                            <Input
+                              value={adoptCode}
+                              onChange={({ detail }) => setAdoptCode(detail.value)}
+                              placeholder="482019"
+                              inputMode="numeric"
+                              autoComplete="one-time-code"
+                            />
+                          </FormField>
+                          <Button variant="primary" onClick={() => void adoptWithCode()} loading={adoptBusy}>
+                            Connect with code
+                          </Button>
+                          {adoptMsg ? (
+                            <Alert type={adoptMsg.ok ? "success" : "error"} header={adoptMsg.ok ? "Done" : "Notice"}>
+                              {adoptMsg.text}
+                            </Alert>
+                          ) : null}
+                        </SpaceBetween>
+                      </Container>
 
-            <FormGroup>
-              <label className="sentinel-agent-toggle">
-                <input
-                  id="auto-update-enabled"
-                  type="checkbox"
-                  checked={config.auto_update_enabled}
-                  onChange={(e) =>
-                    setConfig((c) => ({ ...c, auto_update_enabled: e.target.checked }))
-                  }
-                />
-                <span>Auto updates</span>
-              </label>
-            </FormGroup>
-            
-            <p className="text-xs text-muted mt-4">
-              TLS is enforced: the agent must connect using <code>wss://</code>.
-            </p>
-          </div>
-        </section>
+                      <Container header={<Header variant="h2">Credentials</Header>}>
+                        <SpaceBetween size="m" direction="vertical">
+                          <FormField label="Agent name">
+                            <Input
+                              value={config.agent_name}
+                              onChange={({ detail }) => setConfig((c) => ({ ...c, agent_name: detail.value }))}
+                              placeholder="My-PC"
+                            />
+                          </FormField>
+                          <FormField label="Agent password" description="Server secret, if your deployment uses one.">
+                            <Input
+                              value={config.agent_password}
+                              onChange={({ detail }) =>
+                                setConfig((c) => ({ ...c, agent_password: detail.value }))
+                              }
+                              type="password"
+                              placeholder="Optional"
+                              autoComplete="new-password"
+                            />
+                          </FormField>
+                          <Toggle
+                            checked={config.auto_update_enabled}
+                            onChange={({ detail }) =>
+                              setConfig((c) => ({ ...c, auto_update_enabled: detail.checked }))
+                            }
+                          >
+                            Auto-update agent
+                          </Toggle>
+                        </SpaceBetween>
+                      </Container>
+                    </ColumnLayout>
+                  )}
 
-        {/* ── UI Password section (collapsible) ── */}
-        <section className="mb-5">
-          <button
-            type="button"
-            onClick={() => setPwOpen((o) => !o)}
-            className="sentinel-agent-section-label mb-3 w-full text-left bg-transparent border-none p-0 cursor-pointer hover:opacity-90"
-          >
-            <Lock size={14} className="opacity-80" aria-hidden />
-            <span className="flex-1 text-left">UI access password</span>
-            {pwOpen ? (
-              <ChevronUp size={14} className="opacity-70 shrink-0" aria-hidden />
-            ) : (
-              <ChevronDown size={14} className="opacity-70 shrink-0" aria-hidden />
-            )}
-          </button>
+                  {nav === "security" && (
+                    <Container header={<Header variant="h2">UI access password</Header>}>
+                      <SpaceBetween size="m" direction="vertical">
+                        <Box variant="p" color="text-body-secondary" fontSize="body-s">
+                          Required when reopening settings (after hide). Leave new fields blank to keep the current
+                          password.
+                        </Box>
+                        <FormField label="New password">
+                          <Input
+                            value={newPw}
+                            onChange={({ detail }) => setNewPw(detail.value)}
+                            type="password"
+                            placeholder="New password"
+                            autoComplete="new-password"
+                          />
+                        </FormField>
+                        <FormField label="Confirm password">
+                          <Input
+                            value={confirmPw}
+                            onChange={({ detail }) => setConfirmPw(detail.value)}
+                            type="password"
+                            placeholder="Confirm"
+                            autoComplete="new-password"
+                          />
+                        </FormField>
+                      </SpaceBetween>
+                    </Container>
+                  )}
 
-          {pwOpen && (
-            <div className="sentinel-agent-panel animate-fade-in">
-              <p className="text-xs text-muted mb-4">
-                Leave blank to keep the current password. Set a password to require it when
-                reopening the settings window via Ctrl+Shift+F12.
-              </p>
-
-              <FormGroup>
-                <Label htmlFor="new-password">New Password</Label>
-                <PasswordInput
-                  id="new-password"
-                  value={newPw}
-                  onChange={setNewPw}
-                  placeholder="New password"
-                />
-              </FormGroup>
-
-              <FormGroup>
-                <Label htmlFor="confirm-password">Confirm Password</Label>
-                <PasswordInput
-                  id="confirm-password"
-                  value={confirmPw}
-                  onChange={setConfirmPw}
-                  placeholder="Confirm password"
-                />
-              </FormGroup>
-            </div>
-          )}
-        </section>
-
-        {/* ── Action buttons ── */}
-        <div className="flex flex-wrap items-center gap-2">
-          <button type="button" onClick={handleSave} disabled={saving} className="sentinel-btn-primary">
-            {saving ? (
-              <Loader2 size={14} className="animate-spin" />
-            ) : (
-              <Save size={14} />
-            )}
-            Save
-          </button>
-
-          <button type="button" onClick={handleClose} className="sentinel-btn-secondary">
-            <X size={14} />
-            Close
-          </button>
-
-          <div className="flex-1 min-w-[8px]" />
-
-          <button type="button" onClick={handleExit} className="sentinel-btn-danger">
-            <Power size={14} />
-            Exit agent
-          </button>
+                  {nav === "logs" && (
+                    <div
+                      className="sentinel-agent-logs-root"
+                      style={{
+                        flex: 1,
+                        minHeight: 0,
+                        display: "flex",
+                        flexDirection: "column",
+                        width: "100%",
+                        boxSizing: "border-box",
+                      }}
+                    >
+                      <div style={{ flexShrink: 0 }}>
+                      <Container
+                        header={
+                          <Header
+                            variant="h2"
+                            actions={
+                              <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+                                <Toggle
+                                  checked={logAutoRefresh}
+                                  onChange={({ detail }) => setLogAutoRefresh(detail.checked)}
+                                >
+                                  Auto-refresh
+                                </Toggle>
+                                <Button onClick={() => void refreshLogs(true)} loading={logsManualRefresh}>
+                                  Refresh
+                                </Button>
+                              </SpaceBetween>
+                            }
+                          >
+                            Agent logs
+                          </Header>
+                        }
+                      >
+                        <SpaceBetween size="m" direction="vertical">
+                          <Box variant="p" color="text-body-secondary" fontSize="body-s">
+                            Tails the on-disk log (last ~512 KiB). Pick which file to follow — e.g.{" "}
+                            <Box variant="code">service.log</Box> for the Windows service,{" "}
+                            <Box variant="code">user-agent.log</Box> when the service starts the user session, or{" "}
+                            <Box variant="code">agent.log</Box> in the same folder as machine-wide config (
+                            <Box variant="code">%ProgramData%\Sentinel</Box>) for a normal interactive run. If you see{" "}
+                            <Box variant="code">Another Sentinel agent instance is already running</Box>, a second copy
+                            of the settings app was started while one user agent is already running — only one
+                            interactive agent runs at a time (the service is separate).
+                          </Box>
+                          <FormField label="Log file">
+                            <Select
+                              selectedOption={selectedLogSourceOption}
+                              options={logSourceOptions}
+                              placeholder="Choose a log"
+                              empty="No log sources"
+                              onChange={({ detail }) => {
+                                const v = detail.selectedOption?.value;
+                                if (v) setLogSourceId(v);
+                              }}
+                            />
+                          </FormField>
+                        </SpaceBetween>
+                      </Container>
+                      </div>
+                      <Box
+                        padding="s"
+                        fontSize="body-s"
+                        margin={{ top: "m" }}
+                        nativeAttributes={{
+                          className: "sentinel-agent-log-viewport",
+                          style: {
+                            flex: 1,
+                            minHeight: 0,
+                            overflow: "auto",
+                            borderRadius: "4px",
+                          },
+                        }}
+                      >
+                        <pre
+                          ref={logPreRef}
+                          className="sentinel-agent-log-pre"
+                          style={{
+                            margin: 0,
+                            whiteSpace: "pre-wrap",
+                            wordBreak: "break-word",
+                            fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
+                            fontSize: "12px",
+                            lineHeight: 1.45,
+                          }}
+                        >
+                          {logText || "Loading…"}
+                        </pre>
+                      </Box>
+                    </div>
+                  )}
+                </Box>
+                </Box>
+              </div>
+            }
+          />
         </div>
 
-        {/* ── Save message ── */}
-        {saveMsg && (
-          <p
-            className={`mt-3 text-sm flex items-center gap-1.5 animate-fade-in
-                        ${saveMsg.ok ? "text-ok" : "text-danger"}`}
-          >
-            {!saveMsg.ok && <AlertTriangle size={13} />}
-            {saveMsg.text}
-          </p>
-        )}
-
-        {/* ── Hotkey hint ── */}
-        <p className="mt-4 text-[11px] text-muted">
-          Reopen anytime: <kbd className="sentinel-kbd">Ctrl+Shift+F12</kbd>
-        </p>
-      </main>
-
-      {updateDialog !== null && (
-        <div
-          className="sentinel-agent-modal-backdrop"
-          onClick={closeUpdateDialog}
-          role="presentation"
+        <Box
+          padding={{ top: "m", bottom: "m", horizontal: "m" }}
+          nativeAttributes={{
+            id: "sentinel-agent-settings-footer",
+            style: {
+              flexShrink: 0,
+              width: "100%",
+              boxSizing: "border-box",
+              borderTop: "1px solid var(--awsui-color-border-divider-default, #eaecf0)",
+              display: "flex",
+              alignItems: "center",
+              alignContent: "center",
+              flexWrap: "wrap",
+              gap: "12px",
+              rowGap: "8px",
+            },
+          }}
         >
-          <div
-            className="sentinel-agent-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="update-dialog-title"
-            onClick={(e) => e.stopPropagation()}
+          <Button variant="primary" onClick={() => void handleSave()} loading={saving}>
+            Save
+          </Button>
+          <Button variant="link" onClick={handleClose}>
+            Hide
+          </Button>
+          {saveMsg ? (
+            <Box
+              variant="span"
+              fontSize="body-s"
+              color={saveMsg.ok ? "text-status-success" : "text-status-error"}
+            >
+              {saveMsg.text}
+            </Box>
+          ) : null}
+          <div style={{ flex: 1, minWidth: 8 }} />
+          <Box
+            variant="span"
+            fontSize="body-s"
+            color="text-body-secondary"
+            nativeAttributes={{ style: { textAlign: "right", maxWidth: "min(100%, 22rem)" } }}
           >
-            {updateDialog.phase === "checking" && (
-              <>
-                <h2 id="update-dialog-title" className="text-base font-semibold mb-3">
-                  Checking for updates
-                </h2>
-                <div className="flex items-center gap-2 text-sm text-muted">
-                  <Loader2 size={18} className="animate-spin shrink-0" />
-                  Contacting update server…
-                </div>
-              </>
-            )}
+            You can open this window anytime with <span className="sentinel-kbd">Ctrl+Shift+F12</span>.
+          </Box>
+          <Button variant="normal" onClick={handleExit}>
+            Exit agent
+          </Button>
+        </Box>
+      </div>
 
-            {updateDialog.phase === "uptodate" && (
-              <>
-                <h2 id="update-dialog-title" className="text-base font-semibold mb-2">
-                  You&apos;re up to date
-                </h2>
-                <p className="text-sm text-muted mb-4">
-                  This build matches the latest published Sentinel agent version.
-                </p>
-                <button type="button" className="sentinel-btn-primary" onClick={closeUpdateDialog}>
-                  OK
-                </button>
-              </>
-            )}
-
-            {updateDialog.phase === "available" && (
-              <>
-                <h2 id="update-dialog-title" className="text-base font-semibold mb-2">
-                  Update available
-                </h2>
-                <p className="text-sm mb-4">
-                  Version <strong>{updateDialog.publishedVersion}</strong> is available. The agent
-                  will download the installer and restart. When the update finishes, this settings
-                  window opens again automatically.
-                </p>
-                <div className="flex flex-wrap gap-2 justify-end">
-                  <button type="button" className="sentinel-btn-secondary" onClick={closeUpdateDialog}>
+      <Modal
+        visible={updateDialog !== null}
+        onDismiss={() => {
+          closeUpdateDialog();
+        }}
+        size="medium"
+        closeAriaLabel="Close"
+        header={
+          updateDialog?.phase === "checking"
+            ? "Checking for updates"
+            : updateDialog?.phase === "uptodate"
+              ? "Up to date"
+              : updateDialog?.phase === "available"
+                ? "Update available"
+                : updateDialog?.phase === "installing"
+                  ? "Installing update"
+                  : updateDialog?.phase === "error"
+                    ? "Update check failed"
+                    : ""
+        }
+        footer={
+          updateDialog?.phase === "checking" || updateDialog?.phase === "installing" ? null : (
+            <Box float="right">
+              <SpaceBetween direction="horizontal" size="xs">
+                {updateDialog?.phase === "available" ? (
+                  <Button variant="link" onClick={closeUpdateDialog}>
                     Not now
-                  </button>
-                  <button type="button" className="sentinel-btn-primary" onClick={() => void applyManualUpdate()}>
+                  </Button>
+                ) : null}
+                {updateDialog?.phase === "available" ? (
+                  <Button variant="primary" onClick={() => void applyManualUpdate()}>
                     Download and install
-                  </button>
-                </div>
-              </>
-            )}
-
-            {updateDialog.phase === "installing" && (
-              <>
-                <h2 id="update-dialog-title" className="text-base font-semibold mb-3">
-                  Installing update
-                </h2>
-                <div className="flex items-center gap-2 text-sm text-muted">
-                  <Loader2 size={18} className="animate-spin shrink-0" />
-                  Downloading and starting the installer. This window will close briefly, then reopen
-                  after the update completes.
-                </div>
-              </>
-            )}
-
-            {updateDialog.phase === "error" && (
-              <>
-                <h2 id="update-dialog-title" className="text-base font-semibold mb-2 text-danger">
-                  Update check failed
-                </h2>
-                <p className="text-sm text-muted mb-4 break-words">{updateDialog.message}</p>
-                <button type="button" className="sentinel-btn-primary" onClick={closeUpdateDialog}>
-                  OK
-                </button>
-              </>
-            )}
-          </div>
-        </div>
-      )}
+                  </Button>
+                ) : (
+                  <Button variant="primary" onClick={closeUpdateDialog}>
+                    OK
+                  </Button>
+                )}
+              </SpaceBetween>
+            </Box>
+          )
+        }
+      >
+        {updateDialog?.phase === "checking" && (
+          <SpaceBetween direction="horizontal" size="s" alignItems="center">
+            <Spinner />
+            <Box color="text-body-secondary">Contacting update server…</Box>
+          </SpaceBetween>
+        )}
+        {updateDialog?.phase === "uptodate" && (
+          <Box color="text-body-secondary">
+            This build matches the latest published Sentinel agent version.
+          </Box>
+        )}
+        {updateDialog?.phase === "available" && (
+          <Box>
+            Version <Box variant="strong">{updateDialog.publishedVersion}</Box> is available. The agent will download
+            the installer and restart.
+          </Box>
+        )}
+        {updateDialog?.phase === "installing" && (
+          <SpaceBetween direction="horizontal" size="s" alignItems="center">
+            <Spinner />
+            <Box color="text-body-secondary">Downloading and starting the installer…</Box>
+          </SpaceBetween>
+        )}
+        {updateDialog?.phase === "error" && (
+          <Box color="text-body-secondary">{updateDialog.message}</Box>
+        )}
+      </Modal>
     </div>
   );
 }
@@ -637,6 +1003,8 @@ function SettingsPanel() {
 type AppScreen = "loading" | "password" | "settings";
 
 export default function App() {
+  useSystemColorScheme();
+
   const [screen, setScreen] = useState<AppScreen>("loading");
 
   const checkLock = useCallback(() => {
@@ -646,21 +1014,9 @@ export default function App() {
   }, []);
 
   const forceRelock = useCallback(() => {
-    // Immediately hide the settings UI (no flash), then decide whether a password gate is needed.
     setScreen("password");
     checkLock();
   }, [checkLock]);
-
-  useEffect(() => {
-    // Dynamic native auto-resizing
-    const ob = new ResizeObserver(() => {
-      const height = document.documentElement.scrollHeight;
-      const win = getCurrentWebviewWindow();
-      win.setSize(new LogicalSize(520, height));
-    });
-    ob.observe(document.body);
-    return () => ob.disconnect();
-  }, []);
 
   useEffect(() => {
     checkLock();
@@ -669,34 +1025,22 @@ export default function App() {
       forceRelock();
     });
 
-    // Re-lock whenever the window gains focus (covers hotkey show and any other way
-    // the window is brought back into view).
-    const unlistenFocus = getCurrentWebviewWindow().onFocusChanged(({ payload: focused }) => {
-      if (focused) forceRelock();
-    });
-
-    // Fallbacks: some platforms / versions are more reliable with DOM events.
-    const onFocus = () => forceRelock();
-    window.addEventListener("focus", onFocus);
-
-    const onVisibility = () => {
-      if (!document.hidden) forceRelock();
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-
     return () => {
       unlistenLock.then((unlisten: () => void) => unlisten());
-      unlistenFocus.then((unlisten: () => void) => unlisten());
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [checkLock, forceRelock]);
 
   if (screen === "loading") {
     return (
-      <div className="flex h-[200px] items-center justify-center bg-bg">
-        <Loader2 size={28} className="animate-spin text-accent" />
-      </div>
+      <Box
+        textAlign="center"
+        padding="xxl"
+        nativeAttributes={{
+          style: { height: "100%", display: "flex", alignItems: "center", justifyContent: "center" },
+        }}
+      >
+        <Spinner size="large" />
+      </Box>
     );
   }
 

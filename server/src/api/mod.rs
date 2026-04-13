@@ -1,5 +1,6 @@
 //! REST API for the authenticated dashboard (`/api/*`).
 
+mod agent_enrollment;
 mod agents_capture;
 mod agents_list;
 mod agents_telemetry;
@@ -112,6 +113,14 @@ pub fn router() -> Router<Arc<AppState>> {
             "/settings/agent-auto-update",
             get(auto_update::agent_auto_update_global_get)
                 .put(auto_update::agent_auto_update_global_put),
+        )
+        .route(
+            "/settings/agent-enrollment-tokens",
+            post(agent_enrollment::create_enrollment_token),
+        )
+        .route(
+            "/settings/agent-setup-hints",
+            get(agent_enrollment::get_agent_setup_hints),
         )
         .route("/settings/storage", get(settings::storage_usage))
         .route("/settings/capabilities", get(settings::settings_capabilities))

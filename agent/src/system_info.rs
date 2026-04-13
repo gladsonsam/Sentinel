@@ -124,6 +124,13 @@ pub fn collect_agent_info() -> serde_json::Value {
     let cfg = crate::config::load_config();
     let config_path = crate::config::config_path();
     let config_path_str = config_path.to_string_lossy().to_string();
+    #[cfg(windows)]
+    let machine_config_path_str = crate::config::machine_config_path()
+        .to_string_lossy()
+        .to_string();
+    #[cfg(not(windows))]
+    let machine_config_path_str = String::new();
+    let machine_connection_policy = crate::config::machine_connection_policy_active();
     let install_path = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_string_lossy().to_string()));
@@ -154,6 +161,8 @@ pub fn collect_agent_info() -> serde_json::Value {
         "drives": drives,
         "adapters": adapters,
         "config_path": config_path_str,
+        "machine_config_path": machine_config_path_str,
+        "machine_connection_policy": machine_connection_policy,
         "install_path": install_path,
         "config_server_url": cfg.server_url,
         "config_agent_name": cfg.agent_name,

@@ -357,6 +357,26 @@ export const api = {
   agentUpdateNow: (id: string): Promise<{ ok: boolean }> =>
     postEmpty(`/agents/${id}/update-now`),
 
+  /** Admin: LAN mDNS mode and agent WSS URL for onboarding (mirrors server `mdns_broadcast` rules). */
+  getAgentSetupHints: (): Promise<{
+    mdns: "advertising" | "disabled_by_env" | "unavailable_no_wss_url";
+    agent_wss_url: string | null;
+    mdns_port: number;
+  }> => get("/settings/agent-setup-hints"),
+
+  /** Admin: create a 6-digit (or multi-use) enrollment code for Windows agent adoption. */
+  createAgentEnrollmentToken: (body: {
+    uses?: number;
+    expires_in_hours?: number | null;
+    note?: string | null;
+  }): Promise<{
+    id: string;
+    enrollment_token: string;
+    uses: number;
+    expires_at: string | null;
+    note?: string | null;
+  }> => postJsonRes("/settings/agent-enrollment-tokens", body),
+
   settingsVersionGet: async (opts?: { nocache?: boolean }): Promise<SettingsVersionPayload> => {
     const qs = opts?.nocache ? "?nocache=true" : "";
     const result = await get<SettingsVersionPayload>(`/settings/version${qs}`);

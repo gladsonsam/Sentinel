@@ -93,6 +93,9 @@ pub struct AppState {
     /// Public base URL for deep links in external notifications (e.g. Home Assistant).
     /// Example: `https://sentinel.example.com`
     pub public_base_url: Option<String>,
+
+    /// TCP listen port (for mDNS default port hints; same value passed to `mdns_broadcast`).
+    pub agent_listen_port: u16,
 }
 
 /// Cached JPEG with a monotonic `seq` for MJPEG change detection.
@@ -114,6 +117,7 @@ pub struct AppStateParams {
     pub notify_hub: crate::notify::NotifyHub,
     pub integration_api_token: Option<String>,
     pub public_base_url: Option<String>,
+    pub agent_listen_port: u16,
 }
 
 impl AppState {
@@ -129,6 +133,7 @@ impl AppState {
             notify_hub,
             integration_api_token,
             public_base_url,
+            agent_listen_port,
         } = p;
         let (tx, _) = broadcast::channel(4096);
         Self {
@@ -154,6 +159,7 @@ impl AppState {
             agent_live: Mutex::new(HashMap::new()),
             integration_api_token,
             public_base_url,
+            agent_listen_port,
         }
     }
 

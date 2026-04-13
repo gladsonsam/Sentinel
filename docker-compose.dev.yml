@@ -1,8 +1,0 @@
-# Merge with base: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
-# Adds a local build for `server`; base file keeps the registry image name for tagging.
-
-services:
-  server:
-    build:
-      context: .
-      dockerfile: server/Dockerfile

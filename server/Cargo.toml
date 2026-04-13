@@ -67,3 +67,5 @@ regex = "1"
 
 # ── External notification providers (Home Assistant, etc.) ─────────────────
 async-trait = "0.1"
+mdns-sd = "0.13"
+if-addrs = "0.13"

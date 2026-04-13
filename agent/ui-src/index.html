@@ -5,19 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Sentinel — Agent settings</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-    <script>
-      (function () {
-        var saved = localStorage.getItem("theme");
-        if (
-          saved === "dark" ||
-          (!saved && window.matchMedia("(prefers-color-scheme: dark)").matches)
-        ) {
-          document.documentElement.classList.add("dark");
-        }
-      })();
-    </script>
   </head>
   <body>
+    <script>
+      (function () {
+        function apply(dark) {
+          document.documentElement.classList.toggle("dark", dark);
+          document.body.classList.toggle("awsui-dark-mode", dark);
+          document.documentElement.style.colorScheme = dark ? "dark" : "light";
+        }
+        apply(window.matchMedia("(prefers-color-scheme: dark)").matches);
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

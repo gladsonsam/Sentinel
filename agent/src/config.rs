@@ -1,15 +1,24 @@
 //! Persistent configuration and shared runtime state for the agent.
 //!
-//! ## On-disk format (`config.dat`)
+//! ## Windows — machine-wide (`%ProgramData%\\Sentinel\\config.dat`)
 //!
-//! The file is **encrypted with Windows DPAPI** ([`CryptProtectData`]), not merely
-//! base64-encoded. Ciphertext is bound to the **current Windows user and this PC**;
-//! another user or another machine cannot decrypt it from the file alone. This matches
-//! how many desktop apps protect local secrets (browser profiles, Credential Manager
-//! exports, some enterprise agents).
+//! The agent is built for **machine-wide deployment**: one encrypted file for the whole PC,
+//! DPAPI **machine** scope (any local user session on this box can decrypt it; other PCs
+//! cannot). Connection settings, local UI password hash, and auto-update preference are all
+//! stored here. The Windows agent does **not** read or write under `%LOCALAPPDATA%`.
 //!
-//! Legacy: older builds stored base64(JSON) or plain `config.json`; those are still read
-//! and are rewritten in the new format on next save.
+//! Imaging / MDM: run `sentinel-agent --import-machine-config deploy.json` elevated, or use
+//! the settings UI (requires write access to `%ProgramData%\\Sentinel`, per your MSI ACLs).
+//!
+//! ## Non-Windows
+//!
+//! Uses `%LOCALAPPDATA%/sentinel/config.dat` with DPAPI **user** scope (same as before).
+//!
+//! ## Adoption without the master server secret (`enroll.json`)
+//!
+//! Place `%ProgramData%\\Sentinel\\enroll.json` (plaintext JSON) with the **6-digit enrollment
+//! code** from the dashboard. On startup the agent calls `POST /api/agent/enroll`, receives a
+//! **per-device** WebSocket token, writes `config.dat`, and deletes `enroll.json`.
 //!
 //! [`CryptProtectData`]: https://learn.microsoft.com/en-us/windows/win32/api/dpapi/nf-dpapi-cryptprotectdata
 
@@ -18,7 +27,7 @@ use argon2::Argon2;
 use base64::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tracing::warn;
 use windows_dpapi::{decrypt_data, encrypt_data, Scope};
 
@@ -98,14 +107,43 @@ pub fn hash_ui_password_argon2(plain: &str) -> Result<String, String> {
 /// Optional app-specific entropy so unrelated DPAPI blobs are never mistaken for ours.
 const CONFIG_DPAPI_ENTROPY: &[u8] = b"sentinel-agent-config\0";
 
-/// Path to the encrypted config file.
+/// `%ProgramData%\Sentinel` (Windows). Shared config, logs, update staging, markers.
+#[cfg(windows)]
+pub fn program_data_sentinel_dir() -> PathBuf {
+    std::env::var_os("ProgramData")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+        .join("Sentinel")
+}
+
+/// Verified MSI downloads before `msiexec` (Windows). Under ProgramData with everything else.
+#[cfg(windows)]
+pub fn updates_staging_dir() -> PathBuf {
+    program_data_sentinel_dir().join("updates")
+}
+
+/// Machine-wide encrypted config (Windows). Alias for [`config_path`] on Windows.
+#[cfg(windows)]
+pub fn machine_config_path() -> PathBuf {
+    program_data_sentinel_dir().join("config.dat")
+}
+
+/// Primary config file path.
 ///
-/// On Windows: `%LOCALAPPDATA%\sentinel\config.dat`
+/// - **Windows:** `%ProgramData%\Sentinel\config.dat` (machine DPAPI).
+/// - **Other:** `%LOCALAPPDATA%/sentinel/config.dat` (user DPAPI).
 pub fn config_path() -> PathBuf {
-    dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("sentinel")
-        .join("config.dat")
+    #[cfg(windows)]
+    {
+        machine_config_path()
+    }
+    #[cfg(not(windows))]
+    {
+        dirs::data_local_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("sentinel")
+            .join("config.dat")
+    }
 }
 
 fn parse_config_json(s: &str) -> Option<Config> {
@@ -120,40 +158,122 @@ fn try_load_legacy_base64_dat(bytes: &[u8]) -> Option<Config> {
     parse_config_json(&s)
 }
 
-/// Try DPAPI-encrypted JSON (current format).
-fn try_load_dpapi_dat(bytes: &[u8]) -> Option<Config> {
-    let dec = decrypt_data(bytes, Scope::User, Some(CONFIG_DPAPI_ENTROPY)).ok()?;
+/// Try DPAPI-encrypted JSON (user scope — non-Windows `config.dat` only).
+#[cfg(not(windows))]
+fn try_load_dpapi_dat_user(bytes: &[u8]) -> Option<Config> {
+    try_load_dpapi_dat_scoped(bytes, Scope::User)
+}
+
+#[cfg(windows)]
+fn try_load_dpapi_dat_machine(bytes: &[u8]) -> Option<Config> {
+    try_load_dpapi_dat_scoped(bytes, Scope::Machine)
+}
+
+fn try_load_dpapi_dat_scoped(bytes: &[u8], scope: Scope) -> Option<Config> {
+    let dec = decrypt_data(bytes, scope, Some(CONFIG_DPAPI_ENTROPY)).ok()?;
     let s = String::from_utf8(dec).ok()?;
     parse_config_json(&s)
 }
 
+#[cfg(windows)]
+fn try_load_machine_config_bytes(bytes: &[u8]) -> Option<Config> {
+    if bytes.is_empty() {
+        return None;
+    }
+    try_load_dpapi_dat_machine(bytes).or_else(|| {
+        try_load_legacy_base64_dat(bytes).map(|c| {
+            warn!(
+                "Loaded legacy base64 config.dat at {}; will use DPAPI machine scope on next save",
+                machine_config_path().display()
+            );
+            c
+        })
+    })
+}
+
+/// `true` when the machine-wide config file exists and decrypts successfully.
+#[cfg(windows)]
+pub fn machine_connection_policy_active() -> bool {
+    let path = machine_config_path();
+    std::fs::read(&path)
+        .ok()
+        .filter(|b| !b.is_empty())
+        .and_then(|b| try_load_machine_config_bytes(&b))
+        .is_some()
+}
+
+#[cfg(not(windows))]
+pub fn machine_connection_policy_active() -> bool {
+    false
+}
+
+fn persist_config(path: &Path, config: &Config, scope: Scope) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let json = serde_json::to_string(config)?;
+    let encrypted = encrypt_data(json.as_bytes(), scope, Some(CONFIG_DPAPI_ENTROPY))?;
+    std::fs::write(path, encrypted)?;
+    Ok(())
+}
+
+/// Same as [`save_config`] on Windows (machine-wide `config.dat`). Kept for enrollment call sites.
+#[cfg(windows)]
+pub fn write_machine_policy_dat(config: &Config) -> anyhow::Result<()> {
+    save_config(config)
+}
+
+/// Read plain JSON (UTF-8) and write machine-wide `config.dat` using DPAPI machine scope.
+#[cfg(windows)]
+pub fn import_machine_config_from_json_file(json_path: &Path) -> anyhow::Result<()> {
+    let text = std::fs::read_to_string(json_path)?;
+    let config: Config = serde_json::from_str(&text).map_err(|e| {
+        anyhow::anyhow!("invalid JSON in {}: {e}", json_path.display())
+    })?;
+    save_config(&config)
+}
+
+#[cfg(not(windows))]
+pub fn import_machine_config_from_json_file(_json_path: &Path) -> anyhow::Result<()> {
+    anyhow::bail!("machine config import is only supported on Windows")
+}
+
 /// Load configuration from disk; falls back to `Config::default()` on any error.
 pub fn load_config() -> Config {
-    let path = config_path();
-    let old_path = path.with_extension("json");
-
     let mut cfg = Config::default();
 
-    // 1. `config.dat` — prefer DPAPI, then legacy base64(JSON)
-    if let Ok(bytes) = std::fs::read(&path) {
-        if !bytes.is_empty() {
-            if let Some(c) = try_load_dpapi_dat(&bytes) {
-                cfg = c;
-            } else if let Some(c) = try_load_legacy_base64_dat(&bytes) {
-                warn!("Loaded legacy base64 config.dat; it will be upgraded to DPAPI on next save");
-                cfg = c;
-            }
-        }
-    } else if let Ok(json) = std::fs::read_to_string(&old_path) {
-        // 2. Very old plain `config.json`
-        if let Ok(c) = serde_json::from_str::<Config>(&json) {
-            warn!("Loaded legacy config.json; it will be replaced by encrypted config.dat on next save");
+    #[cfg(windows)]
+    {
+        let mpath = machine_config_path();
+        if let Some(c) = std::fs::read(&mpath)
+            .ok()
+            .and_then(|bytes| try_load_machine_config_bytes(&bytes))
+        {
             cfg = c;
         }
     }
 
-    // Optional environment overrides, useful when running headless (no UI).
-    // These only override when the env var is present and non-empty.
+    #[cfg(not(windows))]
+    {
+        let path = config_path();
+        let old_path = path.with_extension("json");
+        if let Ok(bytes) = std::fs::read(&path) {
+            if !bytes.is_empty() {
+                if let Some(c) = try_load_dpapi_dat_user(&bytes) {
+                    cfg = c;
+                } else if let Some(c) = try_load_legacy_base64_dat(&bytes) {
+                    warn!("Loaded legacy base64 config.dat; it will be upgraded to DPAPI on next save");
+                    cfg = c;
+                }
+            }
+        } else if let Ok(json) = std::fs::read_to_string(&old_path) {
+            if let Ok(c) = serde_json::from_str::<Config>(&json) {
+                warn!("Loaded legacy config.json; it will be replaced by encrypted config.dat on next save");
+                cfg = c;
+            }
+        }
+    }
+
     if let Ok(v) = std::env::var("AGENT_SERVER_URL") {
         let v = v.trim();
         if !v.is_empty() {
@@ -176,21 +296,19 @@ pub fn load_config() -> Config {
     cfg
 }
 
-/// Persist configuration to disk, creating parent directories as needed.
-///
-/// Writes **DPAPI-encrypted** bytes (not base64 text). Requires the same Windows user
-/// and machine to decrypt.
+/// Persist configuration. **Windows:** `%ProgramData%\Sentinel\config.dat`, machine DPAPI.
+/// **Other platforms:** per-user path, user DPAPI.
 pub fn save_config(config: &Config) -> anyhow::Result<()> {
     let path = config_path();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+    #[cfg(windows)]
+    {
+        persist_config(&path, config, Scope::Machine)?;
+    }
+    #[cfg(not(windows))]
+    {
+        persist_config(&path, config, Scope::User)?;
     }
 
-    let json = serde_json::to_string(config)?;
-    let encrypted = encrypt_data(json.as_bytes(), Scope::User, Some(CONFIG_DPAPI_ENTROPY))?;
-    std::fs::write(&path, encrypted)?;
-
-    // Attempt to clean up the old readable json file safely
     let old_path = path.with_extension("json");
     let _ = std::fs::remove_file(old_path);
 
@@ -200,10 +318,17 @@ pub fn save_config(config: &Config) -> anyhow::Result<()> {
 // ─── Settings UI reopen after MSI update (from "Download and install" in the webview) ─────
 
 fn reopen_settings_ui_marker_path() -> PathBuf {
-    dirs::data_local_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("sentinel")
-        .join("reopen_settings_ui.marker")
+    #[cfg(windows)]
+    {
+        program_data_sentinel_dir().join("reopen_settings_ui.marker")
+    }
+    #[cfg(not(windows))]
+    {
+        dirs::data_local_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("sentinel")
+            .join("reopen_settings_ui.marker")
+    }
 }
 
 /// Call before exiting for an update started from the settings UI so the next launch shows the window.

@@ -29,11 +29,12 @@ export function EmptyState({ title, description, action, icon }: EmptyStateProps
   );
 }
 
-export function NoAgentsState() {
+export function NoAgentsState({ primaryAction }: { primaryAction?: React.ReactNode }) {
   return (
     <EmptyState
       title="No agents connected"
-      description="Connect an agent to start monitoring. Configure the agent with your server URL and credentials."
+      description="Connect an agent to start monitoring. Admins can use Add agent for an enrollment code and connection hints."
+      action={primaryAction}
     />
   );
 }

@@ -7,6 +7,9 @@
 use anyhow::Result;
 use chrono::{DateTime, TimeZone, Utc};
 use serde::Serialize;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine as _;
+use rand::{Rng, RngCore};
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
 use std::collections::HashMap;
@@ -601,6 +604,194 @@ pub async fn touch_agent(pool: &PgPool, id: Uuid) -> Result<()> {
         .execute(pool)
         .await?;
     Ok(())
+}
+
+/// Stable agent id + optional per-machine API token hash (Argon2). Used by WebSocket auth.
+pub async fn get_agent_auth_by_name(
+    pool: &PgPool,
+    name: &str,
+) -> Result<Option<(Uuid, Option<String>)>> {
+    let row = sqlx::query("SELECT id, api_token_hash FROM agents WHERE name = $1")
+        .bind(name)
+        .fetch_optional(pool)
+        .await?;
+    match row {
+        None => Ok(None),
+        Some(r) => Ok(Some((r.try_get("id")?, r.try_get("api_token_hash")?))),
+    }
+}
+
+/// Client-visible enrollment failures (HTTP 401 / 409).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnrollReject {
+    InvalidOrExpired,
+    AgentAlreadyEnrolled,
+}
+
+fn pg_is_unique_violation(e: &sqlx::Error) -> bool {
+    match e {
+        sqlx::Error::Database(db) => db.code().map(|c| c == "23505").unwrap_or(false),
+        _ => false,
+    }
+}
+
+/// Normalize dashboard / agent input: ignore whitespace; if exactly six digits remain, use OTP form.
+/// Otherwise use trimmed input (legacy long enrollment secrets still in the database).
+pub fn normalize_enrollment_code_for_lookup(raw: &str) -> String {
+    let t = raw.trim();
+    let digits: String = t.chars().filter(|c| c.is_ascii_digit()).collect();
+    if digits.len() == 6 {
+        digits
+    } else {
+        t.to_string()
+    }
+}
+
+/// Issue a short **6-digit** enrollment code (SHA-256 stored). Retries on digest collision.
+/// Returns `(row_id, plaintext)` — show once.
+pub async fn create_agent_enrollment_token(
+    pool: &PgPool,
+    uses: i32,
+    expires_at: Option<DateTime<Utc>>,
+    note: Option<&str>,
+) -> Result<(Uuid, String)> {
+    let uses = uses.max(1);
+    for _ in 0..512 {
+        // Fresh `thread_rng()` per attempt so we never hold `ThreadRng` across `.await` (must be `Send` for Axum).
+        let plaintext = format!("{:06}", rand::thread_rng().gen_range(0..1_000_000u32));
+        let digest = Sha256::digest(plaintext.as_bytes()).to_vec();
+        let res = sqlx::query(
+            r#"
+            INSERT INTO agent_enrollment_tokens (token_digest, uses_remaining, expires_at, note)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id
+            "#,
+        )
+        .bind(&digest[..])
+        .bind(uses)
+        .bind(expires_at)
+        .bind(note)
+        .fetch_one(pool)
+        .await;
+        match res {
+            Ok(row) => {
+                let id: Uuid = row.try_get("id")?;
+                return Ok((id, plaintext));
+            }
+            Err(e) if pg_is_unique_violation(&e) => continue,
+            Err(e) => return Err(e.into()),
+        }
+    }
+    anyhow::bail!("could not allocate a unique enrollment code");
+}
+
+/// Redeem an enrollment secret: stores an Argon2 hash of a fresh per-agent API token on `agents`.
+/// `Ok(Ok(token))` = success; `Ok(Err(_))` = client error; `Err` = database / internal failure.
+pub async fn enroll_agent_with_secret(
+    pool: &PgPool,
+    enrollment_plain: &str,
+    agent_name: &str,
+) -> anyhow::Result<Result<String, EnrollReject>> {
+    let key = normalize_enrollment_code_for_lookup(enrollment_plain);
+    let digest = Sha256::digest(key.as_bytes()).to_vec();
+
+    let mut tx = pool.begin().await?;
+
+    let erow = sqlx::query(
+        r#"
+        SELECT id, uses_remaining, expires_at
+        FROM agent_enrollment_tokens
+        WHERE token_digest = $1
+        FOR UPDATE
+        "#,
+    )
+    .bind(&digest[..])
+    .fetch_optional(&mut *tx)
+    .await?;
+
+    let Some(er) = erow else {
+        tx.rollback().await?;
+        return Ok(Err(EnrollReject::InvalidOrExpired));
+    };
+
+    let eid: Uuid = er.try_get("id")?;
+    let uses: i32 = er.try_get("uses_remaining")?;
+    let exp: Option<DateTime<Utc>> = er.try_get("expires_at")?;
+    if uses <= 0 {
+        tx.rollback().await?;
+        return Ok(Err(EnrollReject::InvalidOrExpired));
+    }
+    if let Some(exp) = exp {
+        if Utc::now() > exp {
+            tx.rollback().await?;
+            return Ok(Err(EnrollReject::InvalidOrExpired));
+        }
+    }
+
+    let agent_row = sqlx::query("SELECT id, api_token_hash FROM agents WHERE name = $1 FOR UPDATE")
+        .bind(agent_name)
+        .fetch_optional(&mut *tx)
+        .await?;
+
+    if let Some(ref ar) = agent_row {
+        let existing_hash: Option<String> = ar.try_get("api_token_hash")?;
+        if existing_hash.is_some() {
+            tx.rollback().await?;
+            return Ok(Err(EnrollReject::AgentAlreadyEnrolled));
+        }
+    }
+
+    sqlx::query(
+        r#"
+        UPDATE agent_enrollment_tokens
+        SET uses_remaining = uses_remaining - 1
+        WHERE id = $1 AND uses_remaining > 0
+        "#,
+    )
+    .bind(eid)
+    .execute(&mut *tx)
+    .await?;
+
+    let mut raw = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut raw);
+    let agent_token_plain = URL_SAFE_NO_PAD.encode(raw);
+    let api_hash = hash_dashboard_password(&agent_token_plain)?;
+
+    match agent_row {
+        Some(ar) => {
+            let id: Uuid = ar.try_get("id")?;
+            let r = sqlx::query(
+                r#"
+                UPDATE agents
+                SET api_token_hash = $2, last_seen = NOW()
+                WHERE id = $1 AND api_token_hash IS NULL
+                "#,
+            )
+            .bind(id)
+            .bind(&api_hash)
+            .execute(&mut *tx)
+            .await?;
+            if r.rows_affected() == 0 {
+                tx.rollback().await?;
+                return Ok(Err(EnrollReject::AgentAlreadyEnrolled));
+            }
+        }
+        None => {
+            sqlx::query(
+                r#"
+                INSERT INTO agents (name, api_token_hash)
+                VALUES ($1, $2)
+                "#,
+            )
+            .bind(agent_name)
+            .bind(&api_hash)
+            .execute(&mut *tx)
+            .await?;
+        }
+    }
+
+    tx.commit().await?;
+    Ok(Ok(agent_token_plain))
 }
 
 /// Upsert the latest system/specs snapshot for an agent.

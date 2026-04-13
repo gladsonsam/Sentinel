@@ -25,7 +25,7 @@
         "visible": false,
         "center": true,
         "decorations": true,
-        "skipTaskbar": true,
+        "skipTaskbar": false,
         "focus": false
       }
     ],

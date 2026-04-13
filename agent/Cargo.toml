@@ -110,8 +110,9 @@ tauri = { version = "2", features = [] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
 minisign-verify = "0.2"
+mdns-sd = "0.13"
 
 
 # ── Build dependencies ───────────────────────────────────────────────────────

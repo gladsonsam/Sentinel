@@ -15,9 +15,9 @@
 //!
 //! ## Settings window
 //!
-//! The process has no taskbar entry.  Press **Ctrl+Shift+F12** to open the
-//! settings window.  The ✖ Close button hides the window; only "Exit Agent"
-//! terminates the process.
+//! Press **Ctrl+Shift+F12** to open the settings webview; while visible it
+//! appears on the taskbar. Close destroys the webview (recreated on next open);
+//! only "Exit Agent" terminates the process.
 //!
 //! ## Outbound frames (agent → server)
 //!
@@ -52,6 +52,9 @@
 mod app_display;
 mod capture;
 mod config;
+#[cfg(target_os = "windows")]
+mod enrollment;
+mod mdns_discover;
 mod input;
 mod keyboard_capture;
 mod remote_script;
@@ -104,7 +107,7 @@ use tokio_tungstenite::{
     MaybeTlsStream, WebSocketStream,
 };
 use tracing::{error, info, warn};
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Registry};
 use window_tracker::WindowTracker;
 
 use config::{AgentStatus, Config};
@@ -164,31 +167,37 @@ fn init_logging(
         {
             Ok(file) => {
                 let (writer, guard) = tracing_appender::non_blocking(file);
-                fmt()
-                    .with_env_filter(env_filter)
+                let file_layer = fmt::layer()
                     .with_target(false)
                     .with_thread_ids(false)
                     .compact()
-                    .with_writer(writer)
+                    .with_writer(writer);
+                Registry::default()
+                    .with(env_filter)
+                    .with(file_layer)
                     .init();
                 Some(guard)
             }
             Err(_) => {
-                fmt()
-                    .with_env_filter(env_filter)
+                let stderr_layer = fmt::layer()
                     .with_target(false)
                     .with_thread_ids(false)
-                    .compact()
+                    .compact();
+                Registry::default()
+                    .with(env_filter)
+                    .with(stderr_layer)
                     .init();
                 None
             }
         }
     } else {
-        fmt()
-            .with_env_filter(env_filter)
+        let stderr_layer = fmt::layer()
             .with_target(false)
             .with_thread_ids(false)
-            .compact()
+            .compact();
+        Registry::default()
+            .with(env_filter)
+            .with(stderr_layer)
             .init();
         None
     }
@@ -225,6 +234,24 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     #[cfg(target_os = "windows")]
+    if let Some(json_path) = parse_import_machine_config_arg(&args) {
+        eprintln!("Importing machine-wide config from {} …", json_path.display());
+        match crate::config::import_machine_config_from_json_file(&json_path) {
+            Ok(()) => {
+                eprintln!(
+                    "Wrote machine-wide config to {} (DPAPI machine scope).",
+                    crate::config::machine_config_path().display()
+                );
+            }
+            Err(e) => {
+                eprintln!("Import failed: {e:#}");
+                std::process::exit(1);
+            }
+        }
+        std::process::exit(0);
+    }
+
+    #[cfg(target_os = "windows")]
     if args.iter().any(|a| a == "--service") {
         let log_guard = init_logging(Some(program_data_log_path("service.log")));
         if let Some(g) = log_guard {
@@ -242,7 +269,10 @@ fn main() {
     let _log_guard = init_logging(parse_log_file_arg(&args));
     info!("Sentinel agent v{}", env!("CARGO_PKG_VERSION"));
 
-    // Ensure a single user-agent instance (service launcher can otherwise create duplicates).
+    // Exactly one **interactive** user-session process (this binary without `--service`).
+    // A second launch exits immediately — that is not a second “agent product”, it is the same
+    // installer/shortcut started twice. The Windows **service** is a separate process and uses
+    // `service.log`; it launches this binary in the user session with `--log-file user-agent.log`.
     #[cfg(target_os = "windows")]
     {
         use windows::core::PCWSTR;
@@ -266,9 +296,7 @@ fn main() {
         }
     }
 
-    // Allow forcing the settings UI to show on startup. This is helpful on
-    // Windows where the app has no taskbar entry and is otherwise "invisible"
-    // until the global hotkey is pressed.
+    // Allow forcing the settings UI to show on startup (tray/hotkey is easy to miss).
     let show_ui_on_startup = args.iter().any(|a| a == "--show-ui")
         || std::env::var("AGENT_SHOW_UI")
             .map(|v| {
@@ -294,7 +322,12 @@ fn main() {
 
     // ── Load persisted configuration ──────────────────────────────────────
     let initial_config = config::load_config();
-    info!("Config loaded from {:?}", config::config_path());
+    info!("Config file {:?}", config::config_path());
+    #[cfg(target_os = "windows")]
+    info!(
+        "Machine-wide config on disk (readable): {}",
+        config::machine_connection_policy_active()
+    );
 
     // Shared with Tauri so server-pushed UI password updates apply everywhere.
     let shared_cfg: Arc<Mutex<Config>> = Arc::new(Mutex::new(initial_config.clone()));
@@ -382,6 +415,34 @@ fn main() {
     }
 }
 
+/// `sentinel-agent --import-machine-config C:\path\agent.json` (run elevated). Writes
+/// `%ProgramData%\Sentinel\config.dat` with DPAPI machine scope.
+#[cfg(target_os = "windows")]
+fn parse_import_machine_config_arg(args: &[String]) -> Option<std::path::PathBuf> {
+    if let Some(i) = args.iter().position(|a| a == "--import-machine-config") {
+        if let Some(p) = args.get(i + 1) {
+            let p = p.trim_matches('"').trim();
+            if !p.is_empty() {
+                return Some(std::path::PathBuf::from(p));
+            }
+        }
+        return None;
+    }
+    if let Some(a) = args
+        .iter()
+        .find(|a| a.starts_with("--import-machine-config="))
+    {
+        let p = a
+            .trim_start_matches("--import-machine-config=")
+            .trim_matches('"')
+            .trim();
+        if !p.is_empty() {
+            return Some(std::path::PathBuf::from(p));
+        }
+    }
+    None
+}
+
 fn parse_log_file_arg(args: &[String]) -> Option<std::path::PathBuf> {
     // Optional CLI override (used by the Windows launcher service so we can always find logs).
     if let Some(i) = args.iter().position(|a| a == "--log-file") {
@@ -415,6 +476,20 @@ async fn run_agent_loop(
     mut key_rx: mpsc::UnboundedReceiver<InputEvent>,
     status: Arc<Mutex<AgentStatus>>,
 ) {
+    #[cfg(target_os = "windows")]
+    if let Ok(true) = crate::enrollment::try_consume_pending_enrollment().await {
+        let new_cfg = config::load_config();
+        if let Ok(mut g) = shared_cfg.lock() {
+            *g = new_cfg.clone();
+        }
+        let watch_val = if new_cfg.server_url.is_empty() {
+            None
+        } else {
+            Some(new_cfg)
+        };
+        let _ = config_tx.send(watch_val);
+    }
+
     // The capture stop-flag survives reconnects.
     let mut capture_stop: Option<Arc<AtomicBool>> = None;
 

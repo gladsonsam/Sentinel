@@ -467,7 +467,8 @@ fn launch_user_agent_in_session(session_id: u32) -> Result<()> {
         ..Default::default()
     };
 
-    // Critical: the user-agent relies on per-user env vars (LOCALAPPDATA) for config + WebView2.
+    // Critical: CreateEnvironmentBlock supplies the user profile (incl. LOCALAPPDATA for WebView2).
+    // Agent config and MSI staging live under ProgramData, not AppData.
     // When launched from LocalSystem, we must build an environment block for the target user.
     let mut env_block: *mut core::ffi::c_void = std::ptr::null_mut();
     unsafe { CreateEnvironmentBlock(&mut env_block, Some(primary_token), false) }
@@ -516,7 +517,7 @@ pub(crate) fn to_wide_z(s: &str) -> Vec<u16> {
         .collect()
 }
 
-/// Only MSIs under the user’s `%LOCALAPPDATA%\\…\\sentinel\\updates` (same tree the agent stages).
+/// Only MSIs under `%ProgramData%\\Sentinel\\updates` (same tree as [`crate::config::updates_staging_dir`]).
 fn trusted_staged_msi_path(path: &std::path::Path) -> Result<std::path::PathBuf> {
     use anyhow::bail;
     let meta = std::fs::metadata(path)
@@ -547,14 +548,25 @@ fn msi_path_for_msiexec_argument(canon: &std::path::Path) -> std::path::PathBuf 
 }
 
 fn msi_path_has_allowed_staging_prefix(canon: &std::path::Path) -> bool {
-    let mut s = canon.as_os_str().to_string_lossy().to_ascii_lowercase();
-    if let Some(rest) = s.strip_prefix(r"\\?\") {
-        s = rest.to_string();
+    fn normalize_verbatim(p: &std::path::Path) -> String {
+        let mut s = p.as_os_str().to_string_lossy().to_ascii_lowercase();
+        if let Some(rest) = s.strip_prefix(r"\\?\") {
+            s = rest.to_string();
+        }
+        s.replace('/', "\\")
     }
-    let s = s.replace('/', "\\");
-    s.ends_with(".msi")
-        && !s.contains("..")
-        && s.contains("\\appdata\\local\\sentinel\\updates\\")
+
+    let Ok(staging) = crate::config::updates_staging_dir().canonicalize() else {
+        return false;
+    };
+    let prefix = normalize_verbatim(&staging);
+    let mut prefix = prefix.trim_end_matches('\\').to_string();
+    prefix.push('\\');
+
+    let target = normalize_verbatim(canon);
+    target.ends_with(".msi")
+        && !target.contains("..")
+        && target.starts_with(&prefix)
 }
 
 /// After the pipe reply is flushed; do not run while the updater client is still blocked on read.

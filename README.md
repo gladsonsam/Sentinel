@@ -35,11 +35,14 @@ Tab-by-tab UI tour (with more detail): **[wiki → Features](https://github.com/
 ## Quick start (Docker)
 
 ```bash
-cp .env.example .env   # set POSTGRES_PASSWORD, ADMIN_PASSWORD, AGENT_SECRET
+cp .env.example .env
+# edit .env — set strong POSTGRES_PASSWORD, ADMIN_PASSWORD, AGENT_SECRET
 docker compose up -d
 ```
 
-Open **[http://localhost:9000](http://localhost:9000)** (default `PUBLISH_PORT=9000`). Building the image from this repo, Traefik/TLS, and other layouts: **[wiki → Deployment](https://github.com/gladsonsam/Sentinel/wiki/Deployment)**.
+Use **`docker compose up -d --build`** to build the server image from this repo instead of pulling GHCR.
+
+Open **[http://localhost:9000](http://localhost:9000)** on the Docker host (or `http://<LAN-IP>:9000` from another machine). Extended deploy options (mDNS, Traefik, TLS): **[wiki → Deployment](https://github.com/gladsonsam/Sentinel/wiki/Deployment)**.
 
 ## Documentation
 

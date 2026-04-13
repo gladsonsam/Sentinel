@@ -33,6 +33,8 @@ interface AgentCardProps {
   onBulkAddToGroup?: (agentIds: string[]) => void;
   /** Admin: navigate to agent groups management. */
   onOpenAgentGroups?: () => void;
+  /** Admin: open add-agent / enrollment flow. */
+  onAddAgent?: () => void;
 }
 
 export function AgentCard({
@@ -49,6 +51,7 @@ export function AgentCard({
   onBatchShutdown,
   onBulkAddToGroup,
   onOpenAgentGroups,
+  onAddAgent,
 }: AgentCardProps) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [fallbackLastWindow, setFallbackLastWindow] = useState<Record<string, string>>({});
@@ -206,6 +209,7 @@ export function AgentCard({
                   : undefined
               }
               onOpenAgentGroups={onOpenAgentGroups}
+              onAddAgent={onAddAgent}
             />
           </Box>
         }
