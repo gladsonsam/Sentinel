@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ContentLayout from "@cloudscape-design/components/content-layout";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Header from "@cloudscape-design/components/header";
@@ -12,6 +12,7 @@ import Table from "@cloudscape-design/components/table";
 import Box from "@cloudscape-design/components/box";
 import Toggle from "@cloudscape-design/components/toggle";
 import Alert from "@cloudscape-design/components/alert";
+import ExpandableSection from "@cloudscape-design/components/expandable-section";
 import { api } from "../lib/api";
 import { formatEnrollmentOtp6 } from "../lib/formatEnrollmentCode";
 import type { ThemeMode } from "../hooks/useTheme";
@@ -77,7 +78,41 @@ export function SettingsPage({
     expires_at: string | null;
   } | null>(null);
 
+  const [enrollTokens, setEnrollTokens] = useState<
+    {
+      id: string;
+      uses_remaining: number;
+      created_at: string;
+      expires_at: string | null;
+      note: string | null;
+      used_count: number;
+      last_used_at: string | null;
+    }[]
+  >([]);
+  const [enrollTokensLoading, setEnrollTokensLoading] = useState(false);
+  const [enrollTokensError, setEnrollTokensError] = useState<string | null>(null);
+  const [tokenUses, setTokenUses] = useState<Record<string, { loading: boolean; error: string | null; rows: { used_at: string; agent_name: string; agent_id: string | null }[] }>>(
+    {},
+  );
+
+  // (removed) agent credential reset-by-id: prefer deleting agents from the overview.
+
   const isAdmin = currentUser?.role === "admin";
+
+  const loadEnrollmentTokens = async () => {
+    if (!isAdmin) return;
+    setEnrollTokensLoading(true);
+    setEnrollTokensError(null);
+    try {
+      const r = await api.listAgentEnrollmentTokens();
+      setEnrollTokens(r.tokens ?? []);
+    } catch (e: unknown) {
+      setEnrollTokensError(String((e as { message?: string })?.message ?? e));
+      setEnrollTokens([]);
+    } finally {
+      setEnrollTokensLoading(false);
+    }
+  };
 
   const loadGithubRelease = async (nocache: boolean) => {
     setGithubReleaseLoading(true);
@@ -119,6 +154,7 @@ export function SettingsPage({
     } finally {
       setLoadingMeta(false);
     }
+    await loadEnrollmentTokens();
   };
 
   const saveGlobalAutoUpdate = async (enabled: boolean) => {
@@ -163,6 +199,7 @@ export function SettingsPage({
         uses: r.uses,
         expires_at: r.expires_at,
       });
+      await loadEnrollmentTokens();
     } catch (e: unknown) {
       setEnrollError(String((e as { message?: string })?.message ?? e));
       setEnrollResult(null);
@@ -179,6 +216,94 @@ export function SettingsPage({
       /* ignore */
     }
   };
+
+  const tokenColumns = useMemo(
+    () => [
+      {
+        id: "created_at",
+        header: "Created",
+        cell: (t: (typeof enrollTokens)[number]) => new Date(t.created_at).toLocaleString(),
+      },
+      {
+        id: "expires_at",
+        header: "Expires",
+        cell: (t: (typeof enrollTokens)[number]) =>
+          t.expires_at ? new Date(t.expires_at).toLocaleString() : "—",
+      },
+      {
+        id: "uses_remaining",
+        header: "Uses left",
+        cell: (t: (typeof enrollTokens)[number]) => String(t.uses_remaining ?? 0),
+      },
+      {
+        id: "used_count",
+        header: "Used",
+        cell: (t: (typeof enrollTokens)[number]) => String(t.used_count ?? 0),
+      },
+      {
+        id: "last_used_at",
+        header: "Last used",
+        cell: (t: (typeof enrollTokens)[number]) =>
+          t.last_used_at ? new Date(t.last_used_at).toLocaleString() : "—",
+      },
+      {
+        id: "note",
+        header: "Note",
+        cell: (t: (typeof enrollTokens)[number]) => (t.note?.trim() ? t.note : "—"),
+      },
+      {
+        id: "actions",
+        header: "",
+        cell: (t: (typeof enrollTokens)[number]) => (
+          <SpaceBetween direction="horizontal" size="xs">
+            {(t.used_count ?? 0) > 0 ? (
+              <Button
+                onClick={() => {
+                  const cur = tokenUses[t.id];
+                  if (cur?.rows?.length || cur?.loading) return;
+                  setTokenUses((prev) => ({ ...prev, [t.id]: { loading: true, error: null, rows: [] } }));
+                  void api
+                    .listAgentEnrollmentTokenUses(t.id)
+                    .then((r) => {
+                      setTokenUses((prev) => ({
+                        ...prev,
+                        [t.id]: { loading: false, error: null, rows: r.uses ?? [] },
+                      }));
+                    })
+                    .catch((e: unknown) => {
+                      setTokenUses((prev) => ({
+                        ...prev,
+                        [t.id]: {
+                          loading: false,
+                          error: String((e as { message?: string })?.message ?? e),
+                          rows: [],
+                        },
+                      }));
+                    });
+                }}
+              >
+                View uses
+              </Button>
+            ) : null}
+            {(t.uses_remaining ?? 0) > 0 ? (
+              <Button
+                onClick={() => {
+                  if (!confirm("Revoke this enrollment code? It will become unusable.")) return;
+                  void api
+                    .revokeAgentEnrollmentToken(t.id)
+                    .then(() => loadEnrollmentTokens())
+                    .catch((e: unknown) => setEnrollTokensError(String((e as { message?: string })?.message ?? e)));
+                }}
+              >
+                Revoke
+              </Button>
+            ) : null}
+          </SpaceBetween>
+        ),
+      },
+    ],
+    [enrollTokens, tokenUses],
+  );
 
   const save = async () => {
     setSaving(true);
@@ -309,6 +434,97 @@ export function SettingsPage({
                   </Alert>
                 </SpaceBetween>
               ) : null}
+
+              <Container
+                header={
+                  <Header
+                    variant="h3"
+                    actions={
+                      <SpaceBetween direction="horizontal" size="xs">
+                        <Button
+                          onClick={() => {
+                            if (!confirm("Revoke all enrollment codes? Any unused codes will become unusable.")) return;
+                            setEnrollTokensLoading(true);
+                            setEnrollTokensError(null);
+                            void api
+                              .revokeAllAgentEnrollmentTokens()
+                              .then(() => loadEnrollmentTokens())
+                              .catch((e: unknown) =>
+                                setEnrollTokensError(String((e as { message?: string })?.message ?? e)),
+                              )
+                              .finally(() => setEnrollTokensLoading(false));
+                          }}
+                          disabled={enrollTokensLoading || enrollTokens.every((t) => (t.uses_remaining ?? 0) <= 0)}
+                        >
+                          Revoke all
+                        </Button>
+                        <Button onClick={() => void loadEnrollmentTokens()} loading={enrollTokensLoading}>
+                          Refresh
+                        </Button>
+                      </SpaceBetween>
+                    }
+                  >
+                    Keys
+                  </Header>
+                }
+              >
+                <SpaceBetween size="s">
+                  {enrollTokensError ? (
+                    <Alert type="error" dismissible onDismiss={() => setEnrollTokensError(null)}>
+                      {enrollTokensError}
+                    </Alert>
+                  ) : null}
+                  <Table
+                    items={enrollTokens}
+                    columnDefinitions={tokenColumns}
+                    variant="embedded"
+                    loading={enrollTokensLoading}
+                    loadingText="Loading keys…"
+                    empty={<Box color="text-body-secondary">No enrollment keys yet.</Box>}
+                  />
+                  {Object.entries(tokenUses)
+                    .filter(([, v]) => v.rows.length > 0 || v.loading || v.error)
+                    .map(([tokenId, v]) => (
+                      <Container key={tokenId} header={<Header variant="h3">Uses for {tokenId}</Header>}>
+                        {v.error ? (
+                          <Alert type="error" dismissible onDismiss={() => setTokenUses((p) => ({ ...p, [tokenId]: { ...v, error: null } }))}>
+                            {v.error}
+                          </Alert>
+                        ) : null}
+                        {v.loading ? (
+                          <Box color="text-body-secondary" fontSize="body-s">
+                            Loading…
+                          </Box>
+                        ) : (
+                          <Table
+                            items={v.rows}
+                            columnDefinitions={[
+                              {
+                                id: "used_at",
+                                header: "Used at",
+                                cell: (r: (typeof v.rows)[number]) => new Date(r.used_at).toLocaleString(),
+                              },
+                              {
+                                id: "agent_name",
+                                header: "Agent name",
+                                cell: (r: (typeof v.rows)[number]) => r.agent_name,
+                              },
+                              {
+                                id: "agent_id",
+                                header: "Agent id",
+                                cell: (r: (typeof v.rows)[number]) => r.agent_id ?? "—",
+                              },
+                            ]}
+                            variant="embedded"
+                            empty={<Box color="text-body-secondary">No uses recorded yet.</Box>}
+                          />
+                        )}
+                      </Container>
+                    ))}
+                </SpaceBetween>
+              </Container>
+
+              
             </SpaceBetween>
           </Container>
         ) : null}
@@ -363,48 +579,56 @@ export function SettingsPage({
 
         <Container
           header={
-            <Header variant="h2" description="Total size is PostgreSQL pg_database_size (entire DB on disk). The table lists every heap, partitioned parent, and materialized view in the public schema with indexes and TOAST included per relation.">
+            <Header
+              variant="h2"
+              description="Total size is PostgreSQL pg_database_size (entire DB on disk). Expand to see per-table breakdown."
+              actions={
+                <Button iconName="refresh" onClick={loadMeta} loading={loadingMeta}>
+                  Refresh usage
+                </Button>
+              }
+            >
               Storage usage
             </Header>
           }
-          footer={
-            <Button iconName="refresh" onClick={loadMeta} loading={loadingMeta}>
-              Refresh usage
-            </Button>
-          }
         >
-          {storage ? (
-            <SpaceBetween size="m">
-              <ColumnLayout columns={3} variant="text-grid">
-                <Box>
-                  <Box variant="awsui-key-label">Total database size</Box>
-                  <div>{formatBytesAdaptive(storage.database_bytes)}</div>
-                </Box>
-                <Box>
-                  <Box variant="awsui-key-label">Public schema (sum of below)</Box>
-                  <div>{formatBytesAdaptive(storage.public_tables_bytes)}</div>
-                </Box>
-                <Box>
-                  <Box variant="awsui-key-label">System catalogs &amp; internal</Box>
-                  <div>{formatBytesAdaptive(storage.other_bytes)}</div>
-                </Box>
-              </ColumnLayout>
-              <Box fontSize="body-s" color="text-body-secondary">
-                {storage.tables.length} relation{storage.tables.length === 1 ? "" : "s"} in <Box variant="code">public</Box>{" "}
-                (partition children are rolled into their parent&apos;s size).
+          <SpaceBetween size="m">
+            <ColumnLayout columns={3} variant="text-grid">
+              <Box>
+                <Box variant="awsui-key-label">Total database size</Box>
+                <div>{storage ? formatBytesAdaptive(storage.database_bytes) : "—"}</div>
               </Box>
-              <Table
-                items={storage.tables}
-                columnDefinitions={[
-                  { id: "name", header: "Relation", cell: (item) => item.name },
-                  { id: "bytes", header: "Size (with indexes)", cell: (item) => formatBytesAdaptive(item.bytes) },
-                ]}
-                variant="embedded"
-              />
-            </SpaceBetween>
-          ) : (
-            <Box color="text-body-secondary">No storage data yet.</Box>
-          )}
+              <Box>
+                <Box variant="awsui-key-label">Public schema</Box>
+                <div>{storage ? formatBytesAdaptive(storage.public_tables_bytes) : "—"}</div>
+              </Box>
+              <Box>
+                <Box variant="awsui-key-label">Other</Box>
+                <div>{storage ? formatBytesAdaptive(storage.other_bytes) : "—"}</div>
+              </Box>
+            </ColumnLayout>
+
+            <ExpandableSection headerText="Details" defaultExpanded={false}>
+              {storage ? (
+                <SpaceBetween size="m">
+                  <Box fontSize="body-s" color="text-body-secondary">
+                    {storage.tables.length} relation{storage.tables.length === 1 ? "" : "s"} in{" "}
+                    <Box variant="code">public</Box> (partition children are rolled into their parent&apos;s size).
+                  </Box>
+                  <Table
+                    items={storage.tables}
+                    columnDefinitions={[
+                      { id: "name", header: "Relation", cell: (item) => item.name },
+                      { id: "bytes", header: "Size (with indexes)", cell: (item) => formatBytesAdaptive(item.bytes) },
+                    ]}
+                    variant="embedded"
+                  />
+                </SpaceBetween>
+              ) : (
+                <Box color="text-body-secondary">No storage data yet.</Box>
+              )}
+            </ExpandableSection>
+          </SpaceBetween>
         </Container>
 
         <Container

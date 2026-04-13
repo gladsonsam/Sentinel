@@ -12,6 +12,7 @@ use serde::Deserialize;
 use crate::auth;
 use crate::db;
 use crate::state::AppState;
+use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
 pub struct CreateEnrollmentTokenBody {
@@ -92,6 +93,108 @@ pub async fn create_enrollment_token(
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(serde_json::json!({ "error": "could not create token" })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Admin: list enrollment tokens (metadata + remaining uses).
+pub async fn list_enrollment_tokens(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+) -> impl IntoResponse {
+    if !user.is_admin() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "admin only" })),
+        )
+            .into_response();
+    }
+    match db::list_agent_enrollment_tokens(&state.db).await {
+        Ok(rows) => (StatusCode::OK, Json(serde_json::json!({ "tokens": rows }))).into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "list enrollment tokens failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "could not list tokens" })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Admin: revoke an enrollment token (sets uses_remaining = 0).
+pub async fn revoke_enrollment_token(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+    axum::extract::Path(token_id): axum::extract::Path<Uuid>,
+) -> impl IntoResponse {
+    if !user.is_admin() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "admin only" })),
+        )
+            .into_response();
+    }
+    match db::revoke_agent_enrollment_token(&state.db, token_id).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "ok": true }))).into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, token_id = %token_id, "revoke enrollment token failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "could not revoke token" })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Admin: revoke all enrollment tokens (sets uses_remaining = 0 for all).
+pub async fn revoke_all_enrollment_tokens(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+) -> impl IntoResponse {
+    if !user.is_admin() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "admin only" })),
+        )
+            .into_response();
+    }
+    match db::revoke_all_agent_enrollment_tokens(&state.db).await {
+        Ok(n) => (StatusCode::OK, Json(serde_json::json!({ "ok": true, "revoked": n }))).into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "revoke all enrollment tokens failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "could not revoke tokens" })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Admin: list recent uses of a given enrollment token.
+pub async fn list_enrollment_token_uses(
+    State(state): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+    axum::extract::Path(token_id): axum::extract::Path<Uuid>,
+) -> impl IntoResponse {
+    if !user.is_admin() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "admin only" })),
+        )
+            .into_response();
+    }
+    match db::list_agent_enrollment_token_uses(&state.db, token_id, 200).await {
+        Ok(rows) => (StatusCode::OK, Json(serde_json::json!({ "uses": rows }))).into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, token_id = %token_id, "list enrollment token uses failed");
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({ "error": "could not list token uses" })),
             )
                 .into_response()
         }

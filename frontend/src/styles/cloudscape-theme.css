@@ -316,22 +316,21 @@
   overflow: visible !important;
 }
 
-/* Narrow viewports: Cloudscape can leave the account flyout’s left edge at the trigger (near the
-   screen edge) while the panel is 250–380px wide, so it spills past the viewport and widens the
-   document. Anchor to the right gutter and drop translate so the menu sits fully on-screen. */
-@media (max-width: 768px) {
-  #sentinel-top-nav.sentinel-top-nav [class*="awsui_utility-type-menu-dropdown"] [class*="awsui_dropdown"][class*="awsui_open"] {
-    inset-inline-start: auto !important;
-    inset-inline-end: max(8px, env(safe-area-inset-right, 0px)) !important;
-    max-inline-size: min(380px, calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))) !important;
-    box-sizing: border-box;
-    transform: none !important;
-  }
+/* Account menu: keep the flyout fully on-screen (avoid horizontal page scroll). */
+#sentinel-top-nav.sentinel-top-nav [class*="awsui_utility-type-menu-dropdown"] [class*="awsui_dropdown"][class*="awsui_open"] {
+  inset-inline-start: auto !important;
+  inset-inline-end: max(8px, env(safe-area-inset-right, 0px)) !important;
+  max-inline-size: min(
+    380px,
+    calc(100vw - 16px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))
+  ) !important;
+  box-sizing: border-box;
+  transform: none !important;
+}
 
-  /* Kill accidental horizontal page scroll from off-screen positioned UI + wide children. */
-  body {
-    overflow-x: hidden;
-  }
+/* Kill accidental horizontal page scroll from off-screen positioned UI + wide children. */
+body {
+  overflow-x: hidden;
 }
 
 /* Account menu (TopNav user dropdown): server version — flat strip, full width (no inset rounded card) */

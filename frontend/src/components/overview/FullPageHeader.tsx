@@ -19,10 +19,10 @@ interface FullPageHeaderProps {
   onBulkScript: () => void;
   onRestartSelected: () => void;
   onShutdownSelected: () => void;
+  /** Admin: permanently forget agents from the server. */
+  onDeleteSelected?: () => void;
   /** Admin: add all selected agents to an agent group (opens group picker from overview). */
   onBulkAddToGroup?: () => void;
-  /** Admin: open the agent groups page. */
-  onOpenAgentGroups?: () => void;
   /** Admin: open enrollment / connection hints. */
   onAddAgent?: () => void;
 }
@@ -35,17 +35,20 @@ export function FullPageHeader({
   onBulkScript,
   onRestartSelected,
   onShutdownSelected,
+  onDeleteSelected,
   onBulkAddToGroup,
-  onOpenAgentGroups,
   onAddAgent,
 }: FullPageHeaderProps) {
   const bulkItems: ButtonDropdownProps.ItemOrGroup[] =
-    onBulkAddToGroup != null
-      ? [
-          ...BULK_ACTION_BASE,
-          { id: "add_group", text: "Add selected to group" },
-        ]
-      : BULK_ACTION_BASE;
+    [
+      ...BULK_ACTION_BASE,
+      ...(onBulkAddToGroup != null ? [{ id: "add_group", text: "Add selected to group" }] : []),
+      ...(onDeleteSelected != null
+        ? [
+            { id: "delete", text: "Delete selected (forget)" },
+          ]
+        : []),
+    ];
 
   const onBulkActionClick: ButtonDropdownProps["onItemClick"] = ({ detail }) => {
     switch (detail.id) {
@@ -64,6 +67,9 @@ export function FullPageHeader({
       case "add_group":
         onBulkAddToGroup?.();
         break;
+      case "delete":
+        onDeleteSelected?.();
+        break;
       default:
         break;
     }
@@ -81,11 +87,6 @@ export function FullPageHeader({
           {onAddAgent != null ? (
             <Button variant="primary" onClick={onAddAgent} iconName="add-plus">
               Add agent
-            </Button>
-          ) : null}
-          {onOpenAgentGroups != null ? (
-            <Button onClick={onOpenAgentGroups} iconName="folder">
-              Agent groups
             </Button>
           ) : null}
           {selectedCount > 0 && (

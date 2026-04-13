@@ -27,10 +27,6 @@ jobs:
           delim="REL_BODY_EOF"
           {
             echo "body<<$delim"
-            echo "Draft for **${tag}**. Edit below, then publish when ready."
-            echo ""
-            echo "_Note: while this release is a draft, \`.../releases/latest/download/latest.json\` still serves the **last published** release — that is expected._"
-            echo ""
             if [ -n "$prev" ]; then
               echo "### Commits since ${prev}"
               echo ""

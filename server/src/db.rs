@@ -691,6 +691,7 @@ pub async fn enroll_agent_with_secret(
     pool: &PgPool,
     enrollment_plain: &str,
     agent_name: &str,
+    client_ip: Option<&str>,
 ) -> anyhow::Result<Result<String, EnrollReject>> {
     let key = normalize_enrollment_code_for_lookup(enrollment_plain);
     let digest = Sha256::digest(key.as_bytes()).to_vec();
@@ -757,7 +758,7 @@ pub async fn enroll_agent_with_secret(
     let agent_token_plain = URL_SAFE_NO_PAD.encode(raw);
     let api_hash = hash_dashboard_password(&agent_token_plain)?;
 
-    match agent_row {
+    let agent_id: Uuid = match agent_row {
         Some(ar) => {
             let id: Uuid = ar.try_get("id")?;
             let r = sqlx::query(
@@ -775,23 +776,164 @@ pub async fn enroll_agent_with_secret(
                 tx.rollback().await?;
                 return Ok(Err(EnrollReject::AgentAlreadyEnrolled));
             }
+            id
         }
         None => {
-            sqlx::query(
+            let row = sqlx::query(
                 r#"
                 INSERT INTO agents (name, api_token_hash)
                 VALUES ($1, $2)
+                RETURNING id
                 "#,
             )
             .bind(agent_name)
             .bind(&api_hash)
-            .execute(&mut *tx)
+            .fetch_one(&mut *tx)
             .await?;
+            row.try_get("id")?
         }
-    }
+    };
+
+    // Best-effort audit: record which enrollment token enrolled which agent name.
+    let _ = sqlx::query(
+        r#"
+        INSERT INTO agent_enrollment_token_uses (token_id, agent_name, agent_id, client_ip)
+        VALUES ($1, $2, $3, $4)
+        "#,
+    )
+    .bind(eid)
+    .bind(agent_name)
+    .bind(agent_id)
+    .bind(client_ip)
+    .execute(&mut *tx)
+    .await;
 
     tx.commit().await?;
     Ok(Ok(agent_token_plain))
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EnrollmentTokenRow {
+    pub id: Uuid,
+    pub uses_remaining: i32,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub note: Option<String>,
+    pub used_count: i64,
+    pub last_used_at: Option<DateTime<Utc>>,
+}
+
+pub async fn list_agent_enrollment_tokens(pool: &PgPool) -> Result<Vec<EnrollmentTokenRow>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT
+            t.id,
+            t.uses_remaining,
+            t.created_at,
+            t.expires_at,
+            t.note,
+            COALESCE(u.used_count, 0) AS used_count,
+            u.last_used_at
+        FROM agent_enrollment_tokens t
+        LEFT JOIN (
+            SELECT
+                token_id,
+                COUNT(*)::BIGINT AS used_count,
+                MAX(used_at) AS last_used_at
+            FROM agent_enrollment_token_uses
+            GROUP BY token_id
+        ) u ON u.token_id = t.id
+        ORDER BY t.created_at DESC
+        "#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        out.push(EnrollmentTokenRow {
+            id: r.try_get("id")?,
+            uses_remaining: r.try_get("uses_remaining")?,
+            created_at: r.try_get("created_at")?,
+            expires_at: r.try_get("expires_at")?,
+            note: r.try_get("note")?,
+            used_count: r.try_get("used_count")?,
+            last_used_at: r.try_get("last_used_at")?,
+        });
+    }
+    Ok(out)
+}
+
+pub async fn revoke_agent_enrollment_token(pool: &PgPool, token_id: Uuid) -> Result<()> {
+    sqlx::query("UPDATE agent_enrollment_tokens SET uses_remaining = 0 WHERE id = $1")
+        .bind(token_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn revoke_all_agent_enrollment_tokens(pool: &PgPool) -> Result<u64> {
+    let res = sqlx::query("UPDATE agent_enrollment_tokens SET uses_remaining = 0 WHERE uses_remaining > 0")
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected())
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct EnrollmentTokenUseRow {
+    pub used_at: DateTime<Utc>,
+    pub agent_name: String,
+    pub agent_id: Option<Uuid>,
+}
+
+pub async fn list_agent_enrollment_token_uses(
+    pool: &PgPool,
+    token_id: Uuid,
+    limit: i64,
+) -> Result<Vec<EnrollmentTokenUseRow>> {
+    let limit = limit.clamp(1, 500);
+    let rows = sqlx::query(
+        r#"
+        SELECT used_at, agent_name, agent_id
+        FROM agent_enrollment_token_uses
+        WHERE token_id = $1
+        ORDER BY used_at DESC
+        LIMIT $2
+        "#,
+    )
+    .bind(token_id)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        out.push(EnrollmentTokenUseRow {
+            used_at: r.try_get("used_at")?,
+            agent_name: r.try_get("agent_name")?,
+            agent_id: r.try_get("agent_id")?,
+        });
+    }
+    Ok(out)
+}
+
+pub async fn revoke_agent_credentials(pool: &PgPool, agent_id: Uuid) -> Result<()> {
+    sqlx::query("UPDATE agents SET api_token_hash = NULL WHERE id = $1")
+        .bind(agent_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn delete_agents_by_ids(pool: &PgPool, agent_ids: &[Uuid]) -> Result<u64> {
+    if agent_ids.is_empty() {
+        return Ok(0);
+    }
+    let res = sqlx::query("DELETE FROM agents WHERE id = ANY($1)")
+        .bind(agent_ids)
+        .execute(pool)
+        .await?;
+    Ok(res.rows_affected())
 }
 
 /// Upsert the latest system/specs snapshot for an agent.

@@ -32,6 +32,11 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/agents", get(agents_list::list_agents))
         .route("/agents/overview", get(agents_list::list_agents_overview))
         .route(
+            "/agents/:id/revoke-credentials",
+            post(agents_list::revoke_agent_credentials),
+        )
+        .route("/agents/delete", post(agents_list::delete_agents_bulk))
+        .route(
             "/agents/:id/icon",
             get(agents_list::agent_icon_get).put(agents_list::agent_icon_put),
         )
@@ -116,7 +121,19 @@ pub fn router() -> Router<Arc<AppState>> {
         )
         .route(
             "/settings/agent-enrollment-tokens",
-            post(agent_enrollment::create_enrollment_token),
+            get(agent_enrollment::list_enrollment_tokens).post(agent_enrollment::create_enrollment_token),
+        )
+        .route(
+            "/settings/agent-enrollment-tokens/:id",
+            delete(agent_enrollment::revoke_enrollment_token),
+        )
+        .route(
+            "/settings/agent-enrollment-tokens/revoke-all",
+            post(agent_enrollment::revoke_all_enrollment_tokens),
+        )
+        .route(
+            "/settings/agent-enrollment-tokens/:id/uses",
+            get(agent_enrollment::list_enrollment_token_uses),
         )
         .route(
             "/settings/agent-setup-hints",

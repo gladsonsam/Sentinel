@@ -57,11 +57,15 @@ html,
 body {
   margin: 0;
   padding: 0;
+  height: 100%;
+  overflow: hidden;
 }
 
 #root {
   margin: 0;
   padding: 0;
+  height: 100%;
+  overflow: hidden;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   -webkit-font-smoothing: antialiased;
   cursor: default;
@@ -187,15 +191,30 @@ img {
 /* Logs tab: flex column fills the main panel; viewport scrolls internally (avoid vh-based height vs footer). */
 .sentinel-agent-logs-root {
   min-height: 0;
+  overflow: hidden;
 }
 
 /* Logs tab: use app tokens so dark mode isn’t light panel + washed-out text (awsui vars + fallbacks were wrong here). */
 .sentinel-agent-log-viewport {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
+  border-radius: 4px;
+  margin-top: 16px;
+  padding: 12px;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 .sentinel-agent-log-pre {
   color: var(--color-primary);
+  display: block;
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 /* ── Animations ──────────────────────────────────────────────────────────── */

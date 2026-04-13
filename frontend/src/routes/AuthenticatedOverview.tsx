@@ -20,7 +20,6 @@ interface Props {
   onOpenActivityLog: () => void;
   onOpenUsers: () => void;
   onOpenNotifications?: () => void;
-  onOpenAgentGroups?: () => void;
   onGoHome: () => void;
   currentUser?: DashboardNavUser | null;
   notifications: NotificationItem[];
@@ -47,7 +46,6 @@ export function AuthenticatedOverview({
   onOpenActivityLog,
   onOpenUsers,
   onOpenNotifications,
-  onOpenAgentGroups,
   onGoHome,
   currentUser = null,
   notifications,
@@ -71,7 +69,6 @@ export function AuthenticatedOverview({
           onBatchRestart={onBatchRestart}
           onBatchShutdown={onBatchShutdown}
           adminBulkGroupAssignment={currentUser?.role === "admin"}
-          onOpenAgentGroups={onOpenAgentGroups}
           showAddAgent={currentUser?.role === "admin"}
         />
       }

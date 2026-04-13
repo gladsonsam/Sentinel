@@ -76,7 +76,15 @@ pub async fn adopt_with_enrollment(
     let body_text = resp.text().await.unwrap_or_default();
 
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::CONFLICT {
-        anyhow::bail!("Enrollment rejected HTTP {}: {body_text}", status.as_u16());
+        let suffix = if status == reqwest::StatusCode::CONFLICT {
+            " If this PC was already enrolled with the same agent name, either keep the existing config.dat (token), pick a new agent name, or reset that agent’s credentials in the dashboard (Admin → Settings → Agent enrollment codes → Reset an agent)."
+        } else {
+            ""
+        };
+        anyhow::bail!(
+            "Enrollment rejected HTTP {}: {body_text}{suffix}",
+            status.as_u16()
+        );
     }
     if !status.is_success() {
         anyhow::bail!("Enrollment failed ({status}): {body_text}");

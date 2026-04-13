@@ -31,10 +31,10 @@ interface AgentCardProps {
   onBatchShutdown: (agentIds: string[]) => void;
   /** Admin: opens group picker to add all selected agents to a group. */
   onBulkAddToGroup?: (agentIds: string[]) => void;
-  /** Admin: navigate to agent groups management. */
-  onOpenAgentGroups?: () => void;
   /** Admin: open add-agent / enrollment flow. */
   onAddAgent?: () => void;
+  /** Admin: delete agents from the server (forget). */
+  onDeleteAgents?: (agentIds: string[]) => void;
 }
 
 export function AgentCard({
@@ -50,8 +50,8 @@ export function AgentCard({
   onBatchRestart,
   onBatchShutdown,
   onBulkAddToGroup,
-  onOpenAgentGroups,
   onAddAgent,
+  onDeleteAgents,
 }: AgentCardProps) {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [fallbackLastWindow, setFallbackLastWindow] = useState<Record<string, string>>({});
@@ -203,12 +203,27 @@ export function AgentCard({
               onBulkScript={() => onBulkScript(selectedItems.map((item) => item.id))}
               onRestartSelected={() => onBatchRestart(selectedItems.map((item) => item.id))}
               onShutdownSelected={() => onBatchShutdown(selectedItems.map((item) => item.id))}
+              onDeleteSelected={
+                onDeleteAgents
+                  ? () => {
+                      const ids = selectedItems.map((i) => i.id);
+                      if (ids.length === 0) return;
+                      if (
+                        !confirm(
+                          `Delete (forget) ${ids.length} agent${ids.length === 1 ? "" : "s"} from the server? This deletes stored telemetry and disconnects existing installs.`
+                        )
+                      ) {
+                        return;
+                      }
+                      onDeleteAgents(ids);
+                    }
+                  : undefined
+              }
               onBulkAddToGroup={
                 onBulkAddToGroup
                   ? () => onBulkAddToGroup(selectedItems.map((item) => item.id))
                   : undefined
               }
-              onOpenAgentGroups={onOpenAgentGroups}
               onAddAgent={onAddAgent}
             />
           </Box>

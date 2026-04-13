@@ -838,35 +838,14 @@ function SettingsPanel() {
                         </SpaceBetween>
                       </Container>
                       </div>
-                      <Box
-                        padding="s"
-                        fontSize="body-s"
-                        margin={{ top: "m" }}
-                        nativeAttributes={{
-                          className: "sentinel-agent-log-viewport",
-                          style: {
-                            flex: 1,
-                            minHeight: 0,
-                            overflow: "auto",
-                            borderRadius: "4px",
-                          },
-                        }}
-                      >
+                      <div className="sentinel-agent-log-viewport">
                         <pre
                           ref={logPreRef}
                           className="sentinel-agent-log-pre"
-                          style={{
-                            margin: 0,
-                            whiteSpace: "pre-wrap",
-                            wordBreak: "break-word",
-                            fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                            fontSize: "12px",
-                            lineHeight: 1.45,
-                          }}
                         >
                           {logText || "Loading…"}
                         </pre>
-                      </Box>
+                      </div>
                     </div>
                   )}
                 </Box>

@@ -377,6 +377,40 @@ export const api = {
     note?: string | null;
   }> => postJsonRes("/settings/agent-enrollment-tokens", body),
 
+  /** Admin: list enrollment tokens (metadata only; plaintext code is shown once at creation). */
+  listAgentEnrollmentTokens: (): Promise<{
+    tokens: {
+      id: string;
+      uses_remaining: number;
+      created_at: string;
+      expires_at: string | null;
+      note: string | null;
+      used_count: number;
+      last_used_at: string | null;
+    }[];
+  }> => get("/settings/agent-enrollment-tokens"),
+
+  /** Admin: revoke an enrollment token (sets uses_remaining = 0). */
+  revokeAgentEnrollmentToken: (id: string): Promise<{ ok: boolean }> =>
+    delJson(`/settings/agent-enrollment-tokens/${encodeURIComponent(id)}`),
+
+  /** Admin: revoke all enrollment tokens. */
+  revokeAllAgentEnrollmentTokens: (): Promise<{ ok: boolean; revoked: number }> =>
+    postEmpty("/settings/agent-enrollment-tokens/revoke-all"),
+
+  /** Admin: list recent uses of an enrollment token. */
+  listAgentEnrollmentTokenUses: (id: string): Promise<{
+    uses: { used_at: string; agent_name: string; agent_id: string | null }[];
+  }> => get(`/settings/agent-enrollment-tokens/${encodeURIComponent(id)}/uses`),
+
+  /** Admin: reset an agent’s saved token so it can enroll again. */
+  revokeAgentCredentials: (agentId: string): Promise<{ ok: boolean }> =>
+    postEmpty(`/agents/${encodeURIComponent(agentId)}/revoke-credentials`),
+
+  /** Admin: delete agents (forgets them). */
+  deleteAgents: (agentIds: string[]): Promise<{ ok: boolean; deleted: number }> =>
+    postJsonRes("/agents/delete", { agent_ids: agentIds }),
+
   settingsVersionGet: async (opts?: { nocache?: boolean }): Promise<SettingsVersionPayload> => {
     const qs = opts?.nocache ? "?nocache=true" : "";
     const result = await get<SettingsVersionPayload>(`/settings/version${qs}`);

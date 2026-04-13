@@ -29,7 +29,7 @@ use tracing::{error, info, warn};
 use crate::{
     alert_rules, db,
     secrets,
-    state::{AppState, Frame, AGENT_CMD_CHANNEL_CAPACITY},
+    state::{AgentControl, AppState, Frame, AGENT_CMD_CHANNEL_CAPACITY},
 };
 
 // Conservative bounds to mitigate memory/DB-flood DoS.
@@ -125,7 +125,7 @@ async fn run(mut ws: WebSocket, name: String, state: Arc<AppState>) {
         map.insert(agent_id, crate::state::AgentConn { connected_at });
     }
 
-    let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(AGENT_CMD_CHANNEL_CAPACITY);
+    let (cmd_tx, mut cmd_rx) = mpsc::channel::<AgentControl>(AGENT_CMD_CHANNEL_CAPACITY);
     state
         .agent_cmds
         .lock()
@@ -208,10 +208,14 @@ async fn run(mut ws: WebSocket, name: String, state: Arc<AppState>) {
             // Control command (MouseMove / MouseClick JSON) from a viewer.
             cmd = cmd_rx.recv() => {
                 match cmd {
-                    Some(cmd_str) => {
+                    Some(AgentControl::Text(cmd_str)) => {
                         if ws.send(Message::Text(cmd_str)).await.is_err() {
                             break; // Agent disconnected.
                         }
+                    }
+                    Some(AgentControl::Close) => {
+                        let _ = ws.send(Message::Close(None)).await;
+                        break;
                     }
                     None => break, // All senders dropped.
                 }
@@ -253,7 +257,7 @@ pub async fn push_local_ui_password_hash_to_agent(state: &Arc<AppState>, agent_i
     })
     .to_string();
     if let Some(tx) = state.agent_cmds.lock().get(&agent_id) {
-        let _ = tx.try_send(payload);
+        let _ = tx.try_send(AgentControl::Text(payload));
     }
 }
 
@@ -267,7 +271,7 @@ pub async fn push_auto_update_policy_to_agent(state: &Arc<AppState>, agent_id: u
     })
     .to_string();
     if let Some(tx) = state.agent_cmds.lock().get(&agent_id) {
-        let _ = tx.try_send(payload);
+        let _ = tx.try_send(AgentControl::Text(payload));
     }
 }
 

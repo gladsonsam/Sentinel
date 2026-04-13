@@ -15,7 +15,14 @@ use uuid::Uuid;
 pub const AGENT_CMD_CHANNEL_CAPACITY: usize = 512;
 
 /// Bounded sender for JSON command lines to the agent WebSocket task.
-pub type AgentCmdSender = mpsc::Sender<String>;
+#[derive(Debug, Clone)]
+pub enum AgentControl {
+    Text(String),
+    Close,
+}
+
+/// Bounded sender for control messages to the agent WebSocket task.
+pub type AgentCmdSender = mpsc::Sender<AgentControl>;
 
 /// Online agent entry (keyed by agent id in [`AppState::agents`]).
 #[derive(Debug, Clone)]
@@ -260,7 +267,16 @@ impl AppState {
         self.agent_cmds
             .lock()
             .get(&agent_id)
-            .map(|tx| tx.try_send(s).is_ok())
+            .map(|tx| tx.try_send(AgentControl::Text(s)).is_ok())
+            .unwrap_or(false)
+    }
+
+    /// Best-effort: ask a connected agent to close its WebSocket.
+    pub fn try_disconnect_agent(&self, agent_id: Uuid) -> bool {
+        self.agent_cmds
+            .lock()
+            .get(&agent_id)
+            .map(|tx| tx.try_send(AgentControl::Close).is_ok())
             .unwrap_or(false)
     }
 

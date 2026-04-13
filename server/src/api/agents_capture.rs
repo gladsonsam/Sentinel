@@ -19,6 +19,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{auth, db, state::AppState};
+use crate::state::AgentControl;
 
 use super::helpers::audit_ip;
 
@@ -47,7 +48,7 @@ pub async fn agent_update_now(
         )
             .into_response();
     };
-    if tx.try_send(payload).is_err() {
+    if tx.try_send(AgentControl::Text(payload)).is_err() {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(serde_json::json!({ "error": "Agent command queue is full; retry shortly" })),
@@ -139,7 +140,7 @@ pub async fn agent_mjpeg(
 
     if first_viewer {
         if let Some(tx) = s.agent_cmds.lock().get(&id) {
-            let _ = tx.try_send(r#"{"type":"start_capture"}"#.to_string());
+            let _ = tx.try_send(AgentControl::Text(r#"{"type":"start_capture"}"#.to_string()));
         }
     }
 
@@ -174,7 +175,7 @@ pub async fn agent_mjpeg(
             // fresh start_capture so frames start flowing again.
             if agent_online && !agent_was_online {
                 if let Some(tx) = stream_state.agent_cmds.lock().get(&id) {
-                    let _ = tx.try_send(r#"{"type":"start_capture"}"#.to_string());
+                    let _ = tx.try_send(AgentControl::Text(r#"{"type":"start_capture"}"#.to_string()));
                 }
             }
             agent_was_online = agent_online;
@@ -245,7 +246,7 @@ pub async fn agent_mjpeg_leave(
 
 fn send_stop_capture(state: &Arc<AppState>, agent_id: Uuid) {
     if let Some(tx) = state.agent_cmds.lock().get(&agent_id) {
-        let _ = tx.try_send(r#"{"type":"stop_capture"}"#.to_string());
+        let _ = tx.try_send(AgentControl::Text(r#"{"type":"stop_capture"}"#.to_string()));
     }
 }
 

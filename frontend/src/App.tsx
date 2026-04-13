@@ -116,7 +116,6 @@ function OverviewRoute({
   onOpenScreen,
   onOpenUsers,
   onOpenNotifications,
-  onOpenAgentGroups,
   currentUser,
   checkAuth,
   runBatchWake,
@@ -138,7 +137,6 @@ function OverviewRoute({
   onOpenScreen: (agentId: string) => void;
   onOpenUsers: () => void;
   onOpenNotifications?: () => void;
-  onOpenAgentGroups?: () => void;
   currentUser: DashboardSessionUser | null;
   checkAuth: () => void;
   runBatchWake: (ids: string[]) => Promise<void>;
@@ -174,7 +172,6 @@ function OverviewRoute({
         onOpenActivityLog={openLogs}
         onOpenUsers={onOpenUsers}
         onOpenNotifications={onOpenNotifications}
-        onOpenAgentGroups={onOpenAgentGroups}
         onGoHome={() => {}}
         notifications={notifications}
         onDismissNotification={removeNotification}
@@ -813,7 +810,6 @@ export function App() {
             onOpenScreen={handleOpenScreen}
             onOpenUsers={() => navigate("/users")}
             onOpenNotifications={adminAlertRulesNav}
-            onOpenAgentGroups={adminAgentGroupsNav}
             currentUser={me}
             checkAuth={checkAuth}
             runBatchWake={runBatchWake}

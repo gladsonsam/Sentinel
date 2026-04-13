@@ -7,6 +7,7 @@ import { AddAgentModal } from "../components/overview/AddAgentModal";
 import { BulkScriptModal } from "../components/overview/BulkScriptModal";
 import { BulkAddToGroupModal } from "../components/overview/BulkAddToGroupModal";
 import { LoadingAgentsState, NoAgentsState } from "../components/common/EmptyState";
+import { api } from "../lib/api";
 
 interface OverviewPageProps {
   agents: Record<string, Agent>;
@@ -22,8 +23,6 @@ interface OverviewPageProps {
   onBatchShutdown: (agentIds: string[]) => void;
   /** Admin: show “Add selected to group” in bulk actions. */
   adminBulkGroupAssignment?: boolean;
-  /** Admin: open the dedicated agent groups page. */
-  onOpenAgentGroups?: () => void;
   /** Admin: show Add agent (enrollment) on the overview. */
   showAddAgent?: boolean;
 }
@@ -41,7 +40,6 @@ export function OverviewPage({
   onBatchRestart,
   onBatchShutdown,
   adminBulkGroupAssignment,
-  onOpenAgentGroups,
   showAddAgent = false,
 }: OverviewPageProps) {
   const hasAgents = Object.keys(agents).length > 0;
@@ -70,8 +68,19 @@ export function OverviewPage({
             onBulkAddToGroup={
               adminBulkGroupAssignment ? (ids) => setBulkGroupIds(ids) : undefined
             }
-            onOpenAgentGroups={onOpenAgentGroups}
             onAddAgent={showAddAgent ? () => setAddAgentOpen(true) : undefined}
+            onDeleteAgents={
+              showAddAgent
+                ? (ids) => {
+                    void api
+                      .deleteAgents(ids)
+                      .then(() => onRefresh())
+                      .catch((e: unknown) => {
+                        alert(String((e as { message?: string })?.message ?? e));
+                      });
+                  }
+                : undefined
+            }
           />
         ) : (
           <NoAgentsState

@@ -30,7 +30,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::auth::AuthUser;
-use crate::state::{AppState, Broadcast};
+use crate::state::{AgentControl, AppState, Broadcast};
 
 // Conservative bounds for viewer -> server control messages.
 // This prevents large JSON objects from turning into expensive parses or
@@ -285,7 +285,7 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>, user: &AuthUser) {
         .agent_cmds
         .lock()
         .get(&agent_id)
-        .map(|tx| tx.try_send(cmd).is_ok());
+        .map(|tx| tx.try_send(AgentControl::Text(cmd)).is_ok());
 
     let status = if sent == Some(true) { "ok" } else { "error" };
     let detail = serde_json::json!({
