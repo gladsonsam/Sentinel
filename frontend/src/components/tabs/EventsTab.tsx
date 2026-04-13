@@ -125,11 +125,7 @@ function AlertEventsTable({
         items={displayed}
         variant="embedded"
         stickyHeader
-        header={
-          <Header counter={`(${items.length})`} actions={<Button iconName="refresh" onClick={load} />}>
-            Alert events
-          </Header>
-        }
+        header={<Header counter={`(${items.length})`}>Alert events</Header>}
         filter={<TextFilter {...filterProps} filteringPlaceholder="Filter by rule, channel, or text" />}
         pagination={<Pagination {...paginationProps} />}
         empty={<Box textAlign="center" padding="l" color="text-body-secondary">No alert rules have matched yet.</Box>}
@@ -199,11 +195,7 @@ function AppBlockEventsTable({ agentId }: { agentId: string }) {
       items={displayed}
       variant="embedded"
       stickyHeader
-      header={
-        <Header counter={`(${items.length})`} actions={<Button iconName="refresh" onClick={load} />}>
-          App block kills
-        </Header>
-      }
+      header={<Header counter={`(${items.length})`}>App block kills</Header>}
       pagination={<Pagination {...paginationProps} />}
       empty={<Box textAlign="center" padding="l" color="text-body-secondary">No processes have been killed by app block rules yet.</Box>}
       columnDefinitions={[

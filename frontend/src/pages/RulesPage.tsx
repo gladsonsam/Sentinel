@@ -333,7 +333,6 @@ function AlertRulesTab({ groups, agents }: { groups: AgentGroup[]; agents: Agent
         header={
           <Header counter={`(${rules.length})`} actions={
             <SpaceBetween direction="horizontal" size="xs">
-              <Button iconName="refresh" onClick={load} />
               <Button variant="primary" iconName="add-plus" onClick={openCreate}>New rule</Button>
             </SpaceBetween>
           }>Alert Rules</Header>
@@ -350,7 +349,10 @@ function AlertRulesTab({ groups, agents }: { groups: AgentGroup[]; agents: Agent
           {
             id: "actions", header: "", width: 100,
             cell: (r) => (
-              <ButtonDropdown variant="inline-icon" items={[{ id: "history", text: "Event history" }, { id: "edit", text: "Edit" }, { id: "delete", text: "Delete" }]}
+              <ButtonDropdown
+                variant="inline-icon"
+                expandToViewport
+                items={[{ id: "history", text: "Event history" }, { id: "edit", text: "Edit" }, { id: "delete", text: "Delete" }]}
                 onItemClick={({ detail }) => {
                   if (detail.id === "history") void openHistory(r);
                   if (detail.id === "edit") openEdit(r);
@@ -468,7 +470,6 @@ function AppBlockingTab({ agents }: { agents: Agent[] }) {
         header={
           <Header counter={`(${rules.length})`} actions={
             <SpaceBetween direction="horizontal" size="xs">
-              <Button iconName="refresh" onClick={load} />
               <Button variant="primary" iconName="add-plus" onClick={() => setShowModal(true)}>New rule</Button>
             </SpaceBetween>
           }>App Blocking</Header>
@@ -494,7 +495,10 @@ function AppBlockingTab({ agents }: { agents: Agent[] }) {
           {
             id: "actions", header: "", width: 100,
             cell: (r) => (
-              <ButtonDropdown variant="inline-icon" items={[{ id: "history", text: "Kill history" }, { id: "delete", text: "Delete" }]}
+              <ButtonDropdown
+                variant="inline-icon"
+                expandToViewport
+                items={[{ id: "history", text: "Kill history" }, { id: "delete", text: "Delete" }]}
                 onItemClick={({ detail }) => {
                   if (detail.id === "history") void openHistory(r);
                   if (detail.id === "delete") void deleteRule(r);
@@ -639,7 +643,6 @@ function InternetAccessTab({ groups, agents }: { groups: AgentGroup[]; agents: A
         header={
           <Header counter={`(${rules.length})`} actions={
             <SpaceBetween direction="horizontal" size="xs">
-              <Button iconName="refresh" onClick={load} />
               <Button variant="primary" iconName="add-plus" onClick={() => setShowCreate(true)}>New rule</Button>
             </SpaceBetween>
           }>Internet Access</Header>
@@ -771,7 +774,6 @@ function EventsGlobalTab() {
             <SpaceBetween direction="horizontal" size="xs">
               <SegmentedControl selectedId={filter} options={[{ id: "all", text: "All" }, { id: "alerts", text: "Alert" }, { id: "appblock", text: "App Block" }]}
                 onChange={({ detail }) => setFilter(detail.selectedId as EventFilter)} />
-              <Button iconName="refresh" onClick={load} />
             </SpaceBetween>
           }>Rule Events</Header>
         }
@@ -784,6 +786,20 @@ function EventsGlobalTab() {
           { id: "rule", header: "Rule", cell: (r) => r.rule_name || "—", width: 200 },
           { id: "detail", header: "Detail", cell: (r) => <Box fontSize="body-s"><span style={{ fontFamily: "monospace" }}>{r.detail || "—"}</span></Box> },
           { id: "shot", header: "Screenshot", width: 110, cell: (r) => r.has_screenshot && r.screenshot_id ? <Button variant="inline-link" iconName="zoom-to-fit" onClick={() => setPreviewEventId(r.screenshot_id!)}>View</Button> : <Box color="text-body-secondary" fontSize="body-s">—</Box> },
+          {
+            id: "timeline",
+            header: "Timeline",
+            width: 110,
+            cell: (r) => (
+              <Button
+                variant="inline-link"
+                iconName="angle-right"
+                href={`/agents/${r.agent_id}?tab=activity&at=${encodeURIComponent(r.time)}`}
+              >
+                View
+              </Button>
+            ),
+          },
         ]}
       />
       <ScreenshotModal eventId={previewEventId} onClose={() => setPreviewEventId(null)} />

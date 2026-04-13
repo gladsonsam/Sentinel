@@ -67,6 +67,13 @@ export function SettingsPage({
   const [agentAutoUpdateSaveErr, setAgentAutoUpdateSaveErr] = useState<string | null>(null);
   const [agentAutoUpdateSaving, setAgentAutoUpdateSaving] = useState(false);
 
+  const [localUiPasswordSet, setLocalUiPasswordSet] = useState<boolean | null>(null);
+  const [localUiPwd, setLocalUiPwd] = useState("");
+  const [localUiPwd2, setLocalUiPwd2] = useState("");
+  const [localUiSaveErr, setLocalUiSaveErr] = useState<string | null>(null);
+  const [localUiSaveOk, setLocalUiSaveOk] = useState<string | null>(null);
+  const [localUiSaving, setLocalUiSaving] = useState(false);
+
   const [enrollUses, setEnrollUses] = useState(1);
   const [enrollExpireHours, setEnrollExpireHours] = useState("");
   const [enrollNote, setEnrollNote] = useState("");
@@ -145,6 +152,12 @@ export function SettingsPage({
       /* retention/storage optional for About; agent policy loads below */
     }
     try {
+      const ui = await api.localUiPasswordGlobalGet();
+      setLocalUiPasswordSet(ui.password_set);
+    } catch {
+      setLocalUiPasswordSet(null);
+    }
+    try {
       const au = await api.agentAutoUpdateGlobalGet();
       setAgentAutoUpdateEnabled(au.enabled);
       setAgentAutoUpdateLoadErr(null);
@@ -155,6 +168,24 @@ export function SettingsPage({
       setLoadingMeta(false);
     }
     await loadEnrollmentTokens();
+  };
+
+  const saveGlobalLocalUiPassword = async (password: string | null) => {
+    if (!isAdmin) return;
+    setLocalUiSaving(true);
+    setLocalUiSaveErr(null);
+    setLocalUiSaveOk(null);
+    try {
+      const r = await api.localUiPasswordGlobalPut({ password });
+      setLocalUiPasswordSet(r.password_set);
+      setLocalUiPwd("");
+      setLocalUiPwd2("");
+      setLocalUiSaveOk(r.password_set ? "Saved. Connected agents will receive the new lock password." : "Removed.");
+    } catch (e) {
+      setLocalUiSaveErr(String(e));
+    } finally {
+      setLocalUiSaving(false);
+    }
   };
 
   const saveGlobalAutoUpdate = async (enabled: boolean) => {
@@ -628,6 +659,103 @@ export function SettingsPage({
                 <Box color="text-body-secondary">No storage data yet.</Box>
               )}
             </ExpandableSection>
+          </SpaceBetween>
+        </Container>
+
+        <Container
+          header={
+            <Header
+              variant="h2"
+              description="Default lock for the Windows agent’s local Settings window. Agents may override per-device."
+            >
+              Agent local UI password (global default)
+            </Header>
+          }
+        >
+          <SpaceBetween size="m">
+            {localUiSaveErr ? (
+              <Alert type="error" dismissible onDismiss={() => setLocalUiSaveErr(null)}>
+                {localUiSaveErr}
+              </Alert>
+            ) : null}
+            {localUiSaveOk ? (
+              <Alert type="success" dismissible onDismiss={() => setLocalUiSaveOk(null)}>
+                {localUiSaveOk}
+              </Alert>
+            ) : null}
+
+            {localUiPasswordSet === null && loadingMeta ? (
+              <Box color="text-body-secondary">Loading…</Box>
+            ) : (
+              <Box fontSize="body-s" color="text-body-secondary">
+                Status:{" "}
+                {localUiPasswordSet ? (
+                  <strong>Password is set</strong>
+                ) : (
+                  <strong>No password</strong>
+                )}
+              </Box>
+            )}
+
+            <ColumnLayout columns={2}>
+              <FormField
+                label="New password"
+                description="Leave blank to remove the global password."
+                constraintText={!isAdmin ? "Administrator role required to edit." : undefined}
+              >
+                <Input
+                  type="password"
+                  value={localUiPwd}
+                  disabled={!isAdmin || localUiSaving}
+                  onChange={({ detail }) => setLocalUiPwd(detail.value)}
+                />
+              </FormField>
+              <FormField label="Confirm password">
+                <Input
+                  type="password"
+                  value={localUiPwd2}
+                  disabled={!isAdmin || localUiSaving}
+                  onChange={({ detail }) => setLocalUiPwd2(detail.value)}
+                />
+              </FormField>
+            </ColumnLayout>
+
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button
+                variant="primary"
+                loading={localUiSaving}
+                disabled={!isAdmin || localUiSaving}
+                onClick={() => {
+                  const a = localUiPwd.trim();
+                  const b = localUiPwd2.trim();
+                  setLocalUiSaveErr(null);
+                  setLocalUiSaveOk(null);
+                  if (a !== b) {
+                    setLocalUiSaveErr("Passwords do not match.");
+                    return;
+                  }
+                  if (a.length > 0 && a.length < 4) {
+                    setLocalUiSaveErr("Use at least 4 characters, or leave both fields empty to remove the password.");
+                    return;
+                  }
+                  void saveGlobalLocalUiPassword(a.length ? a : null);
+                }}
+              >
+                Save
+              </Button>
+              <Button
+                variant="link"
+                loading={localUiSaving}
+                disabled={!isAdmin || localUiSaving}
+                onClick={() => {
+                  setLocalUiPwd("");
+                  setLocalUiPwd2("");
+                  void saveGlobalLocalUiPassword(null);
+                }}
+              >
+                Remove password
+              </Button>
+            </SpaceBetween>
           </SpaceBetween>
         </Container>
 

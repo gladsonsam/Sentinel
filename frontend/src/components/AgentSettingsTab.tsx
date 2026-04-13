@@ -34,8 +34,6 @@ interface Props {
   onOpenAgentGroups?: () => void;
 }
 
-const PRESET_DAYS = [0, 7, 30, 90, 365] as const;
-
 function RetentionOverrideField({
   title,
   description,
@@ -43,9 +41,6 @@ function RetentionOverrideField({
   onChange,
   globalDays,
   parsed,
-  overrideEnabled,
-  onInherit,
-  onStartOverride,
   formDisabled,
 }: {
   title: string;
@@ -54,67 +49,27 @@ function RetentionOverrideField({
   onChange: (v: string) => void;
   globalDays: number | null | undefined;
   parsed: { value: number | null; error: string | null };
-  overrideEnabled: boolean;
-  onInherit: () => void;
-  onStartOverride: () => void;
   formDisabled: boolean;
 }) {
   return (
-    <SpaceBetween size="s">
-      <Box variant="h3">{title}</Box>
-      <Box variant="p" color="text-body-secondary">
-        {description}
-      </Box>
-      <SpaceBetween direction="horizontal" size="xs">
-        <Button
-          variant={!overrideEnabled ? "primary" : "normal"}
-          disabled={formDisabled}
-          onClick={onInherit}
-        >
-          Inherit default
-        </Button>
-        <Button
-          variant={overrideEnabled ? "primary" : "normal"}
-          disabled={formDisabled}
-          onClick={onStartOverride}
-        >
-          Override
-        </Button>
-      </SpaceBetween>
-      {overrideEnabled && (
-        <SpaceBetween direction="horizontal" size="xs">
-          {PRESET_DAYS.map((d) => (
-            <Button
-              key={d}
-              variant="inline-link"
-              disabled={formDisabled}
-              onClick={() => onChange(String(d))}
-            >
-              {d === 0 ? "Unlimited" : `${d} days`}
-            </Button>
-          ))}
-        </SpaceBetween>
-      )}
-      <FormField
-        label="Days"
-        constraintText={
-          overrideEnabled
-            ? parsed.error
-              ? undefined
-              : `Effective: ${fmtRetentionBrief(parsed.value)}`
-            : `Uses default: ${fmtRetentionBrief(globalDays)}`
-        }
-        errorText={parsed.error || undefined}
-      >
-        <Input
-          inputMode="numeric"
-          value={value}
-          disabled={formDisabled || !overrideEnabled}
-          onChange={({ detail }) => onChange(detail.value)}
-          placeholder="0 = unlimited, blank = inherit"
-        />
-      </FormField>
-    </SpaceBetween>
+    <FormField
+      label={title}
+      description={description}
+      constraintText={
+        parsed.error
+          ? undefined
+          : `Default: ${fmtRetentionBrief(globalDays)} · Effective: ${fmtRetentionBrief(parsed.value)}`
+      }
+      errorText={parsed.error || undefined}
+    >
+      <Input
+        inputMode="numeric"
+        value={value}
+        disabled={formDisabled}
+        onChange={({ detail }) => onChange(detail.value)}
+        placeholder="Blank = inherit, 0 = unlimited"
+      />
+    </FormField>
   );
 }
 
@@ -245,22 +200,7 @@ export function AgentSettingsTab({
   const hasRetentionErrors =
     !!parsedKey.error || !!parsedWin.error || !!parsedUrl.error;
 
-  const keyOverrideEnabled = agKey.trim().length > 0;
-  const winOverrideEnabled = agWin.trim().length > 0;
-  const urlOverrideEnabled = agUrl.trim().length > 0;
-
-  const enableKeyOverride = () => {
-    if (keyOverrideEnabled) return;
-    setAgKey(String(agGlobal?.keylog_days ?? 0));
-  };
-  const enableWinOverride = () => {
-    if (winOverrideEnabled) return;
-    setAgWin(String(agGlobal?.window_days ?? 0));
-  };
-  const enableUrlOverride = () => {
-    if (urlOverrideEnabled) return;
-    setAgUrl(String(agGlobal?.url_days ?? 0));
-  };
+  // Overrides: blank = inherit, 0 = unlimited.
 
   useEffect(() => {
     let cancelled = false;
@@ -700,7 +640,10 @@ export function AgentSettingsTab({
 
       <Container
         header={
-          <Header variant="h2" description={`${agentName} — optional rules for this computer only.`}>
+          <Header
+            variant="h2"
+            description="Optional per-device overrides. Leave blank to inherit the global default."
+          >
             Retention overrides
           </Header>
         }
@@ -722,73 +665,47 @@ export function AgentSettingsTab({
               </Alert>
             )}
 
-            {agGlobal && (
-              <ColumnLayout columns={2} variant="text-grid">
-                <Container header={<Header variant="h3">Defaults (Preferences)</Header>}>
-                  <KeyValuePairs
-                    columns={1}
-                    items={[
-                      {
-                        label: "Keylogs",
-                        value: fmtRetentionBrief(agGlobal.keylog_days),
-                      },
-                      {
-                        label: "Windows & activity",
-                        value: fmtRetentionBrief(agGlobal.window_days),
-                      },
-                      { label: "URLs", value: fmtRetentionBrief(agGlobal.url_days) },
-                    ]}
-                  />
-                </Container>
-                <Container header={<Header variant="h3">Effective policy (preview)</Header>}>
-                  <KeyValuePairs columns={1} items={effectiveItems} />
-                </Container>
-              </ColumnLayout>
-            )}
+            {agGlobal ? (
+              <KeyValuePairs
+                columns={3}
+                items={[
+                  { label: "Default keylogs", value: fmtRetentionBrief(agGlobal.keylog_days) },
+                  { label: "Default windows", value: fmtRetentionBrief(agGlobal.window_days) },
+                  { label: "Default URLs", value: fmtRetentionBrief(agGlobal.url_days) },
+                  ...effectiveItems.map((x) => ({ label: `Effective ${x.label.toLowerCase()}`, value: x.value })),
+                ]}
+              />
+            ) : null}
 
-            <RetentionOverrideField
-              title="Keylogs"
-              description="How long to keep keystroke sessions on this PC before auto-delete."
-              value={agKey}
-              onChange={setAgKey}
-              globalDays={agGlobal?.keylog_days}
-              parsed={parsedKey}
-              overrideEnabled={keyOverrideEnabled}
-              onInherit={() => setAgKey("")}
-              onStartOverride={enableKeyOverride}
-              formDisabled={save}
-            />
-
-            <RetentionOverrideField
-              title="Windows & activity"
-              description="Focus history and AFK/active events retention for this PC."
-              value={agWin}
-              onChange={setAgWin}
-              globalDays={agGlobal?.window_days}
-              parsed={parsedWin}
-              overrideEnabled={winOverrideEnabled}
-              onInherit={() => setAgWin("")}
-              onStartOverride={enableWinOverride}
-              formDisabled={save}
-            />
-
-            <RetentionOverrideField
-              title="URLs"
-              description="Browser URL history retention for this PC."
-              value={agUrl}
-              onChange={setAgUrl}
-              globalDays={agGlobal?.url_days}
-              parsed={parsedUrl}
-              overrideEnabled={urlOverrideEnabled}
-              onInherit={() => setAgUrl("")}
-              onStartOverride={enableUrlOverride}
-              formDisabled={save}
-            />
-
-            <Box variant="p" color="text-body-secondary">
-              Blank with Inherit follows Preferences. <strong>0</strong> means unlimited retention for
-              that stream on this PC. Save applies all three.
-            </Box>
+            <ColumnLayout columns={3} variant="text-grid">
+              <RetentionOverrideField
+                title="Keylogs"
+                description="How long to keep keystroke sessions on this PC."
+                value={agKey}
+                onChange={setAgKey}
+                globalDays={agGlobal?.keylog_days}
+                parsed={parsedKey}
+                formDisabled={save}
+              />
+              <RetentionOverrideField
+                title="Windows"
+                description="How long to keep focused windows and activity events."
+                value={agWin}
+                onChange={setAgWin}
+                globalDays={agGlobal?.window_days}
+                parsed={parsedWin}
+                formDisabled={save}
+              />
+              <RetentionOverrideField
+                title="URLs"
+                description="How long to keep browser URL history on this PC."
+                value={agUrl}
+                onChange={setAgUrl}
+                globalDays={agGlobal?.url_days}
+                parsed={parsedUrl}
+                formDisabled={save}
+              />
+            </ColumnLayout>
 
             <SpaceBetween direction="horizontal" size="xs">
               <Button
@@ -797,10 +714,10 @@ export function AgentSettingsTab({
                 loading={save}
                 onClick={saveOverrides}
               >
-                Save retention
+                Save overrides
               </Button>
               <Button disabled={save} onClick={clearOverrides}>
-                Clear overrides
+                Remove overrides
               </Button>
             </SpaceBetween>
           </SpaceBetween>

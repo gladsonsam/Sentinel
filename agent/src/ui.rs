@@ -322,10 +322,16 @@ fn save_config(
     stored: State<StoredConfig>,
     config_tx: State<SharedConfigTx>,
 ) -> Result<(), String> {
+    // Lock once to avoid deadlocks (multiple lock() calls in one expression can re-lock).
+    let (preserve_ui_hash, preserve_internet_blocked, preserve_app_block_rules) = {
+        let cur = stored.0.lock().unwrap();
+        (cur.ui_password_hash.clone(), cur.internet_blocked, cur.app_block_rules.clone())
+    };
+
     let ui_hash = if let Some(ref pw) = config.new_password {
         if pw.is_empty() {
             // Empty new_password → keep existing hash
-            stored.0.lock().unwrap().ui_password_hash.clone()
+            preserve_ui_hash
         } else {
             crate::config::hash_ui_password_argon2(pw)?
         }
@@ -340,9 +346,9 @@ fn save_config(
         ui_password_hash: ui_hash,
         auto_update_enabled: config.auto_update_enabled,
         // Preserve the server-managed internet block state; the settings UI does not touch it.
-        internet_blocked: stored.0.lock().unwrap().internet_blocked,
+        internet_blocked: preserve_internet_blocked,
         // Preserve app block rules; managed remotely.
-        app_block_rules: stored.0.lock().unwrap().app_block_rules.clone(),
+        app_block_rules: preserve_app_block_rules,
     };
 
     crate::config::save_config(&new_cfg).map_err(|e| e.to_string())?;

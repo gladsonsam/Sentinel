@@ -66,6 +66,14 @@ pub async fn handler(
         .collect::<String>();
 
     if !agent_ws_authorized(&state, &name, provided).await {
+        // Do NOT log the secret itself; only log whether it was provided.
+        warn!(
+            agent_name = %name,
+            provided_len = provided.len(),
+            allow_insecure_agent_auth = state.allow_insecure_agent_auth,
+            has_agent_secret = state.agent_secret.as_deref().map(|s| !s.is_empty()).unwrap_or(false),
+            "Agent WS auth rejected (401)."
+        );
         return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
     }
 
@@ -87,13 +95,37 @@ async fn agent_ws_authorized(state: &Arc<AppState>, agent_name: &str, provided: 
     };
 
     if let Some((_, Some(ref api_hash))) = row {
-        return db::verify_dashboard_password(api_hash, provided);
+        let ok = db::verify_dashboard_password(api_hash, provided);
+        if !ok {
+            warn!(
+                agent_name = %agent_name,
+                provided_len = provided.len(),
+                auth_mode = "per_device_token",
+                "Agent WS auth failed: token mismatch."
+            );
+        }
+        return ok;
     }
 
     if let Some(global) = state.agent_secret.as_deref() {
-        return secrets::ct_compare_secret(provided, global);
+        let ok = secrets::ct_compare_secret(provided, global);
+        if !ok {
+            warn!(
+                agent_name = %agent_name,
+                provided_len = provided.len(),
+                auth_mode = "agent_secret",
+                "Agent WS auth failed: AGENT_SECRET mismatch."
+            );
+        }
+        return ok;
     }
 
+    warn!(
+        agent_name = %agent_name,
+        provided_len = provided.len(),
+        auth_mode = "none",
+        "Agent WS auth failed: no configured auth method matched."
+    );
     false
 }
 
