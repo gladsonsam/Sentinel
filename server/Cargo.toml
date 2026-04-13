@@ -18,10 +18,10 @@ futures-util = "0.3"
 axum       = { version = "0.7", features = ["ws"] }
 tower-http = { version = "0.5", features = ["fs", "cors", "trace", "request-id"] }
 tower_governor = "0.4"
-prometheus = "0.13"
+prometheus = "0.14"
 
 # ── Database ──────────────────────────────────────────────────────────────────
-sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "migrate"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "migrate", "macros"] }
 
 # ── Types ─────────────────────────────────────────────────────────────────────
 uuid   = { version = "1", features = ["v4", "serde"] }

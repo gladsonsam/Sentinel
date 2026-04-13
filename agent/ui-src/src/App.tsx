@@ -859,17 +859,15 @@ function SettingsPanel() {
           padding={{ top: "m", bottom: "m", horizontal: "m" }}
           nativeAttributes={{
             id: "sentinel-agent-settings-footer",
+            className: "sentinel-agent-settings-footer",
             style: {
               flexShrink: 0,
               width: "100%",
               boxSizing: "border-box",
-              borderTop: "1px solid var(--awsui-color-border-divider-default, #eaecf0)",
               display: "flex",
               alignItems: "center",
               alignContent: "center",
-              flexWrap: "wrap",
               gap: "12px",
-              rowGap: "8px",
             },
           }}
         >
@@ -893,7 +891,10 @@ function SettingsPanel() {
             variant="span"
             fontSize="body-s"
             color="text-body-secondary"
-            nativeAttributes={{ style: { textAlign: "right", maxWidth: "min(100%, 22rem)" } }}
+            nativeAttributes={{
+              className: "sentinel-agent-settings-footer__hint",
+              style: { textAlign: "right" },
+            }}
           >
             You can open this window anytime with <span className="sentinel-kbd">Ctrl+Shift+F12</span>.
           </Box>

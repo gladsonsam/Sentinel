@@ -217,6 +217,24 @@ img {
   line-height: 1.45;
 }
 
+/* Footer: keep a stable single-row layout (avoid wrapping when scrollbars appear). */
+.sentinel-agent-settings-footer {
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+  flex-wrap: nowrap !important;
+}
+
+.sentinel-agent-settings-footer > * {
+  min-width: 0;
+}
+
+.sentinel-agent-settings-footer__hint {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 22rem;
+}
+
 /* ── Animations ──────────────────────────────────────────────────────────── */
 @keyframes fadeIn {
   from {
