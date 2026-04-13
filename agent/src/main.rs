@@ -1235,6 +1235,210 @@ fn handle_server_command(
                 let _ = out.send(Message::Text(payload)).await;
             });
         }
+        "Mkdir" => {
+            const MAX_PATH_CHARS: usize = 2048;
+            const MAX_NAME_CHARS: usize = 256;
+            let request_id = val["request_id"].as_str().unwrap_or("").trim().to_string();
+            if request_id.is_empty() {
+                return;
+            }
+            let base = val["path"]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .chars()
+                .take(MAX_PATH_CHARS)
+                .collect::<String>();
+            let name = val["name"]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .chars()
+                .take(MAX_NAME_CHARS)
+                .collect::<String>();
+            if base.is_empty() || name.is_empty() {
+                return;
+            }
+            // Basic safety: avoid path traversal via separators in the folder name.
+            if name.contains('\\') || name.contains('/') {
+                return;
+            }
+            let out = out_tx.clone();
+            tokio::spawn(async move {
+                let full = if base.ends_with('\\') {
+                    format!("{base}{name}")
+                } else {
+                    format!("{base}\\{name}")
+                };
+                let res = tokio::fs::create_dir_all(&full).await;
+                let (ok, error) = match res {
+                    Ok(()) => (true, None),
+                    Err(e) => (false, Some(e.to_string())),
+                };
+                let payload = serde_json::json!({
+                    "type": "fs_op_result",
+                    "request_id": request_id,
+                    "op": "mkdir",
+                    "ok": ok,
+                    "path": full,
+                    "error": error,
+                })
+                .to_string();
+                let _ = out.send(Message::Text(payload)).await;
+            });
+        }
+        "RenamePath" => {
+            const MAX_PATH_CHARS: usize = 2048;
+            let request_id = val["request_id"].as_str().unwrap_or("").trim().to_string();
+            if request_id.is_empty() {
+                return;
+            }
+            let src = val["src"]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .chars()
+                .take(MAX_PATH_CHARS)
+                .collect::<String>();
+            let dst = val["dst"]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .chars()
+                .take(MAX_PATH_CHARS)
+                .collect::<String>();
+            if src.is_empty() || dst.is_empty() {
+                return;
+            }
+            let out = out_tx.clone();
+            tokio::spawn(async move {
+                // Ensure parent dir exists for a move/rename.
+                if let Some(parent) = std::path::Path::new(&dst).parent() {
+                    let _ = tokio::fs::create_dir_all(parent).await;
+                }
+                let res = tokio::fs::rename(&src, &dst).await;
+                let (ok, error) = match res {
+                    Ok(()) => (true, None),
+                    Err(e) => (false, Some(e.to_string())),
+                };
+                let payload = serde_json::json!({
+                    "type": "fs_op_result",
+                    "request_id": request_id,
+                    "op": "rename",
+                    "ok": ok,
+                    "src": src,
+                    "dst": dst,
+                    "error": error,
+                })
+                .to_string();
+                let _ = out.send(Message::Text(payload)).await;
+            });
+        }
+        "DeletePath" => {
+            const MAX_PATH_CHARS: usize = 2048;
+            let request_id = val["request_id"].as_str().unwrap_or("").trim().to_string();
+            if request_id.is_empty() {
+                return;
+            }
+            let path = val["path"]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .chars()
+                .take(MAX_PATH_CHARS)
+                .collect::<String>();
+            if path.is_empty() {
+                return;
+            }
+            let recursive = val["recursive"].as_bool().unwrap_or(false);
+            let out = out_tx.clone();
+            tokio::spawn(async move {
+                let meta = tokio::fs::metadata(&path).await;
+                let res = match meta {
+                    Ok(m) if m.is_dir() => {
+                        if recursive {
+                            tokio::fs::remove_dir_all(&path).await
+                        } else {
+                            tokio::fs::remove_dir(&path).await
+                        }
+                    }
+                    Ok(_) => tokio::fs::remove_file(&path).await,
+                    Err(e) => Err(e),
+                };
+                let (ok, error) = match res {
+                    Ok(()) => (true, None),
+                    Err(e) => (false, Some(e.to_string())),
+                };
+                let payload = serde_json::json!({
+                    "type": "fs_op_result",
+                    "request_id": request_id,
+                    "op": "delete",
+                    "ok": ok,
+                    "path": path,
+                    "recursive": recursive,
+                    "error": error,
+                })
+                .to_string();
+                let _ = out.send(Message::Text(payload)).await;
+            });
+        }
+        "CopyPath" => {
+            const MAX_PATH_CHARS: usize = 2048;
+            let request_id = val["request_id"].as_str().unwrap_or("").trim().to_string();
+            if request_id.is_empty() {
+                return;
+            }
+            let src = val["src"]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .chars()
+                .take(MAX_PATH_CHARS)
+                .collect::<String>();
+            let dst = val["dst"]
+                .as_str()
+                .unwrap_or("")
+                .trim()
+                .chars()
+                .take(MAX_PATH_CHARS)
+                .collect::<String>();
+            if src.is_empty() || dst.is_empty() {
+                return;
+            }
+            let out = out_tx.clone();
+            tokio::spawn(async move {
+                // Only support file copy for now (directories require recursive copy).
+                let meta = tokio::fs::metadata(&src).await;
+                let res = match meta {
+                    Ok(m) if m.is_dir() => Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "CopyPath for directories is not supported",
+                    )),
+                    Ok(_) => {
+                        if let Some(parent) = std::path::Path::new(&dst).parent() {
+                            let _ = tokio::fs::create_dir_all(parent).await;
+                        }
+                        tokio::fs::copy(&src, &dst).await.map(|_| ())
+                    }
+                    Err(e) => Err(e),
+                };
+                let (ok, error) = match res {
+                    Ok(()) => (true, None),
+                    Err(e) => (false, Some(e.to_string())),
+                };
+                let payload = serde_json::json!({
+                    "type": "fs_op_result",
+                    "request_id": request_id,
+                    "op": "copy",
+                    "ok": ok,
+                    "src": src,
+                    "dst": dst,
+                    "error": error,
+                })
+                .to_string();
+                let _ = out.send(Message::Text(payload)).await;
+            });
+        }
         "ListDir" => {
             const MAX_DIR_PATH_CHARS: usize = 1024;
             const MAX_DIR_ENTRIES: usize = 5_000;

@@ -41,6 +41,8 @@ const MAX_VIEWER_WRITEFILE_MSG_BYTES: usize = 8 * 1024 * 1024;
 const MAX_TYPE_TEXT_CHARS: usize = 2_000;
 const MAX_NOTIFY_TITLE_CHARS: usize = 64;
 const MAX_NOTIFY_MESSAGE_CHARS: usize = 256;
+const MAX_FS_PATH_CHARS: usize = 2048;
+const MAX_FS_NAME_CHARS: usize = 256;
 
 pub async fn handler(
     ws: WebSocketUpgrade,
@@ -226,6 +228,43 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>, user: &AuthUser) {
         // "start at a sensible default" (typically the user's Documents folder).
         "ListDir" => true,
         "ReadFile" => val["cmd"]["path"].as_str().is_some(),
+        "Mkdir" => {
+            let path_ok = val["cmd"]["path"]
+                .as_str()
+                .map(|p| !p.trim().is_empty() && p.chars().count() <= MAX_FS_PATH_CHARS)
+                .unwrap_or(false);
+            let name_ok = val["cmd"]["name"]
+                .as_str()
+                .map(|n| !n.trim().is_empty() && n.chars().count() <= MAX_FS_NAME_CHARS)
+                .unwrap_or(false);
+            path_ok && name_ok
+        }
+        "RenamePath" => {
+            let src_ok = val["cmd"]["src"]
+                .as_str()
+                .map(|p| !p.trim().is_empty() && p.chars().count() <= MAX_FS_PATH_CHARS)
+                .unwrap_or(false);
+            let dst_ok = val["cmd"]["dst"]
+                .as_str()
+                .map(|p| !p.trim().is_empty() && p.chars().count() <= MAX_FS_PATH_CHARS)
+                .unwrap_or(false);
+            src_ok && dst_ok
+        }
+        "CopyPath" => {
+            let src_ok = val["cmd"]["src"]
+                .as_str()
+                .map(|p| !p.trim().is_empty() && p.chars().count() <= MAX_FS_PATH_CHARS)
+                .unwrap_or(false);
+            let dst_ok = val["cmd"]["dst"]
+                .as_str()
+                .map(|p| !p.trim().is_empty() && p.chars().count() <= MAX_FS_PATH_CHARS)
+                .unwrap_or(false);
+            src_ok && dst_ok
+        }
+        "DeletePath" => val["cmd"]["path"]
+            .as_str()
+            .map(|p| !p.trim().is_empty() && p.chars().count() <= MAX_FS_PATH_CHARS)
+            .unwrap_or(false),
         "WriteFileChunk" => {
             let path_ok = val["cmd"]["path"]
                 .as_str()
