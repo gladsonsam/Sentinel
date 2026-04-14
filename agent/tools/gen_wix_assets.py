@@ -165,6 +165,26 @@ def write_app_icon_ico(out_path: Path, spec: dict):
     )
 
 
+def write_readme_banner_png(out_path: Path, spec: dict):
+    from PIL import Image
+
+    W, H = (1280, 320)
+    bg_top = (14, 20, 30)
+    bg_bottom = (35, 55, 90)
+
+    base = vertical_gradient((W, H), bg_top, bg_bottom).convert("RGBA")
+
+    # Logo directly on the gradient (no tile/box, no glow).
+    logo = render_favicon_rgba(spec, 160)
+    lx = (W - logo.width) // 2
+    ly = (H - logo.height) // 2
+    base.alpha_composite(logo, (lx, ly))
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.unlink(missing_ok=True)
+    base.convert("RGB").save(out_path, format="PNG", optimize=True)
+
+
 def main():
     from PIL import Image, ImageFilter
 
@@ -222,10 +242,14 @@ def main():
     ico_path = root / "icons" / "icon.ico"
     write_app_icon_ico(ico_path, spec)
 
+    readme_banner_path = repo / "docs" / "images" / "readme-banner.png"
+    write_readme_banner_png(readme_banner_path, spec)
+
     print(f"Wrote {out_dir / 'wix-banner.bmp'}")
     print(f"Wrote {out_dir / 'wix-dialog.bmp'}")
     print(f"Wrote {out_dir / 'license.rtf'}")
     print(f"Wrote {ico_path} (from {svg_path})")
+    print(f"Wrote {readme_banner_path}")
 
 
 if __name__ == "__main__":
