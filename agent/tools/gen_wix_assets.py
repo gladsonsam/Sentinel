@@ -166,19 +166,47 @@ def write_app_icon_ico(out_path: Path, spec: dict):
 
 
 def write_readme_banner_png(out_path: Path, spec: dict):
-    from PIL import Image
+    from PIL import Image, ImageDraw, ImageFont
 
+    def load_font(px: int) -> ImageFont.ImageFont:
+        candidates = [
+            r"C:\Windows\Fonts\seguisb.ttf",  # Segoe UI Semibold
+            r"C:\Windows\Fonts\segoeuib.ttf",  # Segoe UI Bold
+            r"C:\Windows\Fonts\segoeui.ttf",
+            r"C:\Windows\Fonts\arialbd.ttf",
+            r"C:\Windows\Fonts\arial.ttf",
+        ]
+        for p in candidates:
+            try:
+                return ImageFont.truetype(p, px)
+            except Exception:
+                pass
+        return ImageFont.load_default()
+
+    # GitHub-friendly wide banner, styled like the provided reference (dark bar, icon at left, title text).
     W, H = (1280, 320)
-    bg_top = (14, 20, 30)
-    bg_bottom = (35, 55, 90)
+    base = vertical_gradient((W, H), (20, 28, 40), (12, 18, 28)).convert("RGBA")
+    draw = ImageDraw.Draw(base)
 
-    base = vertical_gradient((W, H), bg_top, bg_bottom).convert("RGBA")
+    # Centered logo + title group (no panels; everything sits directly on the gradient).
+    logo = render_favicon_rgba(spec, 132)
+    title = "Sentinel"
+    font = load_font(82)
+    text_bbox = draw.textbbox((0, 0), title, font=font)
+    text_w = text_bbox[2] - text_bbox[0]
+    text_h = text_bbox[3] - text_bbox[1]
 
-    # Logo directly on the gradient (no tile/box, no glow).
-    logo = render_favicon_rgba(spec, 160)
-    lx = (W - logo.width) // 2
-    ly = (H - logo.height) // 2
-    base.alpha_composite(logo, (lx, ly))
+    gap = 34
+    group_w = logo.width + gap + text_w
+    start_x = (W - group_w) // 2
+
+    logo_x = start_x
+    logo_y = (H - logo.height) // 2
+    base.alpha_composite(logo, (logo_x, logo_y))
+
+    text_x = logo_x + logo.width + gap
+    text_y = (H - text_h) // 2 - text_bbox[1]
+    draw.text((text_x, text_y), title, font=font, fill=(245, 247, 250, 255))
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.unlink(missing_ok=True)
