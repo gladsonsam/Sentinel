@@ -1,3 +1,4 @@
+![Sentinel banner](docs/images/readme-banner.png)
 # Sentinel
 
 A lightweight, self-hosted monitoring system built with Rust and React. A Windows agent streams real-time telemetry to the server, which feeds a live web dashboard with screen streaming, window/URL tracking, and activity history.
