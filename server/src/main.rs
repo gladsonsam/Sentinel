@@ -17,6 +17,7 @@ mod oidc;
 mod oidc_http;
 mod secrets;
 mod state;
+mod url_categorization;
 mod wol;
 mod ws_agent;
 mod ws_viewer;
@@ -230,6 +231,9 @@ async fn main() -> anyhow::Result<()> {
         public_base_url,
         agent_listen_port: cfg.listen.port(),
     }));
+
+    // URL categorization (UT1 lists): background importer + categorization worker (disabled by default).
+    url_categorization::spawn(state.clone());
 
     mdns_broadcast::spawn_sentinel_mdns_if_enabled(cfg.listen.port());
 

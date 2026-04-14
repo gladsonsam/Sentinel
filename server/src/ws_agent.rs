@@ -448,6 +448,7 @@ async fn dispatch_text(text: &str, agent_id: uuid::Uuid, name: &str, state: &Arc
                 db::insert_url(&state.db, agent_id, &val).await
             }
         }
+        "url_session" => db::insert_url_session(&state.db, agent_id, &val).await,
         "afk" | "active" => db::insert_activity(&state.db, agent_id, &val).await,
         "app_icon" => {
             // Expected: { type:"app_icon", exe_name:"winword.exe", png_base64:"..." }

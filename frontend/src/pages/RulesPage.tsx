@@ -107,7 +107,11 @@ function ScreenshotModal({ eventId, onClose }: { eventId: number | null; onClose
 
 // ── Alert rule create/edit modal ──────────────────────────────────────────────
 
-const CHANNEL_OPTIONS = [{ label: "URL", value: "url" }, { label: "Keystrokes", value: "keys" }];
+const CHANNEL_OPTIONS = [
+  { label: "URL", value: "url" },
+  { label: "URL category", value: "url_category" },
+  { label: "Keystrokes", value: "keys" },
+];
 const MATCH_OPTIONS = [{ id: "substring", text: "Substring" }, { id: "regex", text: "Regex" }];
 const SCOPE_OPTIONS = [
   { label: "All agents", value: "all" },
@@ -183,13 +187,17 @@ function AlertRuleFormModal({
             <Input value={form.name} onChange={({ detail }) => onFormChange({ ...form, name: detail.value })} placeholder="e.g. YouTube block" />
           </FormField>
           <FormField label="Channel">
-            <Select selectedOption={{ label: form.channel === "url" ? "URL" : "Keystrokes", value: form.channel }}
+            <Select selectedOption={{ label: form.channel === "url" ? "URL" : form.channel === "url_category" ? "URL category" : "Keystrokes", value: form.channel }}
               options={CHANNEL_OPTIONS}
               onChange={({ detail }) => onFormChange({ ...form, channel: detail.selectedOption.value as AlertRuleChannel })} />
           </FormField>
         </ColumnLayout>
         <FormField label="Pattern" description={form.match_mode === "regex" ? "ECMAScript regular expression." : "Case-insensitive substring to match against."}>
-          <Input value={form.pattern} onChange={({ detail }) => onFormChange({ ...form, pattern: detail.value })} placeholder={form.channel === "url" ? "e.g. youtube.com" : "e.g. password"} />
+          <Input
+            value={form.pattern}
+            onChange={({ detail }) => onFormChange({ ...form, pattern: detail.value })}
+            placeholder={form.channel === "url" ? "e.g. youtube.com" : form.channel === "url_category" ? "e.g. adult" : "e.g. password"}
+          />
         </FormField>
         <ColumnLayout columns={2}>
           <FormField label="Match mode">

@@ -20,6 +20,9 @@ use crate::{auth, db, state::AppState, ws_agent};
 
 use super::helpers::{audit_ip, err500};
 
+// These handlers are currently unused by routing (kept for future/potential refactor parity).
+// Silence dead-code warnings without changing behavior.
+#[allow(dead_code)]
 pub async fn agent_internet_blocked_get(
     Path(id): Path<Uuid>,
     State(s): State<Arc<AppState>>,
@@ -31,10 +34,12 @@ pub async fn agent_internet_blocked_get(
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)]
 pub(crate) struct AgentInternetBlockedBody {
     blocked: bool,
 }
 
+#[allow(dead_code)]
 pub async fn agent_internet_blocked_put(
     Path(id): Path<Uuid>,
     State(s): State<Arc<AppState>>,

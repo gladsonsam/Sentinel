@@ -225,7 +225,7 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
 
     window.addEventListener("sentinel-ws-event", onWsEvent as EventListener);
     return () => window.removeEventListener("sentinel-ws-event", onWsEvent as EventListener);
-  }, [agentId, currentPath]);
+  }, [agentId, currentPath, previewOpen]);
 
   useEffect(() => {
     setCurrentPath("");
@@ -436,7 +436,6 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
   const runUploadMany = async (files: File[]) => {
     if (!canUpload) return;
     for (const f of files) {
-      // eslint-disable-next-line no-await-in-loop
       await runUpload(f);
     }
   };
@@ -815,11 +814,9 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
                           const name = src.split("\\").filter(Boolean).pop() || "file";
                           const dst = joinPath(currentPath, name);
                           if (clipboard.mode === "move") {
-                            // eslint-disable-next-line no-await-in-loop
                             const r = await runFsOp({ type: "RenamePath", src, dst }, "Move");
                             if (!r.ok) return;
                           } else {
-                            // eslint-disable-next-line no-await-in-loop
                             const r = await runCopyPath(src, dst);
                             if (!r.ok) return;
                           }
@@ -1052,7 +1049,6 @@ export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
                     for (const p of selectedPaths) {
                       // For safety: only delete recursively when enabled (directories default true).
                       const recursive = deleteRecursive;
-                      // eslint-disable-next-line no-await-in-loop
                       const r = await runFsOp({ type: "DeletePath", path: p, recursive }, "Delete");
                       if (!r.ok) break;
                     }

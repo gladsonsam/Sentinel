@@ -118,6 +118,34 @@ use config::{AgentStatus, Config};
 #[cfg(target_os = "windows")]
 struct HeldHandle(#[allow(dead_code)] windows::Win32::Foundation::HANDLE);
 
+#[derive(Debug, Clone)]
+struct UrlSession {
+    url: String,
+    title: Option<String>,
+    browser: Option<String>,
+    started_at_instant: std::time::Instant,
+    started_at_ts: i64,
+}
+
+async fn emit_url_session(out_tx: &mpsc::Sender<Message>, sess: UrlSession, ended_at_ts: i64) {
+    let duration_ms = sess
+        .started_at_instant
+        .elapsed()
+        .as_millis()
+        .min(u128::from(u64::MAX)) as u64;
+    let payload = serde_json::json!({
+        "type": "url_session",
+        "url": sess.url,
+        "title": sess.title,
+        "browser": sess.browser,
+        "started_at_ts": sess.started_at_ts,
+        "ended_at_ts": ended_at_ts,
+        "duration_ms": duration_ms,
+    })
+    .to_string();
+    let _ = out_tx.send(Message::Text(payload)).await;
+}
+
 // HANDLE is just a numeric/opaque OS handle. Holding it for process lifetime is safe.
 #[cfg(target_os = "windows")]
 unsafe impl Send for HeldHandle {}
@@ -707,6 +735,10 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
     window_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     software_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
+    // URL sessions (time-on-site): maintained locally, emitted on transitions.
+    let mut url_session: Option<UrlSession> = None;
+    let mut url_session_blocked_by_afk = false;
+
     // ── Event loop ────────────────────────────────────────────────────────
     let result: Result<()> = loop {
         tokio::select! {
@@ -774,13 +806,53 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
 
             // ── Branch 3: active browser URL ─────────────────────────────
             _ = url_ticker.tick() => {
-                if let Some(info) = url_scraper::get_active_url() {
+                let now_ts_u64 = unix_timestamp_secs();
+                let now_ts = now_ts_u64 as i64;
+                let active = if url_session_blocked_by_afk {
+                    None
+                } else {
+                    url_scraper::get_active_url()
+                };
+
+                // Session transitions.
+                match (&url_session, &active) {
+                    (None, Some(info)) => {
+                        url_session = Some(UrlSession {
+                            url: info.url.clone(),
+                            title: if info.title.trim().is_empty() { None } else { Some(info.title.clone()) },
+                            browser: Some(info.browser_name.clone()),
+                            started_at_instant: std::time::Instant::now(),
+                            started_at_ts: now_ts,
+                        });
+                    }
+                    (Some(sess), Some(info)) if sess.url != info.url => {
+                        if let Some(prev) = url_session.take() {
+                            emit_url_session(&out_tx, prev, now_ts).await;
+                        }
+                        url_session = Some(UrlSession {
+                            url: info.url.clone(),
+                            title: if info.title.trim().is_empty() { None } else { Some(info.title.clone()) },
+                            browser: Some(info.browser_name.clone()),
+                            started_at_instant: std::time::Instant::now(),
+                            started_at_ts: now_ts,
+                        });
+                    }
+                    (Some(_), None) => {
+                        if let Some(prev) = url_session.take() {
+                            emit_url_session(&out_tx, prev, now_ts).await;
+                        }
+                    }
+                    _ => {}
+                }
+
+                // Legacy URL event remains for live snapshots + URL history.
+                if let Some(info) = active {
                     let legacy = serde_json::json!({
                         "type"    : "url",
                         "url"     : info.url,
                         "title"   : info.title,
                         "browser" : info.browser_name,
-                        "ts"      : unix_timestamp_secs(),
+                        "ts"      : now_ts_u64,
                     })
                     .to_string();
                     if out_tx.send(Message::Text(legacy)).await.is_err() {
@@ -812,6 +884,12 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                         .to_string()
                     }
                     Some(InputEvent::Afk { idle_secs }) => {
+                        // Close any in-flight URL session when user goes AFK.
+                        url_session_blocked_by_afk = true;
+                        if let Some(prev) = url_session.take() {
+                            let now_ts = unix_timestamp_secs() as i64;
+                            emit_url_session(&out_tx, prev, now_ts).await;
+                        }
                         serde_json::json!({
                             "type"     : "afk",
                             "idle_secs": idle_secs,
@@ -820,6 +898,7 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                         .to_string()
                     }
                     Some(InputEvent::Active) => {
+                        url_session_blocked_by_afk = false;
                         serde_json::json!({
                             "type": "active",
                             "ts"  : unix_timestamp_secs(),
@@ -893,6 +972,10 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
     };
 
     // ── Shutdown ──────────────────────────────────────────────────────────
+    if let Some(prev) = url_session.take() {
+        let now_ts = unix_timestamp_secs() as i64;
+        emit_url_session(&out_tx, prev, now_ts).await;
+    }
     drop(out_tx);
     if let Err(e) = writer_handle.await {
         warn!("Writer task panicked: {e}");

@@ -133,8 +133,8 @@ fn validate_alert_rule_pattern(
     pattern: &str,
     case_insensitive: bool,
 ) -> Result<(), String> {
-    if channel != "url" && channel != "keys" {
-        return Err("channel must be \"url\" or \"keys\"".to_string());
+    if channel != "url" && channel != "keys" && channel != "url_category" {
+        return Err("channel must be \"url\", \"keys\", or \"url_category\"".to_string());
     }
     if match_mode != "substring" && match_mode != "regex" {
         return Err("match_mode must be \"substring\" or \"regex\"".to_string());

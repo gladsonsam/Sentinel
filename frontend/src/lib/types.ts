@@ -45,9 +45,11 @@ export interface KeySession {
 }
 
 export interface UrlVisit {
+  id?: number;
   url: string;
   browser: string;
   ts: string;
+  category?: string | null;
 }
 
 export interface ActivityEvent {
@@ -287,7 +289,7 @@ export interface AlertRuleScope {
   agent_id?: string;
 }
 
-export type AlertRuleChannel = "url" | "keys";
+export type AlertRuleChannel = "url" | "keys" | "url_category";
 export type AlertRuleMatchMode = "substring" | "regex";
 
 export interface AlertRule {
@@ -377,6 +379,7 @@ export type TabKey =
   | "software"
   | "scripts"
   | "logs"
+  | "analytics"
   | "keys"
   | "windows"
   | "urls"

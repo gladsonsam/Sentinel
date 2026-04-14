@@ -14,10 +14,28 @@ function navLink(id: TabKey): SideNavigationProps.Link {
 
 /** Collapsible groups keep the sidebar scannable; tab row still lists every view. */
 const NAV_ITEMS: SideNavigationProps.Item[] = [
-  navLink("activity"),
+  // ── Live & control ────────────────────────────────────────────────────────
   navLink("live"),
   navLink("control"),
+  navLink("activity"),
   { type: "divider" },
+  // ── Captured data ─────────────────────────────────────────────────────────
+  {
+    type: "expandable-link-group",
+    text: "Captured data",
+    href: "#analytics",
+    defaultExpanded: false,
+    items: [
+      navLink("analytics"),
+      navLink("urls"),
+      navLink("keys"),
+      navLink("windows"),
+      navLink("alerts"),
+      navLink("logs"),
+    ],
+  },
+  { type: "divider" },
+  // ── System & tools ────────────────────────────────────────────────────────
   {
     type: "expandable-link-group",
     text: "System & tools",
@@ -25,20 +43,8 @@ const NAV_ITEMS: SideNavigationProps.Item[] = [
     defaultExpanded: false,
     items: [navLink("specs"), navLink("software"), navLink("scripts"), navLink("files")],
   },
-  {
-    type: "expandable-link-group",
-    text: "Captured data",
-    href: "#keys",
-    defaultExpanded: false,
-    items: [
-      navLink("keys"),
-      navLink("windows"),
-      navLink("urls"),
-      navLink("alerts"),
-      navLink("logs"),
-    ],
-  },
   { type: "divider" },
+  // ── Settings ──────────────────────────────────────────────────────────────
   navLink("settings"),
 ];
 

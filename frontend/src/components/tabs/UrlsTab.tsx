@@ -5,9 +5,10 @@ import Header from "@cloudscape-design/components/header";
 import Pagination from "@cloudscape-design/components/pagination";
 import TextFilter from "@cloudscape-design/components/text-filter";
 import Button from "@cloudscape-design/components/button";
+import ButtonDropdown from "@cloudscape-design/components/button-dropdown";
 import Link from "@cloudscape-design/components/link";
 import { useCollection } from "@cloudscape-design/collection-hooks";
-import { apiUrl } from "../../lib/api";
+import { api, apiUrl } from "../../lib/api";
 import { fmtDateTime } from "../../lib/utils";
 
 interface URLEvent {
@@ -15,6 +16,8 @@ interface URLEvent {
   url: string;
   browser: string;
   timestamp: string;
+  category_key?: string | null;
+  category?: string | null;
 }
 
 interface TopUrlRow {
@@ -63,7 +66,9 @@ function topHostnamesFromRows(rows: TopUrlRow[], max: number): string[] {
 export function UrlsTab({ agentId }: UrlsTabProps) {
   const [items, setItems] = useState<URLEvent[]>([]);
   const [topItems, setTopItems] = useState<TopUrlRow[]>([]);
+  const [categoryStats, setCategoryStats] = useState<{ category: string; visit_count: number; last_ts: string }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [backfillLoading, setBackfillLoading] = useState(false);
 
   const fetchUrls = useCallback(async () => {
     try {
@@ -81,6 +86,8 @@ export function UrlsTab({ agentId }: UrlsTabProps) {
             url: String(row.url ?? ""),
             browser: String(row.browser ?? "—"),
             timestamp: String(row.timestamp ?? row.ts ?? ""),
+            category_key: (row.category_key ?? null) as string | null,
+            category: (row.category ?? null) as string | null,
           }))
         );
       }
@@ -99,6 +106,23 @@ export function UrlsTab({ agentId }: UrlsTabProps) {
           }))
         );
       }
+
+      const catRes = await fetch(apiUrl(`/agents/${agentId}/url-category-stats?limit=12`), {
+        credentials: "include",
+      });
+      if (catRes.ok) {
+        const catData = await catRes.json();
+        const catRows = Array.isArray(catData?.rows) ? catData.rows : [];
+        setCategoryStats(
+          catRows.map((row: Record<string, unknown>) => ({
+            category: String(row.category ?? ""),
+            visit_count: Number(row.visit_count ?? 0),
+            last_ts: String(row.last_ts ?? ""),
+          }))
+        );
+      } else {
+        setCategoryStats([]);
+      }
     } catch (err) {
       console.error("Failed to fetch URLs:", err);
     } finally {
@@ -110,6 +134,25 @@ export function UrlsTab({ agentId }: UrlsTabProps) {
     void fetchUrls();
   }, [fetchUrls]);
 
+  useEffect(() => {
+    const onChanged = () => void fetchUrls();
+    window.addEventListener("sentinel.urlCategoriesChanged", onChanged as EventListener);
+    return () => window.removeEventListener("sentinel.urlCategoriesChanged", onChanged as EventListener);
+  }, [fetchUrls]);
+
+  const backfill = async () => {
+    setBackfillLoading(true);
+    try {
+      await api.agentUrlCategoryBackfill(agentId, { limit: 25_000 });
+      // Give the worker a moment, then refresh.
+      window.setTimeout(() => { void fetchUrls(); }, 1200);
+    } catch (e) {
+      console.error("Backfill failed:", e);
+    } finally {
+      setBackfillLoading(false);
+    }
+  };
+
   const { items: displayItems, collectionProps, filterProps, paginationProps } = useCollection(
     items,
     {
@@ -120,7 +163,8 @@ export function UrlsTab({ agentId }: UrlsTabProps) {
           const searchText = filteringText.toLowerCase();
           return (
             (item.url || "").toLowerCase().includes(searchText) ||
-            (item.browser || "").toLowerCase().includes(searchText)
+            (item.browser || "").toLowerCase().includes(searchText) ||
+            (item.category || "").toLowerCase().includes(searchText)
           );
         },
       },
@@ -136,10 +180,25 @@ export function UrlsTab({ agentId }: UrlsTabProps) {
 
   const headerDescription = useMemo(() => {
     const hosts = topHostnamesFromRows(topItems, 6);
+    const cats = categoryStats
+      .filter((r) => (r.category || "").trim() !== "" && Number.isFinite(r.visit_count) && r.visit_count > 0)
+      .slice(0, 6)
+      .map((r) => `${r.category} (${r.visit_count})`);
+    if (cats.length > 0 && hosts.length > 0) {
+      return `Top categories: ${cats.join(" • ")}. Top hostnames retained long-term: ${hosts.join(" • ")}`;
+    }
+    if (cats.length > 0) {
+      return `Top categories: ${cats.join(" • ")}`;
+    }
     return hosts.length > 0
       ? `Top hostnames retained long-term: ${hosts.join(" • ")}`
       : "Top URL aggregates are retained after raw URL retention expiry.";
-  }, [topItems]);
+  }, [topItems, categoryStats]);
+
+  const hasUncategorized = useMemo(
+    () => items.some((r) => (r.category ?? "").trim() === ""),
+    [items]
+  );
 
   return (
     <Table
@@ -162,6 +221,13 @@ export function UrlsTab({ agentId }: UrlsTabProps) {
           width: 150,
         },
         {
+          id: "category",
+          header: "Category",
+          cell: (item) => item.category || "—",
+          sortingField: "category",
+          width: 160,
+        },
+        {
           id: "url",
           header: "URL",
           cell: (item) => (
@@ -179,9 +245,27 @@ export function UrlsTab({ agentId }: UrlsTabProps) {
         <Header
           counter={`(${items.length})`}
           actions={
-            <Button iconName="refresh" onClick={fetchUrls}>
-              Refresh
-            </Button>
+            <>
+              <ButtonDropdown
+                items={[
+                  {
+                    id: "backfill",
+                    text: "Categorize existing URL history",
+                    disabled: !hasUncategorized || backfillLoading,
+                    disabledReason: !hasUncategorized ? "No uncategorized URL rows in this view." : undefined,
+                  },
+                ]}
+                onItemClick={({ detail }) => {
+                  if (detail.id === "backfill") void backfill();
+                }}
+                loading={backfillLoading}
+              >
+                Maintenance
+              </ButtonDropdown>
+              <Button iconName="refresh" onClick={fetchUrls}>
+                Refresh
+              </Button>
+            </>
           }
           description={headerDescription}
         >

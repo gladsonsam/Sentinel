@@ -16,13 +16,14 @@ import {
   Shield,
   Terminal,
   Zap,
+  ChartColumn,
 } from "lucide-react";
 import type { TabKey } from "./types";
 
 /** Top-level agent page sections (horizontal tab bar). */
 export type AgentSectionId = "live" | "system" | "data" | "control" | "settings";
 
-export const AGENT_SECTION_ORDER: AgentSectionId[] = ["live", "control", "system", "data", "settings"];
+export const AGENT_SECTION_ORDER: AgentSectionId[] = ["live", "control", "data", "system", "settings"];
 
 /** Sub-views under “Live” (activity timeline default, then screen). */
 export const AGENT_LIVE_SUBTABS: TabKey[] = ["activity", "live"];
@@ -31,7 +32,7 @@ export const AGENT_LIVE_SUBTABS: TabKey[] = ["activity", "live"];
 export const AGENT_SYSTEM_SUBTABS: TabKey[] = ["specs", "software", "scripts", "files"];
 
 /** Sub-views under “Data” (telemetry / history). */
-export const AGENT_DATA_SUBTABS: TabKey[] = ["keys", "windows", "urls", "alerts", "logs"];
+export const AGENT_DATA_SUBTABS: TabKey[] = ["analytics", "urls", "windows", "keys", "alerts", "logs"];
 
 export function agentSectionFromTabKey(tab: TabKey): AgentSectionId {
   if (tab === "live" || tab === "activity") return "live";
@@ -48,7 +49,7 @@ export function defaultTabForAgentSection(section: AgentSectionId): TabKey {
     case "system":
       return "specs";
     case "data":
-      return "keys";
+      return "analytics";
     case "control":
       return "control";
     case "settings":
@@ -83,6 +84,7 @@ export const AGENT_TAB_ORDER: TabKey[] = [
   "software",
   "scripts",
   "files",
+  "analytics",
   "keys",
   "windows",
   "urls",
@@ -128,6 +130,12 @@ export const AGENT_TAB_META: Record<TabKey, AgentTabDefinition> = {
     sideNavLabel: "Scripts",
     breadcrumbLabel: "Scripts",
     icon: Terminal,
+  },
+  analytics: {
+    tabLabel: "Analytics",
+    sideNavLabel: "Analytics",
+    breadcrumbLabel: "Analytics",
+    icon: ChartColumn,
   },
   logs: {
     tabLabel: "Logs",

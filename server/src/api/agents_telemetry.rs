@@ -132,6 +132,98 @@ pub async fn agent_urls(
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct UrlCategoryStatsQuery {
+    #[serde(default = "default_category_limit")]
+    limit: i64,
+}
+
+fn default_category_limit() -> i64 {
+    24
+}
+
+pub async fn agent_url_category_stats(
+    Path(id): Path<Uuid>,
+    Query(q): Query<UrlCategoryStatsQuery>,
+    State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> Response {
+    let limit = q.limit.clamp(1, 250);
+    let ip = audit_ip(&headers, addr);
+    match db::query_url_category_stats(&s.db, id, limit).await {
+        Ok(rows) => {
+            let detail = serde_json::json!({ "limit": limit });
+            db::insert_audit_log_dedup_traced(
+                &s.db,
+                db::AuditLogDedup {
+                    actor: user.username.as_str(),
+                    agent_id: Some(id),
+                    action: "view_url_category_stats",
+                    status: "ok",
+                    detail: &detail,
+                    dedup_window_secs: 10,
+                    client_ip: ip.as_deref(),
+                },
+            )
+            .await;
+            Json(serde_json::json!({ "rows": rows })).into_response()
+        }
+        Err(e) => err500(e),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UrlCategoryBackfillQuery {
+    #[serde(default = "default_backfill_limit")]
+    limit: i64,
+}
+
+fn default_backfill_limit() -> i64 {
+    25_000
+}
+
+/// Admin: enqueue existing uncategorized URL visits for categorization.
+pub async fn agent_url_category_backfill(
+    Path(id): Path<Uuid>,
+    Query(q): Query<UrlCategoryBackfillQuery>,
+    State(s): State<Arc<AppState>>,
+    Extension(user): Extension<auth::AuthUser>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+) -> Response {
+    if !user.is_admin() {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({ "error": "admin only" })),
+        )
+            .into_response();
+    }
+    let limit = q.limit.clamp(1, 250_000);
+    let ip = audit_ip(&headers, addr);
+    match db::enqueue_url_categorization_backfill(&s.db, id, limit).await {
+        Ok(enqueued) => {
+            let detail = serde_json::json!({ "limit": limit, "enqueued": enqueued });
+            db::insert_audit_log_dedup_traced(
+                &s.db,
+                db::AuditLogDedup {
+                    actor: user.username.as_str(),
+                    agent_id: Some(id),
+                    action: "url_category_backfill",
+                    status: "ok",
+                    detail: &detail,
+                    dedup_window_secs: 10,
+                    client_ip: ip.as_deref(),
+                },
+            )
+            .await;
+            Json(serde_json::json!({ "enqueued": enqueued })).into_response()
+        }
+        Err(e) => err500(e),
+    }
+}
+
 pub async fn alert_rule_events_all_h(
     Query(p): Query<PageParams>,
     State(s): State<Arc<AppState>>,

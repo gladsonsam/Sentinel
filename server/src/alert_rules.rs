@@ -17,6 +17,7 @@ fn haystack_for_channel(channel: &str, payload: &serde_json::Value) -> String {
     match channel {
         "url" => payload["url"].as_str().unwrap_or("").to_string(),
         "keys" => payload["text"].as_str().unwrap_or("").to_string(),
+        "url_category" => payload["category_key"].as_str().unwrap_or("").to_string(),
         _ => String::new(),
     }
 }
@@ -65,7 +66,7 @@ pub async fn on_url_or_keys_event(
     channel: &str,
     payload: &serde_json::Value,
 ) {
-    if channel != "url" && channel != "keys" {
+    if channel != "url" && channel != "keys" && channel != "url_category" {
         return;
     }
 
@@ -165,6 +166,16 @@ pub async fn on_url_or_keys_event(
             dashboard_activity_url,
         });
     }
+}
+
+/// After URL categorization, evaluate category-based alert rules (channel: `url_category`).
+pub async fn on_url_category_event(
+    state: &Arc<AppState>,
+    agent_id: Uuid,
+    agent_name: &str,
+    payload: &serde_json::Value,
+) {
+    on_url_or_keys_event(state, agent_id, agent_name, "url_category", payload).await;
 }
 
 async fn capture_and_store_screenshot_for_event(

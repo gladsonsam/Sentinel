@@ -3,6 +3,26 @@
 /* Import Cloudscape global styles */
 @import "@cloudscape-design/global-styles/index.css";
 
+/* ── Category manager: allow Select dropdowns inside table rows to overflow ── */
+.cat-manager-table table,
+.cat-manager-table [class*="awsui_wrapper"],
+.cat-manager-table [class*="awsui_table"],
+.cat-manager-table tbody,
+.cat-manager-table tr,
+.cat-manager-table td {
+  overflow: visible !important;
+}
+
+/* Make group dropdown triggers same width in the table. */
+.cat-manager-group-cell {
+  width: 190px;
+  max-width: 190px;
+}
+.cat-manager-group-cell button {
+  width: 100%;
+  justify-content: space-between;
+}
+
 /* ── App shell: stop flex/grid from crushing controls on narrow viewports ───────
    Without min-width: 0 on nested flex chains, children can get near-zero width and
    Cloudscape horizontal SpaceBetween + word-break will stack one character per line. */

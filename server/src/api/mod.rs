@@ -1,6 +1,7 @@
 //! REST API for the authenticated dashboard (`/api/*`).
 
 mod agent_enrollment;
+mod agent_analytics;
 mod agents_capture;
 mod agents_list;
 mod agents_logs;
@@ -18,6 +19,10 @@ mod pagination;
 mod retention;
 mod settings;
 mod software_scripts;
+mod url_categorization;
+mod url_category_overrides;
+mod url_categorization_recalc;
+mod url_custom_categories;
 mod users;
 mod version;
 
@@ -71,6 +76,26 @@ pub fn router() -> Router<Arc<AppState>> {
             get(assets::alert_rule_event_screenshot),
         )
         .route("/agents/:id/urls", get(agents_telemetry::agent_urls))
+        .route(
+            "/agents/:id/url-category-stats",
+            get(agents_telemetry::agent_url_category_stats),
+        )
+        .route(
+            "/agents/:id/url-category-backfill",
+            post(agents_telemetry::agent_url_category_backfill),
+        )
+        .route(
+            "/agents/:id/analytics/url-categories",
+            get(agent_analytics::agent_url_categories_time),
+        )
+        .route(
+            "/agents/:id/analytics/url-sites",
+            get(agent_analytics::agent_url_sites_time),
+        )
+        .route(
+            "/agents/:id/analytics/url-sessions",
+            get(agent_analytics::agent_url_sessions),
+        )
         .route("/agents/:id/activity", get(agents_telemetry::agent_activity))
         .route(
             "/agents/:id/app-icons/:exe_name",
@@ -149,6 +174,46 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/settings/capabilities", get(settings::settings_capabilities))
         .route("/settings/version", get(version::settings_version))
         .route("/settings/integration", get(settings::settings_integration))
+        .route(
+            "/settings/url-categorization",
+            get(url_categorization::get_status).put(url_categorization::put_settings),
+        )
+        .route(
+            "/settings/url-categorization/update-now",
+            post(url_categorization::post_update_now),
+        )
+        .route(
+            "/settings/url-categorization/categories",
+            get(url_categorization::list_categories).put(url_categorization::put_categories),
+        )
+        .route(
+            "/settings/url-categorization/overrides",
+            get(url_category_overrides::list_overrides)
+                .post(url_category_overrides::add_override)
+                .delete(url_category_overrides::delete_override),
+        )
+        .route(
+            "/settings/url-categorization/custom-categories",
+            get(url_custom_categories::list_custom_categories)
+                .post(url_custom_categories::create_custom_category),
+        )
+        .route(
+            "/settings/url-categorization/custom-categories/:id",
+            put(url_custom_categories::update_custom_category)
+                .delete(url_custom_categories::delete_custom_category),
+        )
+        .route(
+            "/settings/url-categorization/custom-categories/:id/members",
+            put(url_custom_categories::put_custom_category_members),
+        )
+        .route(
+            "/settings/url-categorization/recalc/url-visits",
+            post(url_categorization_recalc::recalc_url_visits),
+        )
+        .route(
+            "/settings/url-categorization/recalc/url-sessions",
+            post(url_categorization_recalc::recalc_url_sessions),
+        )
         .route(
             "/agents/:id/local-ui-password",
             get(local_ui::local_ui_password_agent_get)
