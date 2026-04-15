@@ -60,6 +60,7 @@ mod mdns_discover;
 mod input;
 mod keyboard_capture;
 mod network_policy;
+mod schedule;
 mod remote_script;
 #[cfg(target_os = "windows")]
 mod service;
@@ -527,6 +528,14 @@ async fn run_agent_loop(
     tokio::spawn(async move {
         app_block::run_enforcer(rules_for_enforcer, kill_tx_for_enforcer).await;
     });
+
+    // Enforce scheduled internet curfews locally (agent time) even when offline.
+    {
+        let cfg_for_sched = shared_cfg.clone();
+        tokio::spawn(async move {
+            run_internet_curfew_scheduler(cfg_for_sched).await;
+        });
+    }
     #[cfg(target_os = "windows")]
     if let Ok(true) = crate::enrollment::try_consume_pending_enrollment().await {
         let new_cfg = config::load_config();
@@ -748,16 +757,16 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
             msg = ws_rx.next() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
-                        handle_server_command(
-                            &text,
+                        handle_server_command(ServerCommandArgs {
+                            text: &text,
                             frame_tx,
                             capture_stop,
-                            &mut controller,
-                            &shared_cfg,
-                            &config_tx,
-                            out_tx.clone(),
-                            &shared_rules,
-                        );
+                            controller: &mut controller,
+                            shared_cfg: &shared_cfg,
+                            config_tx: &config_tx,
+                            out_tx: out_tx.clone(),
+                            shared_rules: &shared_rules,
+                        });
                     }
                     Some(Ok(Message::Close(frame))) => {
                         let reason = frame.as_ref()
@@ -984,20 +993,111 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
     result
 }
 
+async fn apply_network_policy(blocked: bool, hostname: String, port: u16) {
+    #[cfg(target_os = "windows")]
+    {
+        match crate::updater_client::set_network_policy_via_service(blocked, &hostname, port).await {
+            Ok(()) => info!("Network policy applied via service (blocked={blocked})."),
+            Err(e) => {
+                // Service pipe unavailable (e.g. running standalone in dev) — try direct.
+                warn!("Service pipe unavailable, falling back to direct netsh: {e}");
+                let direct = if blocked {
+                    crate::network_policy::apply_block(&hostname, port)
+                } else {
+                    crate::network_policy::remove_block()
+                };
+                if let Err(e2) = direct {
+                    warn!("Direct netsh also failed: {e2}");
+                } else {
+                    info!("Network policy applied directly (blocked={blocked}).");
+                }
+            }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        if blocked {
+            if let Err(e) = crate::network_policy::apply_block(&hostname, port) {
+                warn!("Failed to apply network block: {e}");
+            }
+        } else if let Err(e) = crate::network_policy::remove_block() {
+            warn!("Failed to remove network block: {e}");
+        }
+    }
+}
+
+async fn run_internet_curfew_scheduler(shared_cfg: Arc<Mutex<Config>>) {
+    use crate::schedule as sched;
+
+    let mut last_applied: Option<bool> = None;
+    let mut interval = tokio::time::interval(Duration::from_secs(20));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        interval.tick().await;
+
+        let (hostname, port, desired, current, has_rules) = {
+            let c = shared_cfg.lock().unwrap();
+            let (h, p) = crate::network_policy::parse_server_host_port(&c.server_url)
+                .unwrap_or_else(|| (String::new(), 443));
+            let has_rules = !c.internet_block_rules.is_empty();
+            let desired = if has_rules {
+                c.internet_block_rules
+                    .iter()
+                    .any(|r| sched::is_active_now_local(&r.schedules))
+            } else {
+                // Legacy fallback (older server only sends boolean).
+                c.internet_blocked
+            };
+            (h, p, desired, c.internet_blocked, has_rules)
+        };
+
+        let baseline = last_applied.unwrap_or(current);
+        if desired == baseline {
+            continue;
+        }
+
+        apply_network_policy(desired, hostname.clone(), port).await;
+
+        // Persist the applied state so we resume correctly after a reboot.
+        if has_rules {
+            if let Ok(mut c) = shared_cfg.lock() {
+                c.internet_blocked = desired;
+                if let Err(e) = crate::config::save_config(&c) {
+                    warn!("Failed to save config (internet curfew scheduler): {e}");
+                }
+            }
+        }
+        last_applied = Some(desired);
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Server command handler
 // ─────────────────────────────────────────────────────────────────────────────
 
-fn handle_server_command(
-    text: &str,
-    frame_tx: &mpsc::Sender<Vec<u8>>,
-    capture_stop: &mut Option<Arc<AtomicBool>>,
-    controller: &mut InputController,
-    shared_cfg: &Arc<Mutex<Config>>,
-    config_tx: &tokio::sync::watch::Sender<Option<Config>>,
+struct ServerCommandArgs<'a> {
+    text: &'a str,
+    frame_tx: &'a mpsc::Sender<Vec<u8>>,
+    capture_stop: &'a mut Option<Arc<AtomicBool>>,
+    controller: &'a mut InputController,
+    shared_cfg: &'a Arc<Mutex<Config>>,
+    config_tx: &'a tokio::sync::watch::Sender<Option<Config>>,
     out_tx: mpsc::Sender<Message>,
-    shared_rules: &app_block::SharedRules,
-) {
+    shared_rules: &'a app_block::SharedRules,
+}
+
+fn handle_server_command(args: ServerCommandArgs<'_>) {
+    let ServerCommandArgs {
+        text,
+        frame_tx,
+        capture_stop,
+        controller,
+        shared_cfg,
+        config_tx,
+        out_tx,
+        shared_rules,
+    } = args;
+
     let val: serde_json::Value = match serde_json::from_str(text) {
         Ok(v) => v,
         Err(_) => return,
@@ -1107,40 +1207,10 @@ fn handle_server_command(
             // Only act when state actually changes (or re-apply on reconnect when already blocked).
             let needs_action = blocked || was_blocked;
             if needs_action {
-                #[cfg(target_os = "windows")]
-                {
-                    // Delegate to the LocalSystem service so netsh runs with full privileges.
-                    let h = hostname.clone();
-                    tokio::spawn(async move {
-                        match crate::updater_client::set_network_policy_via_service(blocked, &h, port).await {
-                            Ok(()) => info!("Network policy applied via service (blocked={blocked})."),
-                            Err(e) => {
-                                // Service pipe unavailable (e.g. running standalone in dev) — try direct.
-                                warn!("Service pipe unavailable, falling back to direct netsh: {e}");
-                                let direct = if blocked {
-                                    crate::network_policy::apply_block(&h, port)
-                                } else {
-                                    crate::network_policy::remove_block()
-                                };
-                                if let Err(e2) = direct {
-                                    warn!("Direct netsh also failed: {e2}");
-                                } else {
-                                    info!("Network policy applied directly (blocked={blocked}).");
-                                }
-                            }
-                        }
-                    });
-                }
-                #[cfg(not(target_os = "windows"))]
-                {
-                    if blocked {
-                        if let Err(e) = crate::network_policy::apply_block(&hostname, port) {
-                            warn!("Failed to apply network block: {e}");
-                        }
-                    } else if let Err(e) = crate::network_policy::remove_block() {
-                        warn!("Failed to remove network block: {e}");
-                    }
-                }
+                let h = hostname.clone();
+                tokio::spawn(async move {
+                    apply_network_policy(blocked, h, port).await;
+                });
             }
             if let Ok(mut c) = shared_cfg.lock() {
                 c.internet_blocked = blocked;
@@ -1155,10 +1225,52 @@ fn handle_server_command(
                 }
             }
         }
+        "set_internet_block_rules" => {
+            let empty: Vec<serde_json::Value> = Vec::new();
+            let rules: Vec<crate::config::StoredInternetBlockRule> = val["rules"]
+                .as_array()
+                .unwrap_or(&empty)
+                .iter()
+                .filter_map(|v| serde_json::from_value(v.clone()).ok())
+                .collect();
+            let (hostname, port, desired, current) = {
+                let mut c = shared_cfg.lock().unwrap();
+                c.internet_block_rules = rules;
+                let (h, p) = crate::network_policy::parse_server_host_port(&c.server_url)
+                    .unwrap_or_else(|| (String::new(), 443));
+                let desired_now = if !c.internet_block_rules.is_empty() {
+                    c.internet_block_rules
+                        .iter()
+                        .any(|r| crate::schedule::is_active_now_local(&r.schedules))
+                } else {
+                    c.internet_blocked
+                };
+                let cur = c.internet_blocked;
+                if desired_now != cur {
+                    c.internet_blocked = desired_now;
+                }
+                if let Err(e) = crate::config::save_config(&c) {
+                    warn!("Failed to save internet block rules to config: {e}");
+                } else {
+                    info!(
+                        "Internet block rules updated from server ({} rules).",
+                        c.internet_block_rules.len()
+                    );
+                }
+                (h, p, desired_now, cur)
+            };
+
+            if desired != current {
+                tokio::spawn(async move {
+                    apply_network_policy(desired, hostname, port).await;
+                });
+            }
+        }
         "set_app_block_rules" => {
+            let empty: Vec<serde_json::Value> = Vec::new();
             let rules: Vec<app_block::BlockRule> = val["rules"]
                 .as_array()
-                .unwrap_or(&vec![])
+                .unwrap_or(&empty)
                 .iter()
                 .filter_map(|v| serde_json::from_value(v.clone()).ok())
                 .collect();
@@ -1372,17 +1484,15 @@ fn handle_server_command(
                 let mut out = String::with_capacity(input.len());
                 let mut chars = input.chars().peekable();
                 while let Some(c) = chars.next() {
-                    if c == '\u{1b}' {
-                        if chars.peek() == Some(&'[') {
+                    if c == '\u{1b}' && chars.peek() == Some(&'[') {
+                        chars.next();
+                        while let Some(&ch) = chars.peek() {
                             chars.next();
-                            while let Some(&ch) = chars.peek() {
-                                chars.next();
-                                if ch.is_ascii_alphabetic() {
-                                    break;
-                                }
+                            if ch.is_ascii_alphabetic() {
+                                break;
                             }
-                            continue;
                         }
+                        continue;
                     }
                     out.push(c);
                 }
@@ -1625,8 +1735,7 @@ fn handle_server_command(
                 // Only support file copy for now (directories require recursive copy).
                 let meta = tokio::fs::metadata(&src).await;
                 let res = match meta {
-                    Ok(m) if m.is_dir() => Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
+                    Ok(m) if m.is_dir() => Err(std::io::Error::other(
                         "CopyPath for directories is not supported",
                     )),
                     Ok(_) => {

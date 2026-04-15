@@ -513,9 +513,13 @@ export const api = {
   internetBlockRulesCreate: (body: {
     name?: string;
     scopes: { kind: string; group_id?: string; agent_id?: string }[];
+    schedules?: { day_of_week: number; start_minute: number; end_minute: number }[];
   }): Promise<{ id: number }> => postJsonRes("/internet-block-rules", body),
 
-  internetBlockRulesUpdate: (id: number, body: { enabled: boolean }): Promise<{ ok: boolean }> =>
+  internetBlockRulesUpdate: (
+    id: number,
+    body: { enabled: boolean; schedules?: { day_of_week: number; start_minute: number; end_minute: number }[] },
+  ): Promise<{ ok: boolean }> =>
     putJson(`/internet-block-rules/${id}`, body),
 
   internetBlockRulesDelete: (id: number): Promise<{ ok: boolean }> =>
@@ -777,11 +781,19 @@ export const api = {
     exe_pattern: string;
     match_mode: "exact" | "contains";
     scopes: { kind: string; group_id?: string; agent_id?: string }[];
+    schedules?: { day_of_week: number; start_minute: number; end_minute: number }[];
   }): Promise<{ id: number }> => postJsonRes("/app-block-rules", body),
 
   appBlockRulesUpdate: (
     id: number,
-    body: { enabled: boolean },
+    body: {
+      enabled?: boolean;
+      name?: string;
+      exe_pattern?: string;
+      match_mode?: "exact" | "contains";
+      scopes?: { kind: string; group_id?: string; agent_id?: string }[];
+      schedules?: { day_of_week: number; start_minute: number; end_minute: number }[];
+    },
   ): Promise<{ ok: boolean }> => putJson(`/app-block-rules/${id}`, body),
 
   appBlockRulesDelete: (id: number): Promise<{ ok: boolean }> =>

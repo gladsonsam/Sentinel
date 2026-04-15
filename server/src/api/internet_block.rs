@@ -46,6 +46,8 @@ pub struct CreateInternetBlockRule {
     #[serde(default)]
     pub name: String,
     pub scopes: Vec<InternetBlockScope>,
+    #[serde(default)]
+    pub schedules: Vec<db::RuleScheduleJson>,
 }
 
 pub async fn internet_block_rules_create(
@@ -63,7 +65,7 @@ pub async fn internet_block_rules_create(
         .map(|s| (s.kind.clone(), s.group_id, s.agent_id))
         .collect();
 
-    match db::internet_block_rule_create(&s.db, &body.name, &scopes).await {
+    match db::internet_block_rule_create(&s.db, &body.name, &scopes, &body.schedules).await {
         Ok(id) => {
             db::insert_audit_log_traced(&s.db, user.username.as_str(), None, "internet_block_rule_create", "ok",
                 &serde_json::json!({ "id": id }), ip.as_deref()).await;
@@ -79,6 +81,8 @@ pub async fn internet_block_rules_create(
 #[derive(Deserialize)]
 pub struct UpdateInternetBlockRule {
     pub enabled: bool,
+    #[serde(default)]
+    pub schedules: Option<Vec<db::RuleScheduleJson>>,
 }
 
 pub async fn internet_block_rules_update(
@@ -96,6 +100,11 @@ pub async fn internet_block_rules_update(
     match db::internet_block_rule_set_enabled(&s.db, rule_id, body.enabled).await {
         Ok(false) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Not found" }))).into_response(),
         Ok(true) => {
+            if let Some(sched) = body.schedules.as_ref() {
+                if let Err(e) = db::internet_block_rule_set_schedules(&s.db, rule_id, sched).await {
+                    return err500(e);
+                }
+            }
             db::insert_audit_log_traced(&s.db, user.username.as_str(), None, "internet_block_rule_update", "ok",
                 &serde_json::json!({ "id": rule_id, "enabled": body.enabled }), ip.as_deref()).await;
             ws_agent::push_internet_block_to_all_connected(&s).await;

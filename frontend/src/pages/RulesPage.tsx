@@ -416,6 +416,16 @@ function AppBlockingTab({ agents }: { agents: Agent[] }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
+  const [editRule, setEditRule] = useState<AppBlockRule | null>(null);
+  const [editSaving, setEditSaving] = useState(false);
+  const [editExePattern, setEditExePattern] = useState("");
+  const [editMatchMode, setEditMatchMode] = useState<"contains" | "exact">("contains");
+  const [editLabel, setEditLabel] = useState("");
+  const [editApplyToAll, setEditApplyToAll] = useState(false);
+  const [editScheduled, setEditScheduled] = useState(false);
+  const [editScheduleRows, setEditScheduleRows] = useState<Array<{ day_of_week: number; start: string; end: string }>>([
+    { day_of_week: 1, start: "00:00", end: "23:59" },
+  ]);
   const [historyRule, setHistoryRule] = useState<AppBlockRule | null>(null);
   const [historyEvents, setHistoryEvents] = useState<AppBlockEvent[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -464,6 +474,81 @@ function AppBlockingTab({ agents }: { agents: Agent[] }) {
   // Use first agent as context for "known exes" if available (admin view picks any)
   const contextAgentId = agents[0]?.id ?? "";
 
+  const DAY_OPTIONS = [
+    { label: "Sunday", value: "0" },
+    { label: "Monday", value: "1" },
+    { label: "Tuesday", value: "2" },
+    { label: "Wednesday", value: "3" },
+    { label: "Thursday", value: "4" },
+    { label: "Friday", value: "5" },
+    { label: "Saturday", value: "6" },
+  ];
+
+  const timeToMinute = (t: string): number | null => {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(t.trim());
+    if (!m) return null;
+    const hhRaw = parseInt(m[1], 10);
+    const mmRaw = parseInt(m[2], 10);
+    const mm = Math.max(0, Math.min(59, mmRaw));
+    if (hhRaw === 24 && mm === 0) return 1440;
+    const hh = Math.max(0, Math.min(23, hhRaw));
+    return hh * 60 + mm;
+  };
+
+  const minuteToTime = (min: number): string => {
+    const m = Math.max(0, Math.min(1440, Math.floor(min)));
+    if (m === 1440) return "24:00";
+    const hh = String(Math.floor(m / 60)).padStart(2, "0");
+    const mm = String(m % 60).padStart(2, "0");
+    return `${hh}:${mm}`;
+  };
+
+  const expandScheduleRows = (rows: Array<{ day_of_week: number; start: string; end: string }>) => {
+    const out: { day_of_week: number; start_minute: number; end_minute: number }[] = [];
+    for (const r of rows) {
+      const s = timeToMinute(r.start);
+      const e = timeToMinute(r.end);
+      if (s == null || e == null) continue;
+      if (s === e) continue;
+      if (s < e) {
+        out.push({ day_of_week: r.day_of_week, start_minute: s, end_minute: e });
+      } else {
+        out.push({ day_of_week: r.day_of_week, start_minute: s, end_minute: 1440 });
+        out.push({ day_of_week: (r.day_of_week + 1) % 7, start_minute: 0, end_minute: e });
+      }
+    }
+    return out;
+  };
+
+  const scheduleSummary = (schedules: { day_of_week: number; start_minute: number; end_minute: number }[]) => {
+    if (!schedules || schedules.length === 0) return <Box color="text-body-secondary">Always</Box>;
+    const day = (d: number) => DAY_OPTIONS.find((o) => o.value === String(d))?.label?.slice(0, 3) ?? "?";
+    const parts = schedules.slice(0, 2).map((w) => `${day(w.day_of_week)} ${minuteToTime(w.start_minute)}–${minuteToTime(w.end_minute)}`);
+    const more = schedules.length > 2 ? ` +${schedules.length - 2}` : "";
+    return <span>{parts.join(", ")}{more}</span>;
+  };
+
+  const openEdit = (r: AppBlockRule) => {
+    setEditRule(r);
+    setEditExePattern(r.exe_pattern);
+    setEditMatchMode(r.match_mode);
+    setEditLabel(r.name || "");
+    // best-effort: in this UI we only support toggling between "all" and "single agent"
+    const kind = r.scopes?.[0]?.kind ?? r.scope_kind ?? "agent";
+    setEditApplyToAll(kind === "all");
+    const sched = Array.isArray(r.schedules) ? r.schedules : [];
+    setEditScheduled(sched.length > 0);
+    setEditScheduleRows(
+      sched.length > 0
+        ? sched.map((w) => ({
+            day_of_week: w.day_of_week,
+            start: minuteToTime(w.start_minute),
+            end: minuteToTime(w.end_minute),
+          }))
+        : [{ day_of_week: 1, start: "00:00", end: "23:59" }],
+    );
+  };
+
   return (
     <>
       {error && <Box color="text-status-error" padding={{ bottom: "s" }}>{error}</Box>}
@@ -499,6 +584,7 @@ function AppBlockingTab({ agents }: { agents: Agent[] }) {
           },
           { id: "name", header: "Label", cell: (r) => r.name || <Box color="text-body-secondary">—</Box>, width: "20%" },
           { id: "scope", header: "Scope", cell: (r) => appBlockScopeBadge(r), width: 150 },
+          { id: "schedule", header: "Schedule", cell: (r) => scheduleSummary(r.schedules), width: 220 },
           { id: "enabled", header: "Active", cell: (r) => <Toggle checked={r.enabled} disabled={togglingId === r.id} onChange={() => toggleRule(r)} />, width: 80 },
           {
             id: "actions", header: "", width: 100,
@@ -506,8 +592,13 @@ function AppBlockingTab({ agents }: { agents: Agent[] }) {
               <ButtonDropdown
                 variant="inline-icon"
                 expandToViewport
-                items={[{ id: "history", text: "Kill history" }, { id: "delete", text: "Delete" }]}
+                items={[
+                  { id: "edit", text: "Edit" },
+                  { id: "history", text: "Kill history" },
+                  { id: "delete", text: "Delete" },
+                ]}
                 onItemClick={({ detail }) => {
+                  if (detail.id === "edit") openEdit(r);
                   if (detail.id === "history") void openHistory(r);
                   if (detail.id === "delete") void deleteRule(r);
                 }} />
@@ -516,11 +607,158 @@ function AppBlockingTab({ agents }: { agents: Agent[] }) {
         ]}
       />
 
+      {/* Edit modal (basic) */}
+      <Modal
+        visible={editRule != null}
+        onDismiss={() => setEditRule(null)}
+        header={`Edit app block rule — ${editRule?.name || editRule?.exe_pattern || ""}`}
+        size="medium"
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button variant="link" onClick={() => setEditRule(null)} disabled={editSaving}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                loading={editSaving}
+                onClick={() => {
+                  const r = editRule;
+                  if (!r) return;
+                  const pattern = editExePattern.trim();
+                  if (!pattern) {
+                    setError("EXE name is required.");
+                    return;
+                  }
+                  setEditSaving(true);
+                  const scopes = editApplyToAll
+                    ? [{ kind: "all" as const }]
+                    : [{ kind: "agent" as const, agent_id: contextAgentId }];
+                  const schedules = editScheduled ? expandScheduleRows(editScheduleRows) : [];
+                  api
+                    .appBlockRulesUpdate(r.id, {
+                      name: editLabel.trim() || pattern,
+                      exe_pattern: pattern,
+                      match_mode: editMatchMode,
+                      scopes,
+                      schedules,
+                    })
+                    .then(() => load())
+                    .then(() => setEditRule(null))
+                    .catch((e) => setError(String(e)))
+                    .finally(() => setEditSaving(false));
+                }}
+              >
+                Save
+              </Button>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        <SpaceBetween size="m">
+          {error && <Box color="text-status-error">{error}</Box>}
+          <FormField label="EXE name" description="Executable file name to block (e.g. tiktok.exe).">
+            <Input value={editExePattern} onChange={({ detail }) => setEditExePattern(detail.value)} />
+          </FormField>
+          <FormField label="Match mode">
+            <SegmentedControl
+              selectedId={editMatchMode}
+              onChange={({ detail }) => setEditMatchMode(detail.selectedId as "contains" | "exact")}
+              options={[
+                { id: "contains", text: "Contains" },
+                { id: "exact", text: "Exact" },
+              ]}
+            />
+          </FormField>
+          <FormField label="Label">
+            <Input value={editLabel} onChange={({ detail }) => setEditLabel(detail.value)} placeholder="Optional" />
+          </FormField>
+          <Checkbox checked={editApplyToAll} onChange={({ detail }) => setEditApplyToAll(detail.checked)}>
+            Apply to all devices
+          </Checkbox>
+
+          <FormField
+            label="Schedule (optional)"
+            description="If enabled, this rule only applies during these windows in the agent's local time. Overnight windows are supported (e.g. 22:00 → 06:00)."
+          >
+            <SpaceBetween size="xs">
+              <Checkbox checked={editScheduled} onChange={({ detail }) => setEditScheduled(detail.checked)}>
+                Enable schedule (curfew)
+              </Checkbox>
+              {editScheduled ? (
+                <SpaceBetween size="xs">
+                  {editScheduleRows.map((r, i) => (
+                    <SpaceBetween key={i} direction="horizontal" size="xs" alignItems="center">
+                      <Select
+                        selectedOption={DAY_OPTIONS.find((o) => o.value === String(r.day_of_week)) ?? DAY_OPTIONS[1]}
+                        options={DAY_OPTIONS}
+                        onChange={({ detail }) =>
+                          setEditScheduleRows((prev) => {
+                            const next = [...prev];
+                            next[i] = { ...next[i], day_of_week: Number(detail.selectedOption.value) };
+                            return next;
+                          })
+                        }
+                      />
+                      <Input
+                        type="text"
+                        inputMode="numeric"
+                        value={r.start}
+                        onChange={({ detail }) =>
+                          setEditScheduleRows((prev) => {
+                            const next = [...prev];
+                            next[i] = { ...next[i], start: detail.value };
+                            return next;
+                          })
+                        }
+                        placeholder="HH:MM"
+                      />
+                      <Box>to</Box>
+                      <Input
+                        type="text"
+                        inputMode="numeric"
+                        value={r.end}
+                        onChange={({ detail }) =>
+                          setEditScheduleRows((prev) => {
+                            const next = [...prev];
+                            next[i] = { ...next[i], end: detail.value };
+                            return next;
+                          })
+                        }
+                        placeholder="HH:MM"
+                      />
+                      <Button
+                        variant="inline-icon"
+                        iconName="remove"
+                        ariaLabel="Remove window"
+                        disabled={editScheduleRows.length <= 1}
+                        onClick={() => setEditScheduleRows((prev) => prev.filter((_, idx) => idx !== i))}
+                      />
+                    </SpaceBetween>
+                  ))}
+                  <Button
+                    iconName="add-plus"
+                    onClick={() =>
+                      setEditScheduleRows((prev) => [
+                        ...prev,
+                        { day_of_week: 1, start: "00:00", end: "23:59" },
+                      ])
+                    }
+                  >
+                    Add window
+                  </Button>
+                </SpaceBetween>
+              ) : null}
+            </SpaceBetween>
+          </FormField>
+        </SpaceBetween>
+      </Modal>
+
       {/* Add rule modal — open with no agent context, scope defaults to "all" */}
       <AppBlockModal
         visible={showModal}
         agentId={contextAgentId}
-        agentName="all devices"
+        agentName=""
         onDismiss={() => setShowModal(false)}
         onCreated={() => { setShowModal(false); void load(); }}
       />
@@ -560,8 +798,10 @@ interface UnifiedEvent {
 // ── Internet Access tab ───────────────────────────────────────────────────────
 
 type InetScopeFormRow = { kind: "all" | "group" | "agent"; group_id: string; agent_id: string };
+type InetScheduleFormRow = { day_of_week: number; start: string; end: string };
 
 function emptyInetScope(): InetScopeFormRow { return { kind: "all", group_id: "", agent_id: "" }; }
+function emptyInetSchedule(): InetScheduleFormRow { return { day_of_week: 1, start: "00:00", end: "23:59" }; }
 
 function InternetAccessTab({ groups, agents }: { groups: AgentGroup[]; agents: Agent[] }) {
   const [rules, setRules] = useState<InternetBlockRule[]>([]);
@@ -570,11 +810,71 @@ function InternetAccessTab({ groups, agents }: { groups: AgentGroup[]; agents: A
   const [showCreate, setShowCreate] = useState(false);
   const [createName, setCreateName] = useState("");
   const [createScopes, setCreateScopes] = useState<InetScopeFormRow[]>([emptyInetScope()]);
+  const [createScheduled, setCreateScheduled] = useState(false);
+  const [createSchedules, setCreateSchedules] = useState<InetScheduleFormRow[]>([emptyInetSchedule()]);
   const [saving, setSaving] = useState(false);
   const [togglingId, setTogglingId] = useState<number | null>(null);
+  const [editScheduleFor, setEditScheduleFor] = useState<InternetBlockRule | null>(null);
+  const [editSchedules, setEditSchedules] = useState<InetScheduleFormRow[]>([emptyInetSchedule()]);
+  const [editSaving, setEditSaving] = useState(false);
 
   const groupOptions = groups.map((g) => ({ label: g.name, value: g.id }));
   const agentOptions = agents.map((a) => ({ label: a.name, value: a.id }));
+  const DAY_OPTIONS = [
+    { label: "Sunday", value: "0" },
+    { label: "Monday", value: "1" },
+    { label: "Tuesday", value: "2" },
+    { label: "Wednesday", value: "3" },
+    { label: "Thursday", value: "4" },
+    { label: "Friday", value: "5" },
+    { label: "Saturday", value: "6" },
+  ];
+
+  const timeToMinute = (t: string): number | null => {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(t.trim());
+    if (!m) return null;
+    const hhRaw = parseInt(m[1], 10);
+    const mmRaw = parseInt(m[2], 10);
+    const mm = Math.max(0, Math.min(59, mmRaw));
+    // Allow 24:00 as an alias for "end of day" (1440).
+    if (hhRaw === 24 && mm === 0) return 1440;
+    const hh = Math.max(0, Math.min(23, hhRaw));
+    return hh * 60 + mm;
+  };
+
+  const expandScheduleRows = (rows: InetScheduleFormRow[]) => {
+    const out: { day_of_week: number; start_minute: number; end_minute: number }[] = [];
+    for (const r of rows) {
+      const s = timeToMinute(r.start);
+      const e = timeToMinute(r.end);
+      if (s == null || e == null) continue;
+      if (s === e) continue;
+      if (s < e) {
+        out.push({ day_of_week: r.day_of_week, start_minute: s, end_minute: e });
+      } else {
+        // Overnight: split across two days.
+        out.push({ day_of_week: r.day_of_week, start_minute: s, end_minute: 1440 });
+        out.push({ day_of_week: (r.day_of_week + 1) % 7, start_minute: 0, end_minute: e });
+      }
+    }
+    return out;
+  };
+
+  const minuteToTime = (min: number): string => {
+    const m = Math.max(0, Math.min(1440, Math.floor(min)));
+    if (m === 1440) return "24:00";
+    const hh = String(Math.floor(m / 60)).padStart(2, "0");
+    const mm = String(m % 60).padStart(2, "0");
+    return `${hh}:${mm}`;
+  };
+
+  const scheduleSummary = (schedules: { day_of_week: number; start_minute: number; end_minute: number }[]) => {
+    if (!schedules || schedules.length === 0) return <Box color="text-body-secondary">Always</Box>;
+    const day = (d: number) => DAY_OPTIONS.find((o) => o.value === String(d))?.label?.slice(0, 3) ?? "?";
+    const parts = schedules.slice(0, 2).map((w) => `${day(w.day_of_week)} ${minuteToTime(w.start_minute)}–${minuteToTime(w.end_minute)}`);
+    const more = schedules.length > 2 ? ` +${schedules.length - 2}` : "";
+    return <span>{parts.join(", ")}{more}</span>;
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -612,11 +912,20 @@ function InternetAccessTab({ groups, agents }: { groups: AgentGroup[]; agents: A
   const createRule = async () => {
     setSaving(true); setError(null);
     try {
+      const schedules = createScheduled ? expandScheduleRows(createSchedules) : undefined;
+      if (createScheduled && (!schedules || schedules.length === 0)) {
+        throw new Error("Schedule is enabled but no valid windows were provided (use HH:MM).");
+      }
       await api.internetBlockRulesCreate({
         name: createName.trim(),
         scopes: createScopes.map((s) => ({ kind: s.kind, group_id: s.group_id || undefined, agent_id: s.agent_id || undefined })),
+        schedules,
       });
-      setShowCreate(false); setCreateName(""); setCreateScopes([emptyInetScope()]);
+      setShowCreate(false);
+      setCreateName("");
+      setCreateScopes([emptyInetScope()]);
+      setCreateScheduled(false);
+      setCreateSchedules([emptyInetSchedule()]);
       await load();
     } catch (e) { setError(String(e)); }
     finally { setSaving(false); }
@@ -659,9 +968,36 @@ function InternetAccessTab({ groups, agents }: { groups: AgentGroup[]; agents: A
         columnDefinitions={[
           { id: "name", header: "Name", cell: (r) => r.name || <Box color="text-body-secondary">Unnamed</Box>, width: "30%" },
           { id: "scope", header: "Scope", cell: (r) => inetScopeBadge(r), width: "25%" },
+          { id: "schedule", header: "Schedule", cell: (r) => scheduleSummary(r.schedules), width: "25%" },
           { id: "enabled", header: "Active", cell: (r) => <Toggle checked={r.enabled} disabled={togglingId === r.id} onChange={() => toggleRule(r)} />, width: 80 },
           { id: "created", header: "Created", cell: (r) => fmtDateTime(r.created_at), width: 170 },
-          { id: "actions", header: "", width: 80, cell: (r) => <Button variant="inline-icon" iconName="remove" ariaLabel="Delete" onClick={() => void deleteRule(r)} /> },
+          {
+            id: "actions",
+            header: "",
+            width: 120,
+            cell: (r) => (
+              <SpaceBetween direction="horizontal" size="xxs">
+                <ButtonDropdown
+                  items={[
+                    { id: "edit_schedule", text: "Edit schedule" },
+                    { id: "delete", text: "Delete" },
+                  ]}
+                  onItemClick={({ detail }) => {
+                    if (detail.id === "delete") void deleteRule(r);
+                    if (detail.id === "edit_schedule") {
+                      setEditScheduleFor(r);
+                      const rows: InetScheduleFormRow[] = (r.schedules ?? []).length
+                        ? (r.schedules ?? []).map((w) => ({ day_of_week: w.day_of_week, start: minuteToTime(w.start_minute), end: minuteToTime(w.end_minute) }))
+                        : [emptyInetSchedule()];
+                      setEditSchedules(rows);
+                    }
+                  }}
+                >
+                  Actions
+                </ButtonDropdown>
+              </SpaceBetween>
+            ),
+          },
         ]}
       />
 
@@ -705,6 +1041,142 @@ function InternetAccessTab({ groups, agents }: { groups: AgentGroup[]; agents: A
               <Button variant="inline-link" iconName="add-plus" onClick={() => setCreateScopes((p) => [...p, emptyInetScope()])}>Add scope</Button>
             </SpaceBetween>
           </FormField>
+
+          <FormField label="Schedule (optional)" description="If enabled, this rule only applies during these windows in the agent's local time.">
+            <SpaceBetween size="xs">
+              <Checkbox checked={createScheduled} onChange={({ detail }) => setCreateScheduled(detail.checked)}>
+                Enable schedule (curfew)
+              </Checkbox>
+              {createScheduled ? (
+                <SpaceBetween size="xs">
+                  {createSchedules.map((r, i) => (
+                    <SpaceBetween key={i} direction="horizontal" size="xs" alignItems="center">
+                      <Select
+                        selectedOption={DAY_OPTIONS.find((o) => o.value === String(r.day_of_week)) ?? DAY_OPTIONS[1]}
+                        options={DAY_OPTIONS}
+                        onChange={({ detail }) => setCreateSchedules((prev) => {
+                          const next = [...prev];
+                          next[i] = { ...next[i], day_of_week: Number(detail.selectedOption.value) };
+                          return next;
+                        })}
+                      />
+                      <Input
+                        type="text"
+                        inputMode="numeric"
+                        value={r.start}
+                        onChange={({ detail }) => setCreateSchedules((prev) => {
+                          const next = [...prev];
+                          next[i] = { ...next[i], start: detail.value };
+                          return next;
+                        })}
+                        placeholder="HH:MM"
+                      />
+                      <Box>to</Box>
+                      <Input
+                        type="text"
+                        inputMode="numeric"
+                        value={r.end}
+                        onChange={({ detail }) => setCreateSchedules((prev) => {
+                          const next = [...prev];
+                          next[i] = { ...next[i], end: detail.value };
+                          return next;
+                        })}
+                        placeholder="HH:MM"
+                      />
+                      <Button variant="inline-icon" iconName="remove" ariaLabel="Remove window" disabled={createSchedules.length <= 1} onClick={() => setCreateSchedules((prev) => prev.filter((_, idx) => idx !== i))} />
+                    </SpaceBetween>
+                  ))}
+                  <Button iconName="add-plus" onClick={() => setCreateSchedules((prev) => [...prev, emptyInetSchedule()])}>Add window</Button>
+                  <Box fontSize="body-s" color="text-body-secondary">
+                    Overnight windows (e.g. 22:00 → 06:00) are supported (they’ll be split across days automatically).
+                  </Box>
+                </SpaceBetween>
+              ) : null}
+            </SpaceBetween>
+          </FormField>
+        </SpaceBetween>
+      </Modal>
+
+      {/* Edit schedule modal */}
+      <Modal
+        visible={editScheduleFor != null}
+        onDismiss={() => setEditScheduleFor(null)}
+        header={`Edit schedule — ${editScheduleFor?.name || "Internet block"}`}
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button variant="link" onClick={() => setEditScheduleFor(null)} disabled={editSaving}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                loading={editSaving}
+                onClick={() => {
+                  const r = editScheduleFor;
+                  if (!r) return;
+                  const schedules = expandScheduleRows(editSchedules);
+                  setEditSaving(true);
+                  api.internetBlockRulesUpdate(r.id, { enabled: r.enabled, schedules })
+                    .then(() => load())
+                    .then(() => setEditScheduleFor(null))
+                    .catch((e) => setError(String(e)))
+                    .finally(() => setEditSaving(false));
+                }}
+              >
+                Save
+              </Button>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        <SpaceBetween size="m">
+          <Box fontSize="body-s" color="text-body-secondary">
+            Empty schedule means <b>Always</b>. Overnight windows (22:00 → 06:00) are supported (split automatically).
+          </Box>
+          {editSchedules.map((r, i) => (
+            <SpaceBetween key={i} direction="horizontal" size="xs" alignItems="center">
+              <Select
+                selectedOption={DAY_OPTIONS.find((o) => o.value === String(r.day_of_week)) ?? DAY_OPTIONS[1]}
+                options={DAY_OPTIONS}
+                onChange={({ detail }) => setEditSchedules((prev) => {
+                  const next = [...prev];
+                  next[i] = { ...next[i], day_of_week: Number(detail.selectedOption.value) };
+                  return next;
+                })}
+              />
+              <Input
+                type="text"
+                inputMode="numeric"
+                value={r.start}
+                onChange={({ detail }) => setEditSchedules((prev) => {
+                  const next = [...prev];
+                  next[i] = { ...next[i], start: detail.value };
+                  return next;
+                })}
+                placeholder="HH:MM"
+              />
+              <Box>to</Box>
+              <Input
+                type="text"
+                inputMode="numeric"
+                value={r.end}
+                onChange={({ detail }) => setEditSchedules((prev) => {
+                  const next = [...prev];
+                  next[i] = { ...next[i], end: detail.value };
+                  return next;
+                })}
+                placeholder="HH:MM"
+              />
+              <Button variant="inline-icon" iconName="remove" ariaLabel="Remove window" disabled={editSchedules.length <= 1} onClick={() => setEditSchedules((prev) => prev.filter((_, idx) => idx !== i))} />
+            </SpaceBetween>
+          ))}
+          <Button iconName="add-plus" onClick={() => setEditSchedules((prev) => [...prev, emptyInetSchedule()])}>Add window</Button>
+          <Button
+            variant="link"
+            onClick={() => setEditSchedules([emptyInetSchedule()])}
+          >
+            Reset to Always
+          </Button>
         </SpaceBetween>
       </Modal>
     </>

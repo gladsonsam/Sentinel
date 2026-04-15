@@ -210,6 +210,18 @@ async fn run(mut ws: WebSocket, name: String, state: Arc<AppState>) {
         }
     }
 
+    // Push scheduled internet-block rules so curfews apply offline.
+    if let Ok(rules) = db::internet_block_rules_effective_for_agent(&state.db, agent_id).await {
+        let sync = serde_json::json!({
+            "type": "set_internet_block_rules",
+            "rules": rules,
+        })
+        .to_string();
+        if let Err(e) = ws.send(Message::Text(sync)).await {
+            warn!("Failed to push internet block rules to {name}: {e}");
+        }
+    }
+
     // Push app block rules so enforcement resumes after a reboot.
     if let Ok(rules) = db::app_block_rules_effective_for_agent(&state.db, agent_id).await {
         let sync = serde_json::json!({
@@ -352,6 +364,20 @@ pub async fn push_network_policy_to_agent(state: &Arc<AppState>, agent_id: uuid:
     }
 }
 
+pub async fn push_internet_block_rules_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
+    let Ok(rules) = db::internet_block_rules_effective_for_agent(&state.db, agent_id).await else {
+        return;
+    };
+    let payload = serde_json::json!({
+        "type": "set_internet_block_rules",
+        "rules": rules,
+    })
+    .to_string();
+    if let Some(tx) = state.agent_cmds.lock().get(&agent_id) {
+        let _ = tx.try_send(AgentControl::Text(payload));
+    }
+}
+
 pub async fn push_app_block_rules_to_agent(state: &Arc<AppState>, agent_id: uuid::Uuid) {
     let Ok(rules) = db::app_block_rules_effective_for_agent(&state.db, agent_id).await else {
         return;
@@ -377,6 +403,7 @@ pub async fn push_internet_block_to_all_connected(state: &Arc<AppState>) {
     let ids: Vec<uuid::Uuid> = state.agents.lock().keys().copied().collect();
     for id in ids {
         push_network_policy_to_agent(state, id).await;
+        push_internet_block_rules_to_agent(state, id).await;
     }
 }
 

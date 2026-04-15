@@ -8,6 +8,10 @@ description = "Sentinel – WebSocket ingestion server, PostgreSQL storage, and 
 name = "sentinel-server"
 path = "src/main.rs"
 
+[[bin]]
+name = "migration_checksums"
+path = "src/bin/migration_checksums.rs"
+
 [dependencies]
 
 # ── Async runtime ─────────────────────────────────────────────────────────────

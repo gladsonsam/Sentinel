@@ -129,7 +129,7 @@ pub(crate) fn extract_hostname_from_url(url: &str) -> String {
         Ok(u) => u.host_str().map(normalize_hostname).unwrap_or_default(),
         Err(_) => {
             // Fallback: take first token up to a delimiter.
-            let host = raw.split(|c| matches!(c, '/' | ':' | '?' | '#' )).next().unwrap_or("");
+            let host = raw.split(['/', ':', '?', '#']).next().unwrap_or("");
             normalize_hostname(host)
         }
     }

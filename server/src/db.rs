@@ -2541,6 +2541,9 @@ pub async fn get_agent_internet_blocked(pool: &PgPool, agent_id: Uuid) -> Result
         SELECT COUNT(*)
         FROM internet_block_rules r
         WHERE r.enabled
+          -- Only "always-on" rules affect the legacy boolean network policy push.
+          -- Scheduled rules are evaluated on-agent using local time.
+          AND NOT EXISTS (SELECT 1 FROM internet_block_rule_schedules sch WHERE sch.rule_id = r.id)
           AND EXISTS (
             SELECT 1 FROM internet_block_rule_scopes s
             WHERE s.rule_id = r.id
@@ -2566,6 +2569,7 @@ pub async fn get_agent_internet_block_source(pool: &PgPool, agent_id: Uuid) -> R
         SELECT scope_kind FROM internet_block_rule_scopes s
         JOIN internet_block_rules r ON r.id = s.rule_id
         WHERE r.enabled
+          AND NOT EXISTS (SELECT 1 FROM internet_block_rule_schedules sch WHERE sch.rule_id = r.id)
           AND (
             s.scope_kind = 'all'
             OR (s.scope_kind = 'agent' AND s.agent_id = $1)
@@ -2585,6 +2589,13 @@ pub async fn get_agent_internet_block_source(pool: &PgPool, agent_id: Uuid) -> R
 
 // ─── Internet block rules ──────────────────────────────────────────────────────
 
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct RuleScheduleJson {
+    pub day_of_week: i32,
+    pub start_minute: i32,
+    pub end_minute: i32,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct InternetBlockScopeJson {
     pub kind: String,
@@ -2601,6 +2612,7 @@ pub struct InternetBlockRuleRow {
     pub enabled: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub scopes: Vec<InternetBlockScopeJson>,
+    pub schedules: Vec<RuleScheduleJson>,
 }
 
 pub async fn internet_block_rules_list_all(pool: &PgPool) -> Result<Vec<InternetBlockRuleRow>> {
@@ -2628,14 +2640,107 @@ pub async fn internet_block_rules_list_all(pool: &PgPool) -> Result<Vec<Internet
             })
         }).collect::<Result<Vec<_>>>()?;
 
+        let schedule_rows = sqlx::query(
+            r#"
+            SELECT day_of_week, start_minute, end_minute
+            FROM internet_block_rule_schedules
+            WHERE rule_id = $1
+            ORDER BY day_of_week, start_minute, end_minute
+            "#,
+        )
+        .bind(id)
+        .fetch_all(pool)
+        .await?;
+        let schedules = schedule_rows
+            .iter()
+            .map(|row| {
+                Ok(RuleScheduleJson {
+                    day_of_week: row.try_get("day_of_week")?,
+                    start_minute: row.try_get("start_minute")?,
+                    end_minute: row.try_get("end_minute")?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
         out.push(InternetBlockRuleRow {
             id,
             name: r.try_get("name")?,
             enabled: r.try_get("enabled")?,
             created_at: r.try_get("created_at")?,
             scopes,
+            schedules,
         });
     }
+    Ok(out)
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct InternetBlockRuleEffectiveRow {
+    pub id: i64,
+    pub name: String,
+    pub schedules: Vec<RuleScheduleJson>,
+}
+
+/// Effective internet block rules for a specific agent (enabled only).
+/// Note: schedules may be empty (meaning "always active").
+pub async fn internet_block_rules_effective_for_agent(
+    pool: &PgPool,
+    agent_id: Uuid,
+) -> Result<Vec<InternetBlockRuleEffectiveRow>> {
+    let rules = sqlx::query(
+        r#"
+        SELECT r.id, r.name
+        FROM internet_block_rules r
+        WHERE r.enabled
+          AND EXISTS (
+            SELECT 1 FROM internet_block_rule_scopes s
+            WHERE s.rule_id = r.id
+              AND (
+                s.scope_kind = 'all'
+                OR (s.scope_kind = 'agent' AND s.agent_id = $1)
+                OR (s.scope_kind = 'group'
+                    AND s.group_id IN (SELECT group_id FROM agent_group_members WHERE agent_id = $1))
+              )
+          )
+        ORDER BY r.id
+        "#,
+    )
+    .bind(agent_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = Vec::with_capacity(rules.len());
+    for r in &rules {
+        let id: i64 = r.try_get("id")?;
+        let schedule_rows = sqlx::query(
+            r#"
+            SELECT day_of_week, start_minute, end_minute
+            FROM internet_block_rule_schedules
+            WHERE rule_id = $1
+            ORDER BY day_of_week, start_minute, end_minute
+            "#,
+        )
+        .bind(id)
+        .fetch_all(pool)
+        .await?;
+        let schedules = schedule_rows
+            .iter()
+            .map(|row| {
+                Ok(RuleScheduleJson {
+                    day_of_week: row.try_get("day_of_week")?,
+                    start_minute: row.try_get("start_minute")?,
+                    end_minute: row.try_get("end_minute")?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        out.push(InternetBlockRuleEffectiveRow {
+            id,
+            name: r.try_get("name")?,
+            schedules,
+        });
+    }
+
     Ok(out)
 }
 
@@ -2643,6 +2748,7 @@ pub async fn internet_block_rule_create(
     pool: &PgPool,
     name: &str,
     scopes: &[(String, Option<Uuid>, Option<Uuid>)],
+    schedules: &[RuleScheduleJson],
 ) -> Result<i64> {
     let mut tx = pool.begin().await?;
     let id: i64 = sqlx::query_scalar(
@@ -2659,6 +2765,20 @@ pub async fn internet_block_rule_create(
         .execute(tx.deref_mut())
         .await?;
     }
+    for s in schedules {
+        sqlx::query(
+            r#"
+            INSERT INTO internet_block_rule_schedules (rule_id, day_of_week, start_minute, end_minute)
+            VALUES ($1, $2, $3, $4)
+            "#,
+        )
+        .bind(id)
+        .bind(s.day_of_week)
+        .bind(s.start_minute)
+        .bind(s.end_minute)
+        .execute(tx.deref_mut())
+        .await?;
+    }
     tx.commit().await?;
     Ok(id)
 }
@@ -2667,6 +2787,42 @@ pub async fn internet_block_rule_set_enabled(pool: &PgPool, rule_id: i64, enable
     let r = sqlx::query("UPDATE internet_block_rules SET enabled = $2 WHERE id = $1")
         .bind(rule_id).bind(enabled).execute(pool).await?;
     Ok(r.rows_affected() > 0)
+}
+
+pub async fn internet_block_rule_set_schedules(
+    pool: &PgPool,
+    rule_id: i64,
+    schedules: &[RuleScheduleJson],
+) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    let r = sqlx::query("SELECT 1 FROM internet_block_rules WHERE id = $1")
+        .bind(rule_id)
+        .fetch_optional(tx.deref_mut())
+        .await?;
+    if r.is_none() {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+    sqlx::query("DELETE FROM internet_block_rule_schedules WHERE rule_id = $1")
+        .bind(rule_id)
+        .execute(tx.deref_mut())
+        .await?;
+    for s in schedules {
+        sqlx::query(
+            r#"
+            INSERT INTO internet_block_rule_schedules (rule_id, day_of_week, start_minute, end_minute)
+            VALUES ($1, $2, $3, $4)
+            "#,
+        )
+        .bind(rule_id)
+        .bind(s.day_of_week)
+        .bind(s.start_minute)
+        .bind(s.end_minute)
+        .execute(tx.deref_mut())
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(true)
 }
 
 pub async fn internet_block_rule_delete(pool: &PgPool, rule_id: i64) -> Result<bool> {
@@ -2706,7 +2862,13 @@ pub async fn internet_block_set_for_agent(pool: &PgPool, agent_id: Uuid, blocked
         )
         .bind(agent_id).fetch_one(pool).await?;
         if already == 0 {
-            internet_block_rule_create(pool, "Manual block", &[("agent".into(), None, Some(agent_id))]).await?;
+            internet_block_rule_create(
+                pool,
+                "Manual block",
+                &[("agent".into(), None, Some(agent_id))],
+                &[],
+            )
+            .await?;
         }
     } else {
         // Remove all agent-scoped rules for this specific agent.
@@ -3464,11 +3626,17 @@ pub async fn alert_rule_events_list_for_rule(
 #[derive(Debug, Clone, Serialize)]
 pub struct AppBlockRuleRow {
     pub id: i64,
+    /// Optional friendly label; used by the dashboard UI.
+    #[serde(default)]
+    pub name: String,
     pub exe_pattern: String,
     pub match_mode: String,
+    /// Always true for "effective" rules (disabled rules are excluded).
+    pub enabled: bool,
     /// Most-permissive scope kind that makes this rule apply to the agent
     /// (`all` > `group` > `agent`). Included so the dashboard can show a scope badge.
     pub scope_kind: String,
+    pub schedules: Vec<RuleScheduleJson>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -3490,6 +3658,7 @@ pub struct AppBlockRuleListItem {
     pub enabled: bool,
     pub created_at: DateTime<Utc>,
     pub scopes: Vec<AppBlockScopeJson>,
+    pub schedules: Vec<RuleScheduleJson>,
 }
 
 /// Rules effective for a specific agent (all-scope + group + agent-scope, enabled only).
@@ -3501,7 +3670,7 @@ pub async fn app_block_rules_effective_for_agent(
     // for display purposes; the WHERE clause checks actual applicability.
     let rows = sqlx::query(
         r#"
-        SELECT r.id, r.exe_pattern, r.match_mode,
+        SELECT r.id, r.name, r.exe_pattern, r.match_mode,
                (SELECT scope_kind
                 FROM app_block_rule_scopes sub
                 WHERE sub.rule_id = r.id
@@ -3534,11 +3703,114 @@ pub async fn app_block_rules_effective_for_agent(
 
     let mut out = Vec::with_capacity(rows.len());
     for r in &rows {
+        let rule_id: i64 = r.try_get("id")?;
+        let schedule_rows = sqlx::query(
+            r#"
+            SELECT day_of_week, start_minute, end_minute
+            FROM app_block_rule_schedules
+            WHERE rule_id = $1
+            ORDER BY day_of_week, start_minute, end_minute
+            "#,
+        )
+        .bind(rule_id)
+        .fetch_all(pool)
+        .await?;
+        let schedules = schedule_rows
+            .iter()
+            .map(|row| {
+                Ok(RuleScheduleJson {
+                    day_of_week: row.try_get("day_of_week")?,
+                    start_minute: row.try_get("start_minute")?,
+                    end_minute: row.try_get("end_minute")?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
         out.push(AppBlockRuleRow {
-            id: r.try_get("id")?,
+            id: rule_id,
+            name: r.try_get::<Option<String>, _>("name")?.unwrap_or_default(),
             exe_pattern: r.try_get("exe_pattern")?,
             match_mode: r.try_get("match_mode")?,
+            enabled: true,
             scope_kind: r.try_get::<Option<String>, _>("scope_kind")?.unwrap_or_else(|| "agent".into()),
+            schedules,
+        });
+    }
+    Ok(out)
+}
+
+/// Rules applicable to a specific agent (all-scope + group + agent-scope), including disabled.
+/// Used by the dashboard Agent → Control tab so toggled-off rules remain visible.
+pub async fn app_block_rules_applicable_for_agent(
+    pool: &PgPool,
+    agent_id: Uuid,
+) -> Result<Vec<AppBlockRuleRow>> {
+    let rows = sqlx::query(
+        r#"
+        SELECT r.id, r.name, r.exe_pattern, r.match_mode, r.enabled,
+               (SELECT scope_kind
+                FROM app_block_rule_scopes sub
+                WHERE sub.rule_id = r.id
+                ORDER BY CASE sub.scope_kind
+                             WHEN 'all'   THEN 1
+                             WHEN 'group' THEN 2
+                             ELSE 3
+                         END
+                LIMIT 1) AS scope_kind
+        FROM app_block_rules r
+        WHERE EXISTS (
+            SELECT 1 FROM app_block_rule_scopes s
+            WHERE s.rule_id = r.id
+              AND (
+                s.scope_kind = 'all'
+                OR (s.scope_kind = 'agent' AND s.agent_id = $1)
+                OR (s.scope_kind = 'group'
+                    AND s.group_id IN (
+                        SELECT group_id FROM agent_group_members WHERE agent_id = $1
+                    ))
+              )
+        )
+        ORDER BY r.id
+        "#,
+    )
+    .bind(agent_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = Vec::with_capacity(rows.len());
+    for r in &rows {
+        let rule_id: i64 = r.try_get("id")?;
+        let schedule_rows = sqlx::query(
+            r#"
+            SELECT day_of_week, start_minute, end_minute
+            FROM app_block_rule_schedules
+            WHERE rule_id = $1
+            ORDER BY day_of_week, start_minute, end_minute
+            "#,
+        )
+        .bind(rule_id)
+        .fetch_all(pool)
+        .await?;
+        let schedules = schedule_rows
+            .iter()
+            .map(|row| {
+                Ok(RuleScheduleJson {
+                    day_of_week: row.try_get("day_of_week")?,
+                    start_minute: row.try_get("start_minute")?,
+                    end_minute: row.try_get("end_minute")?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        out.push(AppBlockRuleRow {
+            id: rule_id,
+            name: r.try_get::<Option<String>, _>("name")?.unwrap_or_default(),
+            exe_pattern: r.try_get("exe_pattern")?,
+            match_mode: r.try_get("match_mode")?,
+            enabled: r.try_get::<Option<bool>, _>("enabled")?.unwrap_or(true),
+            scope_kind: r
+                .try_get::<Option<String>, _>("scope_kind")?
+                .unwrap_or_else(|| "agent".into()),
+            schedules,
         });
     }
     Ok(out)
@@ -3573,6 +3845,28 @@ pub async fn app_block_rules_list_all(pool: &PgPool) -> Result<Vec<AppBlockRuleL
             })
             .collect::<Result<Vec<_>>>()?;
 
+        let schedule_rows = sqlx::query(
+            r#"
+            SELECT day_of_week, start_minute, end_minute
+            FROM app_block_rule_schedules
+            WHERE rule_id = $1
+            ORDER BY day_of_week, start_minute, end_minute
+            "#,
+        )
+        .bind(id)
+        .fetch_all(pool)
+        .await?;
+        let schedules = schedule_rows
+            .iter()
+            .map(|row| {
+                Ok(RuleScheduleJson {
+                    day_of_week: row.try_get("day_of_week")?,
+                    start_minute: row.try_get("start_minute")?,
+                    end_minute: row.try_get("end_minute")?,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
         let created_at_raw: Option<chrono::DateTime<Utc>> = r.try_get("created_at").ok();
         out.push(AppBlockRuleListItem {
             id,
@@ -3582,6 +3876,7 @@ pub async fn app_block_rules_list_all(pool: &PgPool) -> Result<Vec<AppBlockRuleL
             enabled: r.try_get("enabled")?,
             created_at: created_at_raw.unwrap_or_else(Utc::now),
             scopes,
+            schedules,
         });
     }
     Ok(out)
@@ -3594,6 +3889,7 @@ pub async fn app_block_rule_create(
     exe_pattern: &str,
     match_mode: &str,
     scopes: &[(String, Option<Uuid>, Option<Uuid>)],
+    schedules: &[RuleScheduleJson],
 ) -> Result<i64> {
     let mut tx = pool.begin().await?;
     let id: i64 = sqlx::query_scalar(
@@ -3616,11 +3912,147 @@ pub async fn app_block_rule_create(
         .execute(tx.deref_mut())
         .await?;
     }
+    for s in schedules {
+        sqlx::query(
+            r#"
+            INSERT INTO app_block_rule_schedules (rule_id, day_of_week, start_minute, end_minute)
+            VALUES ($1, $2, $3, $4)
+            "#,
+        )
+        .bind(id)
+        .bind(s.day_of_week)
+        .bind(s.start_minute)
+        .bind(s.end_minute)
+        .execute(tx.deref_mut())
+        .await?;
+    }
     tx.commit().await?;
     Ok(id)
 }
 
+#[allow(dead_code)]
+pub async fn app_block_rule_set_schedules(
+    pool: &PgPool,
+    rule_id: i64,
+    schedules: &[RuleScheduleJson],
+) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    let r = sqlx::query("SELECT 1 FROM app_block_rules WHERE id = $1")
+        .bind(rule_id)
+        .fetch_optional(tx.deref_mut())
+        .await?;
+    if r.is_none() {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+    sqlx::query("DELETE FROM app_block_rule_schedules WHERE rule_id = $1")
+        .bind(rule_id)
+        .execute(tx.deref_mut())
+        .await?;
+    for s in schedules {
+        sqlx::query(
+            r#"
+            INSERT INTO app_block_rule_schedules (rule_id, day_of_week, start_minute, end_minute)
+            VALUES ($1, $2, $3, $4)
+            "#,
+        )
+        .bind(rule_id)
+        .bind(s.day_of_week)
+        .bind(s.start_minute)
+        .bind(s.end_minute)
+        .execute(tx.deref_mut())
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(true)
+}
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub async fn app_block_rule_update(
+    pool: &PgPool,
+    rule_id: i64,
+    name: Option<&str>,
+    exe_pattern: Option<&str>,
+    match_mode: Option<&str>,
+    enabled: Option<bool>,
+    scopes: Option<&[(String, Option<Uuid>, Option<Uuid>)]>,
+    schedules: Option<&[RuleScheduleJson]>,
+) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    let exists = sqlx::query("SELECT 1 FROM app_block_rules WHERE id = $1")
+        .bind(rule_id)
+        .fetch_optional(tx.deref_mut())
+        .await?;
+    if exists.is_none() {
+        tx.rollback().await?;
+        return Ok(false);
+    }
+
+    if name.is_some() || exe_pattern.is_some() || match_mode.is_some() || enabled.is_some() {
+        sqlx::query(
+            r#"
+            UPDATE app_block_rules
+            SET name = COALESCE($2, name),
+                exe_pattern = COALESCE($3, exe_pattern),
+                match_mode = COALESCE($4, match_mode),
+                enabled = COALESCE($5, enabled)
+            WHERE id = $1
+            "#,
+        )
+        .bind(rule_id)
+        .bind(name)
+        .bind(exe_pattern)
+        .bind(match_mode)
+        .bind(enabled)
+        .execute(tx.deref_mut())
+        .await?;
+    }
+
+    if let Some(scopes_rows) = scopes {
+        sqlx::query("DELETE FROM app_block_rule_scopes WHERE rule_id = $1")
+            .bind(rule_id)
+            .execute(tx.deref_mut())
+            .await?;
+        for (kind, group_id, agent_id) in scopes_rows {
+            sqlx::query(
+                "INSERT INTO app_block_rule_scopes (rule_id, scope_kind, group_id, agent_id) VALUES ($1, $2, $3, $4)",
+            )
+            .bind(rule_id)
+            .bind(kind.as_str())
+            .bind(group_id)
+            .bind(agent_id)
+            .execute(tx.deref_mut())
+            .await?;
+        }
+    }
+
+    if let Some(sched_rows) = schedules {
+        sqlx::query("DELETE FROM app_block_rule_schedules WHERE rule_id = $1")
+            .bind(rule_id)
+            .execute(tx.deref_mut())
+            .await?;
+        for s in sched_rows {
+            sqlx::query(
+                r#"
+                INSERT INTO app_block_rule_schedules (rule_id, day_of_week, start_minute, end_minute)
+                VALUES ($1, $2, $3, $4)
+                "#,
+            )
+            .bind(rule_id)
+            .bind(s.day_of_week)
+            .bind(s.start_minute)
+            .bind(s.end_minute)
+            .execute(tx.deref_mut())
+            .await?;
+        }
+    }
+
+    tx.commit().await?;
+    Ok(true)
+}
+
 /// Toggle a rule's enabled state. Returns false if the rule wasn't found.
+#[allow(dead_code)]
 pub async fn app_block_rule_set_enabled(pool: &PgPool, rule_id: i64, enabled: bool) -> Result<bool> {
     let r = sqlx::query("UPDATE app_block_rules SET enabled = $2 WHERE id = $1")
         .bind(rule_id)

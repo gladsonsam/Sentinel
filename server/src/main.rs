@@ -88,7 +88,25 @@ async fn main() -> anyhow::Result<()> {
     sqlx::migrate!("./migrations")
         .run(&pool)
         .await
-        .map_err(|e| anyhow::anyhow!("Migration failed: {e}"))?;
+        .map_err(|e| match e {
+            sqlx::migrate::MigrateError::VersionMismatch(v) => anyhow::anyhow!(
+                "Migration {v} checksum mismatch: the SQL embedded in this binary does not match `_sqlx_migrations` (common after editing an already-applied migration, or CRLF vs LF drift).\n\
+                 \n\
+                 Fix: rebuild the server from the repo, then sync checksums from the **same** `server/migrations` files used for that build:\n\
+ cargo run --locked -p sentinel-server --bin migration_checksums\n\
+                 Apply the printed UPDATEs with `psql` against this database, then restart.\n\
+                 Inspect: SELECT version, encode(checksum,'hex') AS checksum_hex FROM _sqlx_migrations WHERE version = {v};\n\
+                 \n\
+                 (Docker builds now normalize `*.sql` to LF before compile.)\n\
+                 \n\
+                 Underlying error: {e}"
+            ),
+            sqlx::migrate::MigrateError::Dirty(v) => anyhow::anyhow!(
+                "Migration {v} is dirty (partial apply). Check `_sqlx_migrations` for success = false. Resolve the failed migration SQL manually, then delete or fix that row before restarting.\n\
+                 Underlying error: {e}"
+            ),
+            _ => anyhow::anyhow!("Migration failed: {e}"),
+        })?;
 
     info!("Database ready.");
 

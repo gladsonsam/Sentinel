@@ -182,17 +182,15 @@ fn strip_ansi_escapes(input: &str) -> String {
     let mut out = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
     while let Some(c) = chars.next() {
-        if c == '\u{1b}' {
-            if chars.peek() == Some(&'[') {
+        if c == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            while let Some(&ch) = chars.peek() {
                 chars.next();
-                while let Some(&ch) = chars.peek() {
-                    chars.next();
-                    if ch.is_ascii_alphabetic() {
-                        break;
-                    }
+                if ch.is_ascii_alphabetic() {
+                    break;
                 }
-                continue;
             }
+            continue;
         }
         out.push(c);
     }
@@ -323,9 +321,14 @@ fn save_config(
     config_tx: State<SharedConfigTx>,
 ) -> Result<(), String> {
     // Lock once to avoid deadlocks (multiple lock() calls in one expression can re-lock).
-    let (preserve_ui_hash, preserve_internet_blocked, preserve_app_block_rules) = {
+    let (preserve_ui_hash, preserve_internet_blocked, preserve_internet_block_rules, preserve_app_block_rules) = {
         let cur = stored.0.lock().unwrap();
-        (cur.ui_password_hash.clone(), cur.internet_blocked, cur.app_block_rules.clone())
+        (
+            cur.ui_password_hash.clone(),
+            cur.internet_blocked,
+            cur.internet_block_rules.clone(),
+            cur.app_block_rules.clone(),
+        )
     };
 
     let ui_hash = if let Some(ref pw) = config.new_password {
@@ -347,6 +350,8 @@ fn save_config(
         auto_update_enabled: config.auto_update_enabled,
         // Preserve the server-managed internet block state; the settings UI does not touch it.
         internet_blocked: preserve_internet_blocked,
+        // Preserve internet block rules; managed remotely.
+        internet_block_rules: preserve_internet_block_rules,
         // Preserve app block rules; managed remotely.
         app_block_rules: preserve_app_block_rules,
     };
@@ -738,16 +743,13 @@ pub fn run_tauri(
         })
         // ── Window close → hide instead of quit ──────────────────────────────
         .on_window_event(|window, event| {
-            match event {
-                tauri::WindowEvent::CloseRequested { api, .. } => {
-                    api.prevent_close();
-                    let _ = window.emit("lock_ui", ());
-                    // Destroy to reclaim WebView2 memory; recreate on demand.
-                    if let Some(w) = window.app_handle().get_webview_window(window.label()) {
-                        let _ = w.destroy();
-                    }
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                api.prevent_close();
+                let _ = window.emit("lock_ui", ());
+                // Destroy to reclaim WebView2 memory; recreate on demand.
+                if let Some(w) = window.app_handle().get_webview_window(window.label()) {
+                    let _ = w.destroy();
                 }
-                _ => {}
             }
         })
         .build(tauri::generate_context!())

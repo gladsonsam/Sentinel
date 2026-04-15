@@ -333,6 +333,13 @@ export interface AppBlockEvent {
 
 // ── Internet block rules ──────────────────────────────────────────────────────
 
+export interface RuleSchedule {
+  /** Sunday=0 .. Saturday=6 (agent-local time). */
+  day_of_week: number;
+  start_minute: number;
+  end_minute: number;
+}
+
 export interface InternetBlockRuleScope {
   kind: "all" | "group" | "agent";
   group_id?: string;
@@ -345,6 +352,7 @@ export interface InternetBlockRule {
   enabled: boolean;
   created_at: string;
   scopes: InternetBlockRuleScope[];
+  schedules: RuleSchedule[];
 }
 
 // ── App block rules ───────────────────────────────────────────────────────────
@@ -368,6 +376,7 @@ export interface AppBlockRule {
   scope_kind?: "all" | "group" | "agent";
   /** Present when fetching the full rule list (includes all scope rows). */
   scopes?: AppBlockRuleScope[];
+  schedules: RuleSchedule[];
 }
 
 // ── UI ────────────────────────────────────────────────────────────────────────

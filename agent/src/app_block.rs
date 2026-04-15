@@ -11,7 +11,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 
-use crate::config::StoredBlockRule;
+use crate::config::{StoredBlockRule, StoredScheduleWindow};
+use crate::schedule;
 
 // ── Rule types ────────────────────────────────────────────────────────────────
 
@@ -33,6 +34,8 @@ pub struct BlockRule {
     pub id: i64,
     pub exe_pattern: String,
     pub match_mode: MatchMode,
+    #[serde(default)]
+    pub schedules: Vec<StoredScheduleWindow>,
 }
 
 impl BlockRule {
@@ -41,6 +44,7 @@ impl BlockRule {
             id: s.id,
             exe_pattern: s.exe_pattern.clone(),
             match_mode: MatchMode::from_str(&s.match_mode),
+            schedules: s.schedules.clone(),
         }
     }
 
@@ -52,6 +56,7 @@ impl BlockRule {
                 MatchMode::Exact => "exact".into(),
                 MatchMode::Contains => "contains".into(),
             },
+            schedules: self.schedules.clone(),
         }
     }
 
@@ -92,21 +97,26 @@ pub fn new_kill_report_tx() -> KillReportTx {
 // ── Enforcer loop ─────────────────────────────────────────────────────────────
 
 pub async fn run_enforcer(rules: SharedRules, kill_tx: KillReportTx) {
-    let mut interval = tokio::time::interval(Duration::from_secs(2));
-    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut poll = tokio::time::interval(Duration::from_secs(2));
+    poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
-        interval.tick().await;
+        poll.tick().await;
         let active: Vec<BlockRule> = {
             let lock = rules.lock().unwrap();
             if lock.is_empty() {
                 continue;
             }
-            lock.clone()
+            lock.iter()
+                .filter(|r| schedule::is_active_now_local(&r.schedules))
+                .cloned()
+                .collect()
         };
-        let kills = kill_matching_processes(&active);
+        if active.is_empty() {
+            continue;
+        }
+        let kills = scan_and_kill_matching_processes(&active);
         if !kills.is_empty() {
-            let sender = kill_tx.lock().unwrap().clone();
-            if let Some(tx) = sender {
+            if let Some(tx) = kill_tx.lock().unwrap().clone() {
                 for ev in kills {
                     let _ = tx.send(ev);
                 }
@@ -118,14 +128,16 @@ pub async fn run_enforcer(rules: SharedRules, kill_tx: KillReportTx) {
 // ── Windows: process enumeration + kill ───────────────────────────────────────
 
 #[cfg(windows)]
-fn kill_matching_processes(rules: &[BlockRule]) -> Vec<KillEvent> {
+fn scan_and_kill_matching_processes(rules: &[BlockRule]) -> Vec<KillEvent> {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W, TH32CS_SNAPPROCESS,
     };
     use windows::Win32::System::Threading::{
-        GetCurrentProcessId, OpenProcess, TerminateProcess, PROCESS_TERMINATE,
+        GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
+        PROCESS_QUERY_LIMITED_INFORMATION,
     };
+    use windows::core::PWSTR;
 
     let snap = match unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) } {
         Ok(h) => h,
@@ -154,20 +166,26 @@ fn kill_matching_processes(rules: &[BlockRule]) -> Vec<KillEvent> {
         let pid = entry.th32ProcessID;
 
         if pid != self_pid && pid != 0 && pid != 4 {
-            if let Some(rule) = rules.iter().find(|r| r.matches(&exe)) {
-                match unsafe { OpenProcess(PROCESS_TERMINATE, false, pid) } {
-                    Ok(handle) => {
-                        if unsafe { TerminateProcess(handle, 1) }.is_ok() {
-                            info!("App block: killed '{}' (pid {}) — rule #{}", exe, pid, rule.id);
-                            killed.push(KillEvent {
-                                rule_id: rule.id,
-                                rule_name: rule.exe_pattern.clone(),
-                                exe_name: exe.clone(),
-                            });
-                        }
-                        let _ = unsafe { CloseHandle(handle) };
-                    }
-                    Err(_) => {}
+            let image_path = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
+                .ok()
+                .and_then(|h| {
+                    let mut buf = [0u16; 1024];
+                    let mut size = buf.len() as u32;
+                    let r = unsafe {
+                        QueryFullProcessImageNameW(
+                            h,
+                            PROCESS_NAME_FORMAT(0),
+                            PWSTR(buf.as_mut_ptr()),
+                            &mut size,
+                        )
+                    };
+                    let _ = unsafe { CloseHandle(h) };
+                    r.ok().map(|_| String::from_utf16_lossy(&buf[..size as usize]))
+                });
+            let candidate = image_path.clone().unwrap_or_else(|| exe.clone());
+            if let Some(rule) = rules.iter().find(|r| r.matches(&candidate)) {
+                if let Some(kill) = kill_pid(pid, rule, &candidate) {
+                    killed.push(kill);
                 }
             }
         }
@@ -180,6 +198,31 @@ fn kill_matching_processes(rules: &[BlockRule]) -> Vec<KillEvent> {
 }
 
 #[cfg(not(windows))]
-fn kill_matching_processes(_rules: &[BlockRule]) -> Vec<KillEvent> {
+fn scan_and_kill_matching_processes(_rules: &[BlockRule]) -> Vec<KillEvent> {
     Vec::new()
+}
+
+#[cfg(windows)]
+fn kill_pid(pid: u32, rule: &BlockRule, candidate: &str) -> Option<KillEvent> {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{GetCurrentProcessId, OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+
+    let self_pid = unsafe { GetCurrentProcessId() };
+    if pid == 0 || pid == 4 || pid == self_pid {
+        return None;
+    }
+
+    let handle = unsafe { OpenProcess(PROCESS_TERMINATE, false, pid) }.ok()?;
+    let ok = unsafe { TerminateProcess(handle, 1) }.is_ok();
+    let _ = unsafe { CloseHandle(handle) };
+    if !ok {
+        return None;
+    }
+
+    info!("App block: killed '{}' (pid {}) — rule #{}", candidate, pid, rule.id);
+    Some(KillEvent {
+        rule_id: rule.id,
+        rule_name: rule.exe_pattern.clone(),
+        exe_name: candidate.to_string(),
+    })
 }

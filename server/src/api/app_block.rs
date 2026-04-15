@@ -78,7 +78,7 @@ pub async fn app_block_rules_list(
     State(s): State<Arc<AppState>>,
 ) -> Response {
     if let Some(agent_id) = params.agent_id {
-        match db::app_block_rules_effective_for_agent(&s.db, agent_id).await {
+        match db::app_block_rules_applicable_for_agent(&s.db, agent_id).await {
             Ok(rules) => Json(serde_json::json!({ "rules": rules })).into_response(),
             Err(e) => err500(e),
         }
@@ -107,6 +107,8 @@ pub struct CreateAppBlockRuleBody {
     #[serde(default = "default_match_mode")]
     pub match_mode: String,
     pub scopes: Vec<AppBlockRuleScope>,
+    #[serde(default)]
+    pub schedules: Vec<db::RuleScheduleJson>,
 }
 
 fn default_match_mode() -> String {
@@ -143,7 +145,15 @@ pub async fn app_block_rules_create(
         .collect();
 
     let ip = audit_ip(&headers, addr);
-    match db::app_block_rule_create(&s.db, &body.name, body.exe_pattern.trim(), match_mode, &scopes).await {
+    match db::app_block_rule_create(
+        &s.db,
+        &body.name,
+        body.exe_pattern.trim(),
+        match_mode,
+        &scopes,
+        &body.schedules,
+    )
+    .await {
         Ok(id) => {
             db::insert_audit_log_traced(
                 &s.db,
@@ -167,7 +177,18 @@ pub async fn app_block_rules_create(
 
 #[derive(Deserialize)]
 pub struct UpdateAppBlockRuleBody {
-    pub enabled: bool,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub exe_pattern: Option<String>,
+    #[serde(default)]
+    pub match_mode: Option<String>,
+    #[serde(default)]
+    pub scopes: Option<Vec<AppBlockRuleScope>>,
+    #[serde(default)]
+    pub schedules: Option<Vec<db::RuleScheduleJson>>,
 }
 
 pub async fn app_block_rules_update(
@@ -182,7 +203,35 @@ pub async fn app_block_rules_update(
         return (StatusCode::FORBIDDEN, Json(serde_json::json!({ "error": "Forbidden" }))).into_response();
     }
     let ip = audit_ip(&headers, addr);
-    match db::app_block_rule_set_enabled(&s.db, rule_id, body.enabled).await {
+    let match_mode = body.match_mode.as_deref().map(|m| if m == "exact" { "exact" } else { "contains" });
+    if let Some(ref pat) = body.exe_pattern {
+        if let Some(hit) = check_protected(pat.trim(), match_mode.unwrap_or("contains")) {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({
+                    "error": format!("'{}' is a protected system process and cannot be blocked.", hit)
+                })),
+            )
+            .into_response();
+        }
+    }
+
+    #[allow(clippy::type_complexity)]
+    let scopes: Option<Vec<(String, Option<Uuid>, Option<Uuid>)>> = body.scopes.as_ref().map(|sc| {
+        sc.iter().map(|s| (s.kind.clone(), s.group_id, s.agent_id)).collect()
+    });
+
+    match db::app_block_rule_update(
+        &s.db,
+        rule_id,
+        body.name.as_deref(),
+        body.exe_pattern.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()),
+        match_mode,
+        body.enabled,
+        scopes.as_deref(),
+        body.schedules.as_deref(),
+    )
+    .await {
         Ok(false) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Not found" }))).into_response(),
         Ok(true) => {
             db::insert_audit_log_traced(
@@ -191,7 +240,7 @@ pub async fn app_block_rules_update(
                 None,
                 "app_block_rule_update",
                 "ok",
-                &serde_json::json!({ "id": rule_id, "enabled": body.enabled }),
+                &serde_json::json!({ "id": rule_id }),
                 ip.as_deref(),
             )
             .await;

@@ -87,7 +87,7 @@ pub async fn get_status(State(s): State<Arc<AppState>>) -> Response {
             }))
             .into_response()
         }
-        Err(e) => err500(e.into()),
+        Err(e) => err500(e),
     }
 }
 
@@ -140,7 +140,7 @@ pub async fn put_settings(
             .await;
             get_status(State(s)).await
         }
-        Err(e) => err500(e.into()),
+        Err(e) => err500(e),
     }
 }
 
@@ -160,7 +160,7 @@ pub async fn post_update_now(
     let ip = audit_ip(&headers, addr);
     let set = match url_categorization::get_settings(&s.db).await {
         Ok(v) => v,
-        Err(e) => return err500(e.into()),
+        Err(e) => return err500(e),
     };
     url_categorization::spawn_update_job(s.db.clone(), set.source_url.clone());
     db::insert_audit_log_traced(

@@ -57,7 +57,7 @@ pub async fn create_enrollment_token(
             .into_response();
     }
 
-    let uses = body.uses.max(1).min(100_000);
+    let uses = body.uses.clamp(1, 100_000);
     let expires_at = match body.expires_in_hours {
         Some(h) if h > 0 => Some(Utc::now() + Duration::hours(h)),
         Some(_) => {

@@ -68,10 +68,33 @@ pub struct Config {
     #[serde(default)]
     pub internet_blocked: bool,
 
+    /// Effective internet block rules pushed from the server (schedule-aware).
+    /// Persisted so curfews continue offline across reboots.
+    #[serde(default)]
+    pub internet_block_rules: Vec<StoredInternetBlockRule>,
+
     /// App blocking rules pushed from the server. Persisted so enforcement
     /// resumes across reboots before the server reconnects.
     #[serde(default)]
     pub app_block_rules: Vec<StoredBlockRule>,
+}
+
+/// Time window in agent-local time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredScheduleWindow {
+    /// Sunday=0 .. Saturday=6
+    pub day_of_week: u8,
+    pub start_minute: u16,
+    pub end_minute: u16,
+}
+
+/// Minimal representation of an internet block rule stored in config.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredInternetBlockRule {
+    pub id: i64,
+    pub name: String,
+    #[serde(default)]
+    pub schedules: Vec<StoredScheduleWindow>,
 }
 
 /// Minimal representation of an app block rule stored in config.
@@ -80,6 +103,8 @@ pub struct StoredBlockRule {
     pub id: i64,
     pub exe_pattern: String,
     pub match_mode: String,
+    #[serde(default)]
+    pub schedules: Vec<StoredScheduleWindow>,
 }
 
 fn default_agent_name() -> String {
@@ -103,6 +128,7 @@ impl Default for Config {
             ui_password_hash: empty_password_hash(),
             auto_update_enabled: default_auto_update_enabled(),
             internet_blocked: false,
+            internet_block_rules: Vec::new(),
             app_block_rules: Vec::new(),
         }
     }
@@ -202,12 +228,11 @@ fn try_load_machine_config_bytes(bytes: &[u8]) -> Option<Config> {
         return None;
     }
     try_load_dpapi_dat_machine(bytes).or_else(|| {
-        try_load_legacy_base64_dat(bytes).map(|c| {
+        try_load_legacy_base64_dat(bytes).inspect(|_c| {
             warn!(
                 "Loaded legacy base64 config.dat at {}; will use DPAPI machine scope on next save",
                 machine_config_path().display()
             );
-            c
         })
     })
 }

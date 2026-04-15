@@ -29,6 +29,8 @@ RUN cargo fetch --locked
 
 # Real build.
 COPY server/ server/
+# SQLx hashes raw bytes; CRLF from Windows Docker build contexts changes SHA-384 vs LF.
+RUN find server/migrations -name '*.sql' -exec sed -i 's/\r$//' {} +
 RUN cargo build --release --locked --package sentinel-server
 
 # ── Stage 3: Runtime ──────────────────────────────────────────────────────────
