@@ -21,6 +21,7 @@ mod url_categorization;
 mod wol;
 mod ws_agent;
 mod ws_viewer;
+mod scheduler;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -253,6 +254,8 @@ async fn main() -> anyhow::Result<()> {
     // URL categorization (UT1 lists): background importer + categorization worker (disabled by default).
     url_categorization::spawn(state.clone());
 
+    scheduler::spawn(state.clone());
+
     mdns_broadcast::spawn_sentinel_mdns_if_enabled(cfg.listen.port());
 
     if let Some(ref m) = prom_metrics {
@@ -374,6 +377,8 @@ async fn main() -> anyhow::Result<()> {
         .merge(protected)
         .route_service("/agents", ServeFile::new(index_path.clone()))
         .route_service("/agents/*path", ServeFile::new(index_path.clone()))
+        .route_service("/rules", ServeFile::new(index_path.clone()))
+        .route_service("/rules/*path", ServeFile::new(index_path.clone()))
         .route_service("/settings", ServeFile::new(index_path.clone()))
         .route_service("/settings/*path", ServeFile::new(index_path.clone()))
         .fallback_service(

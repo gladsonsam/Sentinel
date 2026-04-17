@@ -474,7 +474,6 @@ export function App() {
       const response = await fetch(apiUrl("/auth/status"), {
         credentials: "include",
       });
-      setAuthenticated(response.ok);
       if (response.ok) {
         fetch(apiUrl("/me"), { credentials: "include" })
           .then((r) => (r.ok ? r.json() : null))
@@ -485,14 +484,17 @@ export function App() {
             } else {
               setDashboardCsrfToken(null);
             }
+            setAuthenticated(true);
           })
           .catch(() => {
             setMe(null);
             setDashboardCsrfToken(null);
+            setAuthenticated(false);
           });
       } else {
         setMe(null);
         setDashboardCsrfToken(null);
+        setAuthenticated(false);
       }
     } catch {
       setAuthenticated(false);

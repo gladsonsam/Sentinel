@@ -1412,6 +1412,27 @@ fn handle_server_command(args: ServerCommandArgs<'_>) {
                 let _ = out.send(Message::Text(payload)).await;
             });
         }
+        "RunScript" => {
+            let request_id = val["request_id"].as_str().unwrap_or("").to_string();
+            let shell = val["shell"].as_str().unwrap_or("powershell").to_string();
+            let script = val["script"].as_str().unwrap_or("").to_string();
+            let timeout_secs = val["timeout_secs"].as_u64().unwrap_or(60);
+            let out = out_tx.clone();
+            tokio::spawn(async move {
+                let outcome = crate::remote_script::run(&shell, &script, timeout_secs).await;
+                let payload = serde_json::json!({
+                    "type": "script_result",
+                    "request_id": request_id,
+                    "ok": outcome.ok,
+                    "exit_code": outcome.exit_code,
+                    "stdout": outcome.stdout,
+                    "stderr": outcome.stderr,
+                    "error": outcome.error,
+                })
+                .to_string();
+                let _ = out.send(Message::Text(payload)).await;
+            });
+        }
         "ReadLogTail" => {
             const MAX_LOG_KIND_CHARS: usize = 64;
             const MAX_KB_DEFAULT: u32 = 512;

@@ -379,6 +379,51 @@ export interface AppBlockRule {
   schedules: RuleSchedule[];
 }
 
+// ── Scheduled Scripts ───────────────────────────────────────────────────────────
+
+export interface ScheduledScriptScope {
+  kind: "all" | "group" | "agent";
+  group_id?: string;
+  agent_id?: string;
+}
+
+export interface ScheduledScriptSchedule {
+  frequency: "hourly" | "daily" | "weekly";
+  day_of_week?: number | null;
+  fire_minute: number;
+}
+
+export interface ScheduledScript {
+  id: number;
+  name: string;
+  shell: string;
+  script: string;
+  timeout_secs: number;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+  scopes: ScheduledScriptScope[];
+  schedules: ScheduledScriptSchedule[];
+}
+
+export interface ScheduledScriptEvent {
+  script_id: number;
+  agent_id: string;
+  agent_name: string;
+  rule_name?: string; // Only for global feed
+  status: string;
+  expected_fire_time: string;
+  output?: string;
+}
+
+export interface AgentSessionEvent {
+  id: number;
+  agent_id: string;
+  agent_name: string;
+  connected_at: string;
+  disconnected_at: string | null;
+}
+
 // ── UI ────────────────────────────────────────────────────────────────────────
 
 export type TabKey =

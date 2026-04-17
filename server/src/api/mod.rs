@@ -18,13 +18,14 @@ mod network_policy;
 mod pagination;
 mod retention;
 mod settings;
-mod software_scripts;
+pub(crate) mod software_scripts;
 mod url_categorization;
 mod url_category_overrides;
 mod url_categorization_recalc;
 mod url_custom_categories;
 mod users;
 mod version;
+pub mod scheduled_scripts;
 
 use std::sync::Arc;
 
@@ -309,5 +310,29 @@ pub fn router() -> Router<Arc<AppState>> {
         .route(
             "/agents/:id/known-exes",
             get(app_block::agent_known_exes),
+        )
+        .route(
+            "/scheduled-scripts",
+            get(scheduled_scripts::list_scripts).post(scheduled_scripts::create_script),
+        )
+        .route(
+            "/scheduled-scripts/:id",
+            put(scheduled_scripts::update_script).delete(scheduled_scripts::delete_script),
+        )
+        .route(
+            "/scheduled-scripts/:id/events",
+            get(scheduled_scripts::events_for_script),
+        )
+        .route(
+            "/scheduled-scripts/:id/trigger",
+            post(scheduled_scripts::trigger_script),
+        )
+        .route(
+            "/scheduled-script-events",
+            get(scheduled_scripts::events_all),
+        )
+        .route(
+            "/agent-sessions",
+            get(agents_list::agent_sessions_all),
         )
 }

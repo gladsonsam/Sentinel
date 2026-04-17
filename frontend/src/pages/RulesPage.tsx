@@ -30,7 +30,6 @@ import { useCollection } from "@cloudscape-design/collection-hooks";
 import { api, apiUrl } from "../lib/api";
 import { fmtDateTime } from "../lib/utils";
 import { AppIcon } from "../components/common/AppIcon";
-import { AppBlockModal } from "../components/tabs/AppBlockModal";
 import type {
   Agent,
   AgentGroup,
@@ -40,6 +39,7 @@ import type {
   AlertRuleScopeKind,
   AlertRuleScope,
   AppBlockRule,
+  AppBlockRuleScope,
   AppBlockEvent,
   InternetBlockRule,
 } from "../lib/types";
@@ -75,11 +75,14 @@ function scopeBadge(scopes?: AlertRuleScope[], groups?: AgentGroup[], agentsById
   return <Badge color="blue">Agent: {a?.name ?? s.agent_id ?? "?"}</Badge>;
 }
 
-function appBlockScopeBadge(rule: AppBlockRule) {
-  const kind = rule.scope_kind ?? rule.scopes?.[0]?.kind ?? "agent";
-  if (kind === "all") return <Badge color="red">All devices</Badge>;
-  if (kind === "group") return <Badge color="severity-medium">Group</Badge>;
-  return <Badge color="blue">This device</Badge>;
+function appBlockScopeBadge(rule: AppBlockRule, groups?: AgentGroup[], agentsById?: Record<string, Agent>) {
+  if (!rule.scopes || rule.scopes.length === 0) {
+    const kind = rule.scope_kind ?? "agent";
+    if (kind === "all") return <Badge color="red">All devices</Badge>;
+    if (kind === "group") return <Badge color="severity-medium">Group</Badge>;
+    return <Badge color="blue">This device</Badge>;
+  }
+  return scopeBadge(rule.scopes as unknown as AlertRuleScope[], groups, agentsById);
 }
 
 // ── Screenshot preview ────────────────────────────────────────────────────────
@@ -201,8 +204,8 @@ function AlertRuleFormModal({
         </FormField>
         <ColumnLayout columns={2}>
           <FormField label="Match mode">
-          <SegmentedControl selectedId={form.match_mode} options={MATCH_OPTIONS}
-            onChange={({ detail }) => onFormChange({ ...form, match_mode: detail.selectedId as AlertRuleMatchMode })} />
+            <SegmentedControl selectedId={form.match_mode} options={MATCH_OPTIONS}
+              onChange={({ detail }) => onFormChange({ ...form, match_mode: detail.selectedId as AlertRuleMatchMode })} />
           </FormField>
           <FormField label="Cooldown (seconds)" description="Min seconds between repeated matches.">
             <Input type="number" value={String(form.cooldown_secs)}
@@ -217,19 +220,25 @@ function AlertRuleFormModal({
         <FormField label="Scope" description="Which agents this rule monitors.">
           <SpaceBetween size="xs">
             {form.scopes.map((s, i) => (
-              <SpaceBetween key={i} direction="horizontal" size="xs" alignItems="center">
-                <Select selectedOption={SCOPE_OPTIONS.find((o) => o.value === s.kind) ?? SCOPE_OPTIONS[0]}
-                  options={SCOPE_OPTIONS}
-                  onChange={({ detail }) => updateScope(i, { kind: detail.selectedOption.value as AlertRuleScopeKind })} />
+              <div key={i} style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center", borderBottom: "1px solid #eee", paddingBottom: "8px" }}>
+                <div style={{ flex: "1 1 150px" }}>
+                  <Select selectedOption={SCOPE_OPTIONS.find((o) => o.value === s.kind) ?? SCOPE_OPTIONS[0]}
+                    options={SCOPE_OPTIONS}
+                    onChange={({ detail }) => updateScope(i, { kind: detail.selectedOption.value as AlertRuleScopeKind })} />
+                </div>
                 {s.kind === "group" && (
-                  <Select placeholder="Select group" selectedOption={groupOptions.find((o) => o.value === s.group_id) ?? null}
-                    options={groupOptions}
-                    onChange={({ detail }) => updateScope(i, { group_id: detail.selectedOption.value })} />
+                  <div style={{ flex: "1 1 150px" }}>
+                    <Select placeholder="Select group" selectedOption={groupOptions.find((o) => o.value === s.group_id) ?? null}
+                      options={groupOptions}
+                      onChange={({ detail }) => updateScope(i, { group_id: detail.selectedOption.value })} />
+                  </div>
                 )}
                 {s.kind === "agent" && (
-                  <Select placeholder="Select agent" selectedOption={agentOptions.find((o) => o.value === s.agent_id) ?? null}
-                    options={agentOptions}
-                    onChange={({ detail }) => updateScope(i, { agent_id: detail.selectedOption.value })} />
+                  <div style={{ flex: "1 1 150px" }}>
+                    <Select placeholder="Select agent" selectedOption={agentOptions.find((o) => o.value === s.agent_id) ?? null}
+                      options={agentOptions}
+                      onChange={({ detail }) => updateScope(i, { agent_id: detail.selectedOption.value })} />
+                  </div>
                 )}
                 {form.scopes.length > 1 && (
                   <Button variant="inline-icon" iconName="remove" onClick={() => {
@@ -237,7 +246,7 @@ function AlertRuleFormModal({
                     onFormChange({ ...form, scopes });
                   }} />
                 )}
-              </SpaceBetween>
+              </div>
             ))}
             <Button variant="inline-link" iconName="add-plus" onClick={() => onFormChange({ ...form, scopes: [...form.scopes, emptyScopeRow()] })}>
               Add scope
@@ -355,17 +364,22 @@ function AlertRulesTab({ groups, agents }: { groups: AgentGroup[]; agents: Agent
           { id: "scope", header: "Scope", cell: (r) => scopeBadge(r.scopes, groups, agentsById), width: "20%" },
           { id: "enabled", header: "Active", cell: (r) => <Toggle checked={r.enabled} onChange={() => { void api.alertRulesUpdate(r.id, { name: r.name, channel: r.channel, pattern: r.pattern, match_mode: r.match_mode, case_insensitive: r.case_insensitive, cooldown_secs: r.cooldown_secs, enabled: !r.enabled, take_screenshot: r.take_screenshot, scopes: (r.scopes ?? []).map((s) => ({ kind: s.kind, group_id: s.group_id, agent_id: s.agent_id })) }).then(load); }} />, width: 80 },
           {
-            id: "actions", header: "", width: 100,
+            id: "actions",
+            header: "Actions",
+            width: 130,
+            minWidth: 120,
             cell: (r) => (
               <ButtonDropdown
-                variant="inline-icon"
                 expandToViewport
                 items={[{ id: "history", text: "Event history" }, { id: "edit", text: "Edit" }, { id: "delete", text: "Delete" }]}
                 onItemClick={({ detail }) => {
                   if (detail.id === "history") void openHistory(r);
                   if (detail.id === "edit") openEdit(r);
                   if (detail.id === "delete") setDeleteRule(r);
-                }} />
+                }}
+              >
+                Actions
+              </ButtonDropdown>
             ),
           },
         ]}
@@ -411,17 +425,18 @@ function AlertRulesTab({ groups, agents }: { groups: AgentGroup[]; agents: Agent
 
 // ── App Blocking tab ──────────────────────────────────────────────────────────
 
-function AppBlockingTab({ agents }: { agents: Agent[] }) {
+function AppBlockingTab({ groups, agents }: { groups: AgentGroup[]; agents: Agent[] }) {
   const [rules, setRules] = useState<AppBlockRule[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [editRule, setEditRule] = useState<AppBlockRule | null>(null);
+  const [modalMode, setModalMode] = useState<"create" | "edit">("create");
   const [editSaving, setEditSaving] = useState(false);
   const [editExePattern, setEditExePattern] = useState("");
   const [editMatchMode, setEditMatchMode] = useState<"contains" | "exact">("contains");
   const [editLabel, setEditLabel] = useState("");
-  const [editApplyToAll, setEditApplyToAll] = useState(false);
+  const [editScopes, setEditScopes] = useState<ScopeFormRow[]>([emptyScopeRow()]);
   const [editScheduled, setEditScheduled] = useState(false);
   const [editScheduleRows, setEditScheduleRows] = useState<Array<{ day_of_week: number; start: string; end: string }>>([
     { day_of_week: 1, start: "00:00", end: "23:59" },
@@ -471,8 +486,28 @@ function AppBlockingTab({ agents }: { agents: Agent[] }) {
     sorting: {},
   });
 
-  // Use first agent as context for "known exes" if available (admin view picks any)
   const contextAgentId = agents[0]?.id ?? "";
+
+  const agentsById = useMemo(() => {
+    const m: Record<string, Agent> = {};
+    for (const a of agents) m[a.id] = a;
+    return m;
+  }, [agents]);
+  const groupOptions = groups.map((g) => ({ label: g.name, value: g.id }));
+  const agentOptions = agents.map((a) => ({ label: a.name, value: a.id }));
+  const SCOPE_OPTIONS = [{ label: "All agents", value: "all" }, { label: "Agent group", value: "group" }, { label: "Single agent", value: "agent" }];
+
+  const updateScope = (i: number, patch: Partial<ScopeFormRow>) => {
+    setEditScopes((prev) => {
+      const next = [...prev];
+      const cur = { ...next[i], ...patch };
+      if (patch.kind === "all") { cur.group_id = ""; cur.agent_id = ""; }
+      if (patch.kind === "group") cur.agent_id = "";
+      if (patch.kind === "agent") cur.group_id = "";
+      next[i] = cur;
+      return next;
+    });
+  };
 
   const DAY_OPTIONS = [
     { label: "Sunday", value: "0" },
@@ -528,25 +563,38 @@ function AppBlockingTab({ agents }: { agents: Agent[] }) {
     return <span>{parts.join(", ")}{more}</span>;
   };
 
+  const openCreate = () => {
+    setModalMode("create");
+    setEditRule(null);
+    setEditExePattern("");
+    setEditMatchMode("contains");
+    setEditLabel("");
+    setEditScopes([{ kind: "all", group_id: "", agent_id: "" }]);
+    setEditScheduled(false);
+    setEditScheduleRows([{ day_of_week: 1, start: "00:00", end: "23:59" }]);
+    setShowModal(true);
+  };
+
   const openEdit = (r: AppBlockRule) => {
+    setModalMode("edit");
     setEditRule(r);
     setEditExePattern(r.exe_pattern);
     setEditMatchMode(r.match_mode);
     setEditLabel(r.name || "");
-    // best-effort: in this UI we only support toggling between "all" and "single agent"
-    const kind = r.scopes?.[0]?.kind ?? r.scope_kind ?? "agent";
-    setEditApplyToAll(kind === "all");
+    const scopes = r.scopes && r.scopes.length > 0 ? r.scopes : [{ kind: r.scope_kind ?? "agent", group_id: "", agent_id: contextAgentId }];
+    setEditScopes(scopesToForm(scopes as unknown as AlertRuleScope[]));
     const sched = Array.isArray(r.schedules) ? r.schedules : [];
     setEditScheduled(sched.length > 0);
     setEditScheduleRows(
       sched.length > 0
         ? sched.map((w) => ({
-            day_of_week: w.day_of_week,
-            start: minuteToTime(w.start_minute),
-            end: minuteToTime(w.end_minute),
-          }))
+          day_of_week: w.day_of_week,
+          start: minuteToTime(w.start_minute),
+          end: minuteToTime(w.end_minute),
+        }))
         : [{ day_of_week: 1, start: "00:00", end: "23:59" }],
     );
+    setShowModal(true);
   };
 
   return (
@@ -563,7 +611,7 @@ function AppBlockingTab({ agents }: { agents: Agent[] }) {
         header={
           <Header counter={`(${rules.length})`} actions={
             <SpaceBetween direction="horizontal" size="xs">
-              <Button variant="primary" iconName="add-plus" onClick={() => setShowModal(true)}>New rule</Button>
+              <Button variant="primary" iconName="add-plus" onClick={openCreate}>New rule</Button>
             </SpaceBetween>
           }>App Blocking</Header>
         }
@@ -583,14 +631,16 @@ function AppBlockingTab({ agents }: { agents: Agent[] }) {
             width: "35%",
           },
           { id: "name", header: "Label", cell: (r) => r.name || <Box color="text-body-secondary">—</Box>, width: "20%" },
-          { id: "scope", header: "Scope", cell: (r) => appBlockScopeBadge(r), width: 150 },
+          { id: "scope", header: "Scope", cell: (r) => appBlockScopeBadge(r, groups, agentsById), width: 150 },
           { id: "schedule", header: "Schedule", cell: (r) => scheduleSummary(r.schedules), width: 220 },
           { id: "enabled", header: "Active", cell: (r) => <Toggle checked={r.enabled} disabled={togglingId === r.id} onChange={() => toggleRule(r)} />, width: 80 },
           {
-            id: "actions", header: "", width: 100,
+            id: "actions",
+            header: "Actions",
+            width: 130,
+            minWidth: 120,
             cell: (r) => (
               <ButtonDropdown
-                variant="inline-icon"
                 expandToViewport
                 items={[
                   { id: "edit", text: "Edit" },
@@ -601,55 +651,59 @@ function AppBlockingTab({ agents }: { agents: Agent[] }) {
                   if (detail.id === "edit") openEdit(r);
                   if (detail.id === "history") void openHistory(r);
                   if (detail.id === "delete") void deleteRule(r);
-                }} />
+                }}
+              >
+                Actions
+              </ButtonDropdown>
             ),
           },
         ]}
       />
 
-      {/* Edit modal (basic) */}
+      {/* Create / Edit modal */}
       <Modal
-        visible={editRule != null}
-        onDismiss={() => setEditRule(null)}
-        header={`Edit app block rule — ${editRule?.name || editRule?.exe_pattern || ""}`}
+        visible={showModal}
+        onDismiss={() => setShowModal(false)}
+        header={modalMode === "create" ? "Add app block rule" : `Edit app block rule — ${editRule?.name || editRule?.exe_pattern || ""}`}
         size="medium"
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
-              <Button variant="link" onClick={() => setEditRule(null)} disabled={editSaving}>
+              <Button variant="link" onClick={() => setShowModal(false)} disabled={editSaving}>
                 Cancel
               </Button>
               <Button
                 variant="primary"
                 loading={editSaving}
                 onClick={() => {
-                  const r = editRule;
-                  if (!r) return;
                   const pattern = editExePattern.trim();
                   if (!pattern) {
                     setError("EXE name is required.");
                     return;
                   }
                   setEditSaving(true);
-                  const scopes = editApplyToAll
-                    ? [{ kind: "all" as const }]
-                    : [{ kind: "agent" as const, agent_id: contextAgentId }];
+                  const scopes = formScopesToApi(editScopes) as unknown as AppBlockRuleScope[];
                   const schedules = editScheduled ? expandScheduleRows(editScheduleRows) : [];
-                  api
-                    .appBlockRulesUpdate(r.id, {
-                      name: editLabel.trim() || pattern,
-                      exe_pattern: pattern,
-                      match_mode: editMatchMode,
-                      scopes,
-                      schedules,
-                    })
-                    .then(() => load())
-                    .then(() => setEditRule(null))
+
+                  const body = {
+                    name: editLabel.trim() || pattern,
+                    exe_pattern: pattern,
+                    match_mode: editMatchMode,
+                    scopes,
+                    schedules,
+                  };
+
+                  const p = modalMode === "create"
+                    ? api.appBlockRulesCreate(body)
+                    : api.appBlockRulesUpdate(editRule!.id, body);
+
+                  p.then(() => load())
+                    .then(() => setShowModal(false))
                     .catch((e) => setError(String(e)))
                     .finally(() => setEditSaving(false));
                 }}
               >
-                Save
+                {modalMode === "create" ? "Add rule" : "Save"}
               </Button>
             </SpaceBetween>
           </Box>
@@ -673,9 +727,37 @@ function AppBlockingTab({ agents }: { agents: Agent[] }) {
           <FormField label="Label">
             <Input value={editLabel} onChange={({ detail }) => setEditLabel(detail.value)} placeholder="Optional" />
           </FormField>
-          <Checkbox checked={editApplyToAll} onChange={({ detail }) => setEditApplyToAll(detail.checked)}>
-            Apply to all devices
-          </Checkbox>
+          <FormField label="Scope" description="Which agents this rule applies to.">
+            <SpaceBetween size="xs">
+              {editScopes.map((s, i) => (
+                <div key={i} style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center", borderBottom: "1px solid #eee", paddingBottom: "8px" }}>
+                  <div style={{ flex: "1 1 150px" }}>
+                    <Select selectedOption={SCOPE_OPTIONS.find((o) => o.value === s.kind) ?? SCOPE_OPTIONS[0]}
+                      options={SCOPE_OPTIONS}
+                      onChange={({ detail }) => updateScope(i, { kind: detail.selectedOption.value as ScopeFormRow["kind"] })} />
+                  </div>
+                  {s.kind === "group" && (
+                    <div style={{ flex: "1 1 150px" }}>
+                      <Select placeholder="Select group" selectedOption={groupOptions.find((o) => o.value === s.group_id) ?? null}
+                        options={groupOptions}
+                        onChange={({ detail }) => updateScope(i, { group_id: detail.selectedOption.value })} />
+                    </div>
+                  )}
+                  {s.kind === "agent" && (
+                    <div style={{ flex: "1 1 150px" }}>
+                      <Select placeholder="Select agent" selectedOption={agentOptions.find((o) => o.value === s.agent_id) ?? null}
+                        options={agentOptions}
+                        onChange={({ detail }) => updateScope(i, { agent_id: detail.selectedOption.value })} />
+                    </div>
+                  )}
+                  {editScopes.length > 1 && (
+                    <Button variant="inline-icon" iconName="remove" onClick={() => setEditScopes((p) => p.filter((_, j) => j !== i))} />
+                  )}
+                </div>
+              ))}
+              <Button variant="inline-link" iconName="add-plus" onClick={() => setEditScopes((p) => [...p, emptyScopeRow()])}>Add scope</Button>
+            </SpaceBetween>
+          </FormField>
 
           <FormField
             label="Schedule (optional)"
@@ -688,45 +770,51 @@ function AppBlockingTab({ agents }: { agents: Agent[] }) {
               {editScheduled ? (
                 <SpaceBetween size="xs">
                   {editScheduleRows.map((r, i) => (
-                    <SpaceBetween key={i} direction="horizontal" size="xs" alignItems="center">
-                      <Select
-                        selectedOption={DAY_OPTIONS.find((o) => o.value === String(r.day_of_week)) ?? DAY_OPTIONS[1]}
-                        options={DAY_OPTIONS}
-                        onChange={({ detail }) =>
-                          setEditScheduleRows((prev) => {
-                            const next = [...prev];
-                            next[i] = { ...next[i], day_of_week: Number(detail.selectedOption.value) };
-                            return next;
-                          })
-                        }
-                      />
-                      <Input
-                        type="text"
-                        inputMode="numeric"
-                        value={r.start}
-                        onChange={({ detail }) =>
-                          setEditScheduleRows((prev) => {
-                            const next = [...prev];
-                            next[i] = { ...next[i], start: detail.value };
-                            return next;
-                          })
-                        }
-                        placeholder="HH:MM"
-                      />
+                    <div key={i} style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center", borderBottom: "1px solid #eee", paddingBottom: "8px" }}>
+                      <div style={{ flex: "1 1 120px" }}>
+                        <Select
+                          selectedOption={DAY_OPTIONS.find((o) => o.value === String(r.day_of_week)) ?? DAY_OPTIONS[1]}
+                          options={DAY_OPTIONS}
+                          onChange={({ detail }) =>
+                            setEditScheduleRows((prev) => {
+                              const next = [...prev];
+                              next[i] = { ...next[i], day_of_week: Number(detail.selectedOption.value) };
+                              return next;
+                            })
+                          }
+                        />
+                      </div>
+                      <div style={{ width: "100px" }}>
+                        <Input
+                          type="text"
+                          inputMode="numeric"
+                          value={r.start}
+                          onChange={({ detail }) =>
+                            setEditScheduleRows((prev) => {
+                              const next = [...prev];
+                              next[i] = { ...next[i], start: detail.value };
+                              return next;
+                            })
+                          }
+                          placeholder="HH:MM"
+                        />
+                      </div>
                       <Box>to</Box>
-                      <Input
-                        type="text"
-                        inputMode="numeric"
-                        value={r.end}
-                        onChange={({ detail }) =>
-                          setEditScheduleRows((prev) => {
-                            const next = [...prev];
-                            next[i] = { ...next[i], end: detail.value };
-                            return next;
-                          })
-                        }
-                        placeholder="HH:MM"
-                      />
+                      <div style={{ width: "100px" }}>
+                        <Input
+                          type="text"
+                          inputMode="numeric"
+                          value={r.end}
+                          onChange={({ detail }) =>
+                            setEditScheduleRows((prev) => {
+                              const next = [...prev];
+                              next[i] = { ...next[i], end: detail.value };
+                              return next;
+                            })
+                          }
+                          placeholder="HH:MM"
+                        />
+                      </div>
                       <Button
                         variant="inline-icon"
                         iconName="remove"
@@ -734,7 +822,7 @@ function AppBlockingTab({ agents }: { agents: Agent[] }) {
                         disabled={editScheduleRows.length <= 1}
                         onClick={() => setEditScheduleRows((prev) => prev.filter((_, idx) => idx !== i))}
                       />
-                    </SpaceBetween>
+                    </div>
                   ))}
                   <Button
                     iconName="add-plus"
@@ -754,14 +842,7 @@ function AppBlockingTab({ agents }: { agents: Agent[] }) {
         </SpaceBetween>
       </Modal>
 
-      {/* Add rule modal — open with no agent context, scope defaults to "all" */}
-      <AppBlockModal
-        visible={showModal}
-        agentId={contextAgentId}
-        agentName=""
-        onDismiss={() => setShowModal(false)}
-        onCreated={() => { setShowModal(false); void load(); }}
-      />
+
 
       {/* History modal */}
       {historyRule && (
@@ -781,16 +862,17 @@ function AppBlockingTab({ agents }: { agents: Agent[] }) {
 
 // ── Events tab ────────────────────────────────────────────────────────────────
 
-type EventFilter = "all" | "alerts" | "appblock";
+type EventFilter = "all" | "alerts" | "appblock" | "scripts" | "connections";
 
 interface UnifiedEvent {
   id: string;
-  type: "alert" | "appblock";
+  type: "alert" | "appblock" | "script" | "connection";
   agent_id: string;
   agent_name: string;
   rule_name: string;
   detail: string;
   time: string;
+  status?: string;
   screenshot_id?: number;
   has_screenshot?: boolean;
 }
@@ -973,29 +1055,29 @@ function InternetAccessTab({ groups, agents }: { groups: AgentGroup[]; agents: A
           { id: "created", header: "Created", cell: (r) => fmtDateTime(r.created_at), width: 170 },
           {
             id: "actions",
-            header: "",
-            width: 120,
+            header: "Actions",
+            width: 130,
+            minWidth: 120,
             cell: (r) => (
-              <SpaceBetween direction="horizontal" size="xxs">
-                <ButtonDropdown
-                  items={[
-                    { id: "edit_schedule", text: "Edit schedule" },
-                    { id: "delete", text: "Delete" },
-                  ]}
-                  onItemClick={({ detail }) => {
-                    if (detail.id === "delete") void deleteRule(r);
-                    if (detail.id === "edit_schedule") {
-                      setEditScheduleFor(r);
-                      const rows: InetScheduleFormRow[] = (r.schedules ?? []).length
-                        ? (r.schedules ?? []).map((w) => ({ day_of_week: w.day_of_week, start: minuteToTime(w.start_minute), end: minuteToTime(w.end_minute) }))
-                        : [emptyInetSchedule()];
-                      setEditSchedules(rows);
-                    }
-                  }}
-                >
-                  Actions
-                </ButtonDropdown>
-              </SpaceBetween>
+              <ButtonDropdown
+                expandToViewport
+                items={[
+                  { id: "edit_schedule", text: "Edit schedule" },
+                  { id: "delete", text: "Delete" },
+                ]}
+                onItemClick={({ detail }) => {
+                  if (detail.id === "delete") void deleteRule(r);
+                  if (detail.id === "edit_schedule") {
+                    setEditScheduleFor(r);
+                    const rows: InetScheduleFormRow[] = (r.schedules ?? []).length
+                      ? (r.schedules ?? []).map((w) => ({ day_of_week: w.day_of_week, start: minuteToTime(w.start_minute), end: minuteToTime(w.end_minute) }))
+                      : [emptyInetSchedule()];
+                    setEditSchedules(rows);
+                  }
+                }}
+              >
+                Actions
+              </ButtonDropdown>
             ),
           },
         ]}
@@ -1019,7 +1101,7 @@ function InternetAccessTab({ groups, agents }: { groups: AgentGroup[]; agents: A
           <FormField label="Scope" description="Who this rule blocks.">
             <SpaceBetween size="xs">
               {createScopes.map((s, i) => (
-                <SpaceBetween key={i} direction="horizontal" size="xs" alignItems="center">
+                <div key={i} style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center" }}>
                   <Select selectedOption={SCOPE_OPTS.find((o) => o.value === s.kind) ?? SCOPE_OPTS[0]}
                     options={SCOPE_OPTS}
                     onChange={({ detail }) => updateScope(i, { kind: detail.selectedOption.value as InetScopeFormRow["kind"] })} />
@@ -1036,7 +1118,7 @@ function InternetAccessTab({ groups, agents }: { groups: AgentGroup[]; agents: A
                   {createScopes.length > 1 && (
                     <Button variant="inline-icon" iconName="remove" onClick={() => setCreateScopes((p) => p.filter((_, j) => j !== i))} />
                   )}
-                </SpaceBetween>
+                </div>
               ))}
               <Button variant="inline-link" iconName="add-plus" onClick={() => setCreateScopes((p) => [...p, emptyInetScope()])}>Add scope</Button>
             </SpaceBetween>
@@ -1050,41 +1132,53 @@ function InternetAccessTab({ groups, agents }: { groups: AgentGroup[]; agents: A
               {createScheduled ? (
                 <SpaceBetween size="xs">
                   {createSchedules.map((r, i) => (
-                    <SpaceBetween key={i} direction="horizontal" size="xs" alignItems="center">
-                      <Select
-                        selectedOption={DAY_OPTIONS.find((o) => o.value === String(r.day_of_week)) ?? DAY_OPTIONS[1]}
-                        options={DAY_OPTIONS}
-                        onChange={({ detail }) => setCreateSchedules((prev) => {
-                          const next = [...prev];
-                          next[i] = { ...next[i], day_of_week: Number(detail.selectedOption.value) };
-                          return next;
-                        })}
-                      />
-                      <Input
-                        type="text"
-                        inputMode="numeric"
-                        value={r.start}
-                        onChange={({ detail }) => setCreateSchedules((prev) => {
-                          const next = [...prev];
-                          next[i] = { ...next[i], start: detail.value };
-                          return next;
-                        })}
-                        placeholder="HH:MM"
-                      />
+                    <div key={i} style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center", borderBottom: "1px solid #eee", paddingBottom: "8px" }}>
+                      <div style={{ flex: "1 1 120px" }}>
+                        <Select
+                          selectedOption={DAY_OPTIONS.find((o) => o.value === String(r.day_of_week)) ?? DAY_OPTIONS[1]}
+                          options={DAY_OPTIONS}
+                          onChange={({ detail }) =>
+                            setCreateSchedules((prev) => {
+                              const next = [...prev];
+                              next[i] = { ...next[i], day_of_week: Number(detail.selectedOption.value) };
+                              return next;
+                            })
+                          }
+                        />
+                      </div>
+                      <div style={{ width: "100px" }}>
+                        <Input
+                          type="text"
+                          inputMode="numeric"
+                          value={r.start}
+                          onChange={({ detail }) =>
+                            setCreateSchedules((prev) => {
+                              const next = [...prev];
+                              next[i] = { ...next[i], start: detail.value };
+                              return next;
+                            })
+                          }
+                          placeholder="HH:MM"
+                        />
+                      </div>
                       <Box>to</Box>
-                      <Input
-                        type="text"
-                        inputMode="numeric"
-                        value={r.end}
-                        onChange={({ detail }) => setCreateSchedules((prev) => {
-                          const next = [...prev];
-                          next[i] = { ...next[i], end: detail.value };
-                          return next;
-                        })}
-                        placeholder="HH:MM"
-                      />
+                      <div style={{ width: "100px" }}>
+                        <Input
+                          type="text"
+                          inputMode="numeric"
+                          value={r.end}
+                          onChange={({ detail }) =>
+                            setCreateSchedules((prev) => {
+                              const next = [...prev];
+                              next[i] = { ...next[i], end: detail.value };
+                              return next;
+                            })
+                          }
+                          placeholder="HH:MM"
+                        />
+                      </div>
                       <Button variant="inline-icon" iconName="remove" ariaLabel="Remove window" disabled={createSchedules.length <= 1} onClick={() => setCreateSchedules((prev) => prev.filter((_, idx) => idx !== i))} />
-                    </SpaceBetween>
+                    </div>
                   ))}
                   <Button iconName="add-plus" onClick={() => setCreateSchedules((prev) => [...prev, emptyInetSchedule()])}>Add window</Button>
                   <Box fontSize="body-s" color="text-body-secondary">
@@ -1134,41 +1228,53 @@ function InternetAccessTab({ groups, agents }: { groups: AgentGroup[]; agents: A
             Empty schedule means <b>Always</b>. Overnight windows (22:00 → 06:00) are supported (split automatically).
           </Box>
           {editSchedules.map((r, i) => (
-            <SpaceBetween key={i} direction="horizontal" size="xs" alignItems="center">
-              <Select
-                selectedOption={DAY_OPTIONS.find((o) => o.value === String(r.day_of_week)) ?? DAY_OPTIONS[1]}
-                options={DAY_OPTIONS}
-                onChange={({ detail }) => setEditSchedules((prev) => {
-                  const next = [...prev];
-                  next[i] = { ...next[i], day_of_week: Number(detail.selectedOption.value) };
-                  return next;
-                })}
-              />
-              <Input
-                type="text"
-                inputMode="numeric"
-                value={r.start}
-                onChange={({ detail }) => setEditSchedules((prev) => {
-                  const next = [...prev];
-                  next[i] = { ...next[i], start: detail.value };
-                  return next;
-                })}
-                placeholder="HH:MM"
-              />
+            <div key={i} style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center", borderBottom: "1px solid #eee", paddingBottom: "8px" }}>
+              <div style={{ flex: "1 1 120px" }}>
+                <Select
+                  selectedOption={DAY_OPTIONS.find((o) => o.value === String(r.day_of_week)) ?? DAY_OPTIONS[1]}
+                  options={DAY_OPTIONS}
+                  onChange={({ detail }) =>
+                    setEditSchedules((prev) => {
+                      const next = [...prev];
+                      next[i] = { ...next[i], day_of_week: Number(detail.selectedOption.value) };
+                      return next;
+                    })
+                  }
+                />
+              </div>
+              <div style={{ width: "100px" }}>
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  value={r.start}
+                  onChange={({ detail }) =>
+                    setEditSchedules((prev) => {
+                      const next = [...prev];
+                      next[i] = { ...next[i], start: detail.value };
+                      return next;
+                    })
+                  }
+                  placeholder="HH:MM"
+                />
+              </div>
               <Box>to</Box>
-              <Input
-                type="text"
-                inputMode="numeric"
-                value={r.end}
-                onChange={({ detail }) => setEditSchedules((prev) => {
-                  const next = [...prev];
-                  next[i] = { ...next[i], end: detail.value };
-                  return next;
-                })}
-                placeholder="HH:MM"
-              />
+              <div style={{ width: "100px" }}>
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  value={r.end}
+                  onChange={({ detail }) =>
+                    setEditSchedules((prev) => {
+                      const next = [...prev];
+                      next[i] = { ...next[i], end: detail.value };
+                      return next;
+                    })
+                  }
+                  placeholder="HH:MM"
+                />
+              </div>
               <Button variant="inline-icon" iconName="remove" ariaLabel="Remove window" disabled={editSchedules.length <= 1} onClick={() => setEditSchedules((prev) => prev.filter((_, idx) => idx !== i))} />
-            </SpaceBetween>
+            </div>
           ))}
           <Button iconName="add-plus" onClick={() => setEditSchedules((prev) => [...prev, emptyInetSchedule()])}>Add window</Button>
           <Button
@@ -1187,15 +1293,19 @@ function EventsGlobalTab() {
   const [filter, setFilter] = useState<EventFilter>("all");
   const [alertEvents, setAlertEvents] = useState<UnifiedEvent[]>([]);
   const [blockEvents, setBlockEvents] = useState<UnifiedEvent[]>([]);
+  const [scriptEvents, setScriptEvents] = useState<UnifiedEvent[]>([]);
+  const [sessionEvents, setSessionEvents] = useState<UnifiedEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [previewEventId, setPreviewEventId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [alertData, blockData] = await Promise.all([
+      const [alertData, blockData, scriptData, sessionData] = await Promise.all([
         api.alertRuleEventsAll({ limit: 500 }).catch(() => ({ rows: [] })),
         api.appBlockEventsAll({ limit: 500 }).catch(() => ({ rows: [] })),
+        api.scheduledScriptEventsAll({ limit: 500 }).catch(() => ({ rows: [] })),
+        api.agentSessionsAll({ limit: 500 }).catch(() => ({ rows: [] })),
       ]);
 
       setAlertEvents(
@@ -1223,6 +1333,45 @@ function EventsGlobalTab() {
           time: r.killed_at,
         })),
       );
+
+      setScriptEvents(
+        (scriptData.rows).map((r) => ({
+          id: `s-${r.script_id}-${r.agent_id}-${r.expected_fire_time}`,
+          type: "script" as const,
+          agent_id: r.agent_id,
+          agent_name: r.agent_name,
+          rule_name: r.rule_name || "Unknown Script",
+          detail: r.output || "No output",
+          status: r.status,
+          time: r.expected_fire_time,
+        })),
+      );
+
+      const sess = [];
+      for (const r of sessionData.rows) {
+        sess.push({
+          id: `conn-${r.id}`,
+          type: "connection" as const,
+          agent_id: r.agent_id,
+          agent_name: r.agent_name,
+          rule_name: "Agent Connected",
+          detail: "Agent came online",
+          time: r.connected_at,
+        });
+        if (r.disconnected_at) {
+          sess.push({
+            id: `disconn-${r.id}`,
+            type: "connection" as const,
+            agent_id: r.agent_id,
+            agent_name: r.agent_name,
+            rule_name: "Agent Disconnected",
+            detail: "Agent went offline",
+            time: r.disconnected_at,
+          });
+        }
+      }
+      setSessionEvents(sess);
+
     } finally {
       setLoading(false);
     }
@@ -1231,9 +1380,13 @@ function EventsGlobalTab() {
   useEffect(() => { void load(); }, [load]);
 
   const allEvents = useMemo(() => {
-    const src = filter === "all" ? [...alertEvents, ...blockEvents] : filter === "alerts" ? alertEvents : blockEvents;
+    let src = [...alertEvents, ...blockEvents, ...scriptEvents, ...sessionEvents];
+    if (filter === "alerts") src = alertEvents;
+    if (filter === "appblock") src = blockEvents;
+    if (filter === "scripts") src = scriptEvents;
+    if (filter === "connections") src = sessionEvents;
     return src.sort((a, b) => b.time.localeCompare(a.time));
-  }, [filter, alertEvents, blockEvents]);
+  }, [filter, alertEvents, blockEvents, scriptEvents, sessionEvents]);
 
   const { items: displayed, collectionProps, paginationProps } = useCollection(allEvents, {
     pagination: { pageSize: 50 },
@@ -1252,24 +1405,32 @@ function EventsGlobalTab() {
         header={
           <Header counter={`(${allEvents.length})`} actions={
             <SpaceBetween direction="horizontal" size="xs">
-              <SegmentedControl selectedId={filter} options={[{ id: "all", text: "All" }, { id: "alerts", text: "Alert" }, { id: "appblock", text: "App Block" }]}
+              <SegmentedControl selectedId={filter} options={[
+                { id: "all", text: "All" }, 
+                { id: "alerts", text: "Alert" }, 
+                { id: "appblock", text: "App Block" },
+                { id: "scripts", text: "Scripts" },
+                { id: "connections", text: "Connections" }
+              ]}
                 onChange={({ detail }) => setFilter(detail.selectedId as EventFilter)} />
             </SpaceBetween>
-          }>Rule Events</Header>
+          }>Global Events</Header>
         }
         pagination={<Pagination {...paginationProps} />}
         empty={<Box textAlign="center" padding="l" color="text-body-secondary">No events yet.</Box>}
         columnDefinitions={[
           { id: "time", header: "Time", cell: (r) => fmtDateTime(r.time), sortingField: "time", width: 170 },
-          { id: "type", header: "Type", cell: (r) => <Badge color={r.type === "alert" ? "blue" : "red"}>{r.type === "alert" ? "Alert" : "App Block"}</Badge>, width: 110 },
+          { id: "type", header: "Type", cell: (r) => <Badge color={r.type === "alert" ? "blue" : r.type === "appblock" ? "red" : r.type === "script" ? "green" : "grey"}>{r.type === "alert" ? "Alert" : r.type === "appblock" ? "App Block" : r.type === "script" ? "Script" : "Connection"}</Badge>, width: 110 },
           { id: "agent", header: "Agent", cell: (r) => r.agent_name, width: 180 },
-          { id: "rule", header: "Rule", cell: (r) => r.rule_name || "—", width: 200 },
-          { id: "detail", header: "Detail", cell: (r) => <Box fontSize="body-s"><span style={{ fontFamily: "monospace" }}>{r.detail || "—"}</span></Box> },
+          { id: "rule", header: "Rule/Event", cell: (r) => r.rule_name || "—", width: 200 },
+          { id: "status", header: "Status", cell: (r) => r.status ? <Badge color={r.status.includes("error") || r.status.includes("failed") ? "red" : r.status.includes("skipped") ? "grey" : "green"}>{r.status}</Badge> : <Box color="text-body-secondary">—</Box>, width: 110 },
+          { id: "detail", header: "Detail", cell: (r) => <div style={{ fontSize: "14px", maxHeight: 100, overflow: "hidden", textOverflow: "ellipsis" }}><span style={{ fontFamily: "monospace", whiteSpace: "pre-wrap" }}>{r.detail || "—"}</span></div> },
           { id: "shot", header: "Screenshot", width: 110, cell: (r) => r.has_screenshot && r.screenshot_id ? <Button variant="inline-link" iconName="zoom-to-fit" onClick={() => setPreviewEventId(r.screenshot_id!)}>View</Button> : <Box color="text-body-secondary" fontSize="body-s">—</Box> },
           {
             id: "timeline",
-            header: "Timeline",
+            header: "Actions",
             width: 110,
+            minWidth: 120,
             cell: (r) => (
               <Button
                 variant="inline-link"
@@ -1287,9 +1448,386 @@ function EventsGlobalTab() {
   );
 }
 
+// ── Scheduled Scripts tab ───────────────────────────────────────────────────────
+
+function ScheduledScriptsTab({ groups, agents }: { groups: AgentGroup[]; agents: Agent[] }) {
+  const [rules, setRules] = useState<import("../lib/types").ScheduledScript[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [showModal, setShowModal] = useState(false);
+  const [modalMode, setModalMode] = useState<"create" | "edit">("create");
+  const [editRule, setEditRule] = useState<import("../lib/types").ScheduledScript | null>(null);
+
+  const [editName, setEditName] = useState("");
+  const [editShell, setEditShell] = useState("powershell");
+  const [editScript, setEditScript] = useState("");
+  const [editTimeout, setEditTimeout] = useState("120");
+
+  const [editScopes, setEditScopes] = useState<InetScopeFormRow[]>([emptyInetScope()]);
+  const [editSchedules, setEditSchedules] = useState<(import("../lib/types").ScheduledScriptSchedule & { timeStr?: string })[]>([{ frequency: "daily", fire_minute: 0, timeStr: "00:00" }]);
+
+  const [saving, setSaving] = useState(false);
+  const [togglingId, setTogglingId] = useState<number | null>(null);
+
+  const groupOptions = groups.map((g) => ({ label: g.name, value: g.id }));
+  const agentOptions = agents.map((a) => ({ label: a.name, value: a.id }));
+  const SCOPE_OPTS = [{ label: "All agents", value: "all" }, { label: "Agent group", value: "group" }, { label: "Single agent", value: "agent" }];
+
+  const DAY_OPTIONS = [
+    { label: "Sunday", value: "0" },
+    { label: "Monday", value: "1" },
+    { label: "Tuesday", value: "2" },
+    { label: "Wednesday", value: "3" },
+    { label: "Thursday", value: "4" },
+    { label: "Friday", value: "5" },
+    { label: "Saturday", value: "6" },
+  ];
+
+  const timeToMinute = (t: string): number | null => {
+    const m = /^(\d{1,2}):(\d{2})$/.exec(t.trim());
+    if (!m) return null;
+    const hhRaw = parseInt(m[1], 10);
+    const mmRaw = parseInt(m[2], 10);
+    const mm = Math.max(0, Math.min(59, mmRaw));
+    if (hhRaw === 24 && mm === 0) return 1440;
+    const hh = Math.max(0, Math.min(23, hhRaw));
+    return hh * 60 + mm;
+  };
+
+
+
+  const minuteToTime = (min: number): string => {
+    const m = Math.max(0, Math.min(1440, Math.floor(min)));
+    if (m === 1440) return "24:00";
+    const hh = String(Math.floor(m / 60)).padStart(2, "0");
+    const mm = String(m % 60).padStart(2, "0");
+    return `${hh}:${mm}`;
+  };
+
+  const scheduleSummary = (schedules: import("../lib/types").ScheduledScriptSchedule[]) => {
+    if (!schedules || schedules.length === 0) return <Box color="text-body-secondary">None</Box>;
+    const s = schedules[0];
+    if (s.frequency === "hourly") return `Hourly at minute ${s.fire_minute}`;
+    const timeStr = minuteToTime(s.fire_minute);
+    if (s.frequency === "daily") return `Daily at ${timeStr}`;
+    if (s.frequency === "weekly") {
+      const day = s.day_of_week != null ? (DAY_OPTIONS.find(o => String(o.value) === String(s.day_of_week))?.label ?? "?") : "?";
+      return `Weekly on ${day} at ${timeStr}`;
+    }
+    return "?";
+  };
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { const d = await api.scheduledScriptsList(); setRules(d.scripts ?? []); }
+    catch (e) { setError(String(e)); }
+    finally { setLoading(false); }
+  }, []);
+
+  useEffect(() => { void load(); }, [load]);
+
+  const updateScope = (i: number, patch: Partial<InetScopeFormRow>) => {
+    setEditScopes((prev) => {
+      const next = [...prev];
+      const cur = { ...next[i], ...patch };
+      if (patch.kind === "all") { cur.group_id = ""; cur.agent_id = ""; }
+      if (patch.kind === "group") cur.agent_id = "";
+      if (patch.kind === "agent") cur.group_id = "";
+      next[i] = cur;
+      return next;
+    });
+  };
+
+  const openCreate = () => {
+    setModalMode("create");
+    setEditRule(null);
+    setEditName("");
+    setEditShell("powershell");
+    setEditScript("");
+    setEditTimeout("120");
+    setEditScopes([emptyInetScope()]);
+    setEditSchedules([{ frequency: "daily", fire_minute: 0, timeStr: "00:00" }]);
+    setShowModal(true);
+  };
+
+  const openEdit = (r: import("../lib/types").ScheduledScript) => {
+    setModalMode("edit");
+    setEditRule(r);
+    setEditName(r.name);
+    setEditShell(r.shell);
+    setEditScript(r.script);
+    setEditTimeout(String(r.timeout_secs));
+
+    const sc = (r.scopes && r.scopes.length > 0) ? r.scopes : [{ kind: "all" as const }];
+    setEditScopes(sc.map(s => ({ kind: s.kind, group_id: s.group_id ?? "", agent_id: s.agent_id ?? "" })));
+
+    const sched = Array.isArray(r.schedules) ? r.schedules : [];
+    setEditSchedules(
+      sched.length > 0
+        ? sched.map(s => ({ ...s, timeStr: minuteToTime(s.fire_minute) }))
+        : [{ frequency: "daily", fire_minute: 0, timeStr: "00:00" }]
+    );
+    setShowModal(true);
+  };
+
+  const saveRule = async () => {
+    if (!editName.trim()) { setError("Name is required"); return; }
+    if (!editScript.trim()) { setError("Script is required"); return; }
+
+    setSaving(true); setError(null);
+    try {
+      const body = {
+        name: editName.trim(),
+        shell: editShell,
+        script: editScript,
+        timeout_secs: parseInt(editTimeout, 10) || 120,
+        scopes: editScopes.map((s) => ({ kind: s.kind, group_id: s.group_id || undefined, agent_id: s.agent_id || undefined })),
+        schedules: editSchedules.map(s => ({
+          frequency: s.frequency,
+          fire_minute: s.fire_minute,
+          day_of_week: s.frequency === "weekly" ? (s.day_of_week ?? 0) : null
+        })),
+      };
+
+      if (modalMode === "create") {
+        await api.scheduledScriptsCreate(body);
+      } else {
+        await api.scheduledScriptsUpdate(editRule!.id, body);
+      }
+
+      setShowModal(false);
+      await load();
+    } catch (e) { setError(String(e)); }
+    finally { setSaving(false); }
+  };
+
+  const toggleRule = (r: import("../lib/types").ScheduledScript) => {
+    setTogglingId(r.id);
+    api.scheduledScriptsUpdate(r.id, { enabled: !r.enabled })
+      .then(() => setRules((prev) => prev.map((x) => x.id === r.id ? { ...x, enabled: !x.enabled } : x)))
+      .catch((e) => setError(String(e)))
+      .finally(() => setTogglingId(null));
+  };
+
+  const deleteRule = async (r: import("../lib/types").ScheduledScript) => {
+    if (!confirm(`Delete scheduled script "${r.name}"?`)) return;
+    try { await api.scheduledScriptsDelete(r.id); setRules((prev) => prev.filter((x) => x.id !== r.id)); }
+    catch (e) { setError(String(e)); }
+  };
+
+  const triggerNow = async (r: import("../lib/types").ScheduledScript) => {
+    try {
+      const res = await api.scheduledScriptsTrigger(r.id);
+      alert(`Triggered script for ${res.agent_count} agent(s). Check the Events tab for results in a few seconds.`);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const agentsById = useMemo(() => {
+    const m: Record<string, Agent> = {};
+    for (const a of agents) m[a.id] = a;
+    return m;
+  }, [agents]);
+
+  return (
+    <>
+      {error && <Box color="text-status-error" padding={{ bottom: "s" }}>{error}</Box>}
+
+      <Table
+        loading={loading}
+        loadingText="Loading…"
+        items={rules}
+        variant="container"
+        stickyHeader
+        header={
+          <Header counter={`(${rules.length})`} actions={
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button variant="primary" iconName="add-plus" onClick={openCreate}>New script</Button>
+            </SpaceBetween>
+          }>Scheduled Scripts</Header>
+        }
+        empty={<Box textAlign="center" padding="l" color="text-body-secondary">No scheduled scripts.</Box>}
+        columnDefinitions={[
+          { id: "name", header: "Name", cell: (r) => r.name, width: "25%" },
+          { id: "shell", header: "Shell", cell: (r) => r.shell, width: "10%" },
+          { id: "scope", header: "Scope", cell: (r) => scopeBadge(r.scopes as unknown as AlertRuleScope[], groups, agentsById), width: "20%" },
+          { id: "schedule", header: "Schedule", cell: (r) => scheduleSummary(r.schedules), width: "25%" },
+          { id: "enabled", header: "Active", cell: (r) => <Toggle checked={r.enabled} disabled={togglingId === r.id} onChange={() => toggleRule(r)} />, width: 80 },
+          {
+            id: "actions",
+            header: "Actions",
+            width: 130,
+            minWidth: 130,
+            cell: (r) => (
+              <ButtonDropdown
+                expandToViewport
+                items={[
+                  { id: "edit", text: "Edit" },
+                  { id: "trigger", text: "Trigger now" },
+                  { id: "delete", text: "Delete" },
+                ]}
+                onItemClick={({ detail }) => {
+                  if (detail.id === "edit") openEdit(r);
+                  if (detail.id === "trigger") void triggerNow(r);
+                  if (detail.id === "delete") void deleteRule(r);
+                }}
+              >
+                Actions
+              </ButtonDropdown>
+            ),
+          },
+        ]}
+      />
+
+      <Modal visible={showModal} onDismiss={() => setShowModal(false)} header={modalMode === "create" ? "New scheduled script" : `Edit scheduled script — ${editName}`}
+        size="large"
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button variant="link" onClick={() => setShowModal(false)}>Cancel</Button>
+              <Button variant="primary" onClick={() => void saveRule()} loading={saving}>{modalMode === "create" ? "Create" : "Save"}</Button>
+            </SpaceBetween>
+          </Box>
+        }>
+        <SpaceBetween size="m">
+          {error && <Box color="text-status-error">{error}</Box>}
+          <FormField label="Name">
+            <Input value={editName} onChange={({ detail }) => setEditName(detail.value)} placeholder="e.g. Daily Cleanup" />
+          </FormField>
+          <FormField label="Shell">
+            <SegmentedControl
+              selectedId={editShell}
+              onChange={({ detail }) => setEditShell(detail.selectedId)}
+              options={[{ id: "powershell", text: "PowerShell" }, { id: "cmd", text: "Command Prompt" }]}
+            />
+          </FormField>
+          <FormField label="Script">
+            <textarea
+              className="awsui-textarea"
+              style={{ width: "100%", height: "200px", fontFamily: "monospace", padding: "8px", resize: "vertical" }}
+              value={editScript}
+              onChange={(e) => setEditScript(e.target.value)}
+              placeholder="# Write your script here"
+            />
+          </FormField>
+          <FormField label="Timeout (seconds)">
+            <Input type="number" value={editTimeout} onChange={({ detail }) => setEditTimeout(detail.value)} />
+          </FormField>
+          <FormField label="Scope" description="Which agents should run this script.">
+            <SpaceBetween size="xs">
+              {editScopes.map((s, i) => (
+                <div key={i} style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center", borderBottom: "1px solid #eee", paddingBottom: "8px" }}>
+                  <div style={{ flex: "1 1 150px" }}>
+                    <Select selectedOption={SCOPE_OPTS.find((o) => o.value === s.kind) ?? SCOPE_OPTS[0]}
+                      options={SCOPE_OPTS}
+                      onChange={({ detail }) => updateScope(i, { kind: detail.selectedOption.value as InetScopeFormRow["kind"] })} />
+                  </div>
+                  {s.kind === "group" && (
+                    <div style={{ flex: "1 1 150px" }}>
+                      <Select placeholder="Select group" selectedOption={groupOptions.find((o) => o.value === s.group_id) ?? null}
+                        options={groupOptions}
+                        onChange={({ detail }) => updateScope(i, { group_id: detail.selectedOption.value })} />
+                    </div>
+                  )}
+                  {s.kind === "agent" && (
+                    <div style={{ flex: "1 1 150px" }}>
+                      <Select placeholder="Select agent" selectedOption={agentOptions.find((o) => o.value === s.agent_id) ?? null}
+                        options={agentOptions}
+                        onChange={({ detail }) => updateScope(i, { agent_id: detail.selectedOption.value })} />
+                    </div>
+                  )}
+                  {editScopes.length > 1 && (
+                    <Button variant="inline-icon" iconName="remove" onClick={() => setEditScopes((p) => p.filter((_, j) => j !== i))} />
+                  )}
+                </div>
+              ))}
+              <Button variant="inline-link" iconName="add-plus" onClick={() => setEditScopes((p) => [...p, emptyInetScope()])}>Add scope</Button>
+            </SpaceBetween>
+          </FormField>
+
+          <FormField label="Schedule">
+            <SpaceBetween size="xs">
+              {editSchedules.map((r, i) => (
+                <div key={i} style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center", borderBottom: "1px solid #eee", paddingBottom: "8px" }}>
+                  <div style={{ flex: "1 1 120px" }}>
+                    <Select
+                      selectedOption={{ label: r.frequency.charAt(0).toUpperCase() + r.frequency.slice(1), value: r.frequency }}
+                      options={[
+                        { label: "Hourly", value: "hourly" },
+                        { label: "Daily", value: "daily" },
+                        { label: "Weekly", value: "weekly" }
+                      ]}
+                      onChange={({ detail }) => setEditSchedules((prev) => {
+                        const next = [...prev];
+                        next[i] = { ...next[i], frequency: detail.selectedOption.value as "hourly"|"daily"|"weekly" };
+                        return next;
+                      })}
+                    />
+                  </div>
+                  {r.frequency === "weekly" && (
+                    <div style={{ flex: "1 1 120px" }}>
+                      <Select
+                        selectedOption={DAY_OPTIONS.find((o) => o.value === String(r.day_of_week)) ?? DAY_OPTIONS[1]}
+                        options={DAY_OPTIONS}
+                        onChange={({ detail }) => setEditSchedules((prev) => {
+                          const next = [...prev];
+                          next[i] = { ...next[i], day_of_week: Number(detail.selectedOption.value) };
+                          return next;
+                        })}
+                      />
+                    </div>
+                  )}
+                  {r.frequency === "hourly" ? (
+                    <div style={{ display: "flex", gap: "4px", alignItems: "center", flex: "1 1 150px" }}>
+                      <Box>at minute</Box>
+                      <div style={{ width: "80px" }}>
+                        <Input
+                          type="number"
+                          value={String(r.fire_minute)}
+                          onChange={({ detail }) => setEditSchedules((prev) => {
+                            const next = [...prev];
+                            next[i] = { ...next[i], fire_minute: Math.max(0, Math.min(59, parseInt(detail.value) || 0)) };
+                            return next;
+                          })}
+                        />
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ display: "flex", gap: "4px", alignItems: "center", flex: "1 1 180px" }}>
+                      <Box>at time</Box>
+                      <div style={{ width: "100px" }}>
+                        <Input
+                          type="text"
+                          inputMode="numeric"
+                          value={r.timeStr ?? minuteToTime(r.fire_minute)}
+                          onChange={({ detail }) => setEditSchedules((prev) => {
+                            const next = [...prev];
+                            const tm = timeToMinute(detail.value);
+                            next[i] = { ...next[i], timeStr: detail.value };
+                            if (tm != null) next[i].fire_minute = tm;
+                            return next;
+                          })}
+                          placeholder="HH:MM"
+                        />
+                      </div>
+                    </div>
+                  )}
+                  <Button variant="inline-icon" iconName="remove" ariaLabel="Remove schedule" disabled={editSchedules.length <= 1} onClick={() => setEditSchedules((prev) => prev.filter((_, idx) => idx !== i))} />
+                </div>
+              ))}
+              <Button iconName="add-plus" onClick={() => setEditSchedules((prev) => [...prev, { frequency: "daily", fire_minute: 0 }])}>Add schedule</Button>
+            </SpaceBetween>
+          </FormField>
+        </SpaceBetween>
+      </Modal>
+    </>
+  );
+}
+
 // ── Main RulesPage ────────────────────────────────────────────────────────────
 
-type RulesTabId = "alert-rules" | "app-blocking" | "internet-access" | "events";
+type RulesTabId = "alert-rules" | "app-blocking" | "internet-access" | "scheduled-scripts" | "events";
 
 export function RulesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -1303,8 +1841,8 @@ export function RulesPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
 
   useEffect(() => {
-    void api.agentGroupsList().then((d) => setGroups(d.groups ?? [])).catch(() => {});
-    void api.agents().then((d) => setAgents(d.agents ?? [])).catch(() => {});
+    void api.agentGroupsList().then((d) => setGroups(d.groups ?? [])).catch(() => { });
+    void api.agents().then((d) => setAgents(d.agents ?? [])).catch(() => { });
   }, []);
 
   return (
@@ -1314,8 +1852,9 @@ export function RulesPage() {
         onChange={({ detail }) => setTab(detail.activeTabId as RulesTabId)}
         tabs={[
           { id: "alert-rules", label: "Alert Rules", content: <AlertRulesTab groups={groups} agents={agents} /> },
-          { id: "app-blocking", label: "App Blocking", content: <AppBlockingTab agents={agents} /> },
+          { id: "app-blocking", label: "App Blocking", content: <AppBlockingTab groups={groups} agents={agents} /> },
           { id: "internet-access", label: "Internet Access", content: <InternetAccessTab groups={groups} agents={agents} /> },
+          { id: "scheduled-scripts", label: "Scheduled Scripts", content: <ScheduledScriptsTab groups={groups} agents={agents} /> },
           { id: "events", label: "Events", content: <EventsGlobalTab /> },
         ]}
       />

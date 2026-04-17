@@ -6,6 +6,9 @@ use tokio::process::Command;
 use tokio::time::timeout;
 
 #[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
+
+#[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 const MAX_IO_BYTES: usize = 64 * 1024;
@@ -51,8 +54,11 @@ async fn run_powershell(script: &str, timeout_dur: Duration) -> RunOutcome {
         };
     }
 
-    let fut = Command::new("powershell.exe")
-        .creation_flags(CREATE_NO_WINDOW)
+    let mut cmd = Command::new("powershell.exe");
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let fut = cmd
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -124,10 +130,11 @@ async fn run_cmd(script: &str, timeout_dur: Duration) -> RunOutcome {
             };
         };
 
-        let fut = Command::new("cmd.exe")
-            .creation_flags(CREATE_NO_WINDOW)
-            .args(["/C", p])
-            .output();
+        let mut cmd = Command::new("cmd.exe");
+        #[cfg(target_os = "windows")]
+        cmd.creation_flags(CREATE_NO_WINDOW);
+
+        let fut = cmd.args(["/C", p]).output();
         return match timeout(timeout_dur, fut).await {
             Ok(Ok(output)) => RunOutcome {
                 ok: output.status.success(),
@@ -153,10 +160,11 @@ async fn run_cmd(script: &str, timeout_dur: Duration) -> RunOutcome {
         };
     }
 
-    let fut = Command::new("cmd.exe")
-        .creation_flags(CREATE_NO_WINDOW)
-        .args(["/C", script])
-        .output();
+    let mut cmd = Command::new("cmd.exe");
+    #[cfg(target_os = "windows")]
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let fut = cmd.args(["/C", script]).output();
     match timeout(timeout_dur, fut).await {
         Ok(Ok(output)) => RunOutcome {
             ok: output.status.success(),

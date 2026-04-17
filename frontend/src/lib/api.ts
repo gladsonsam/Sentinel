@@ -799,6 +799,67 @@ export const api = {
   appBlockRulesDelete: (id: number): Promise<{ ok: boolean }> =>
     delJson(`/app-block-rules/${id}`),
 
+  // ── Scheduled Scripts ───────────────────────────────────────────────────────
+
+  scheduledScriptsList: (): Promise<{ scripts: import("./types").ScheduledScript[] }> =>
+    get("/scheduled-scripts"),
+
+  scheduledScriptsCreate: (body: {
+    name: string;
+    shell: string;
+    script: string;
+    timeout_secs?: number;
+    scopes: import("./types").ScheduledScriptScope[];
+    schedules: import("./types").ScheduledScriptSchedule[];
+  }): Promise<{ id: number }> => postJsonRes("/scheduled-scripts", body),
+
+  scheduledScriptsUpdate: (
+    id: number,
+    body: {
+      enabled?: boolean;
+      name?: string;
+      shell?: string;
+      script?: string;
+      timeout_secs?: number;
+      scopes?: import("./types").ScheduledScriptScope[];
+      schedules?: import("./types").ScheduledScriptSchedule[];
+    },
+  ): Promise<{ ok: boolean }> => putJson(`/scheduled-scripts/${id}`, body),
+
+  scheduledScriptsDelete: (id: number): Promise<{ ok: boolean }> =>
+    delJson(`/scheduled-scripts/${id}`),
+
+  scheduledScriptsTrigger: (id: number): Promise<{ ok: boolean; agent_count: number }> =>
+    postEmpty(`/scheduled-scripts/${id}/trigger`),
+
+  scheduledScriptEventsAll: (
+    params?: { limit?: number },
+  ): Promise<{ rows: import("./types").ScheduledScriptEvent[] }> => {
+    const q = new URLSearchParams();
+    if (params?.limit != null) q.set("limit", String(params.limit));
+    const qs = q.toString();
+    return get(`/scheduled-script-events${qs ? `?${qs}` : ""}`);
+  },
+
+  scheduledScriptEventsForScript: (
+    scriptId: number,
+    params?: { limit?: number },
+  ): Promise<{ rows: import("./types").ScheduledScriptEvent[] }> => {
+    const q = new URLSearchParams();
+    if (params?.limit != null) q.set("limit", String(params.limit));
+    const qs = q.toString();
+    return get(`/scheduled-scripts/${scriptId}/events${qs ? `?${qs}` : ""}`);
+  },
+
+  agentSessionsAll: (
+    params?: { limit?: number },
+  ): Promise<{ rows: import("./types").AgentSessionEvent[] }> => {
+    const q = new URLSearchParams();
+    if (params?.limit != null) q.set("limit", String(params.limit));
+    const qs = q.toString();
+    return get(`/agent-sessions${qs ? `?${qs}` : ""}`);
+  },
+
   agentKnownExes: (agentId: string): Promise<{ exes: string[] }> =>
     get(`/agents/${agentId}/known-exes`),
 

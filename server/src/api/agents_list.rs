@@ -273,3 +273,46 @@ pub async fn agent_icon_put(
         Err(e) => err500(e),
     }
 }
+
+use axum::extract::Query;
+#[derive(Deserialize)]
+pub struct SessionsQuery {
+    pub limit: Option<i64>,
+}
+
+pub async fn agent_sessions_all(
+    State(s): State<Arc<AppState>>,
+    Query(q): Query<SessionsQuery>,
+) -> Response {
+    let limit = q.limit.unwrap_or(100).clamp(1, 1000);
+    match sqlx::query(
+        r#"
+        SELECT 
+            s.id, s.agent_id, s.connected_at, s.disconnected_at,
+            a.name as agent_name
+        FROM agent_sessions s
+        JOIN agents a ON a.id = s.agent_id
+        ORDER BY s.connected_at DESC
+        LIMIT $1
+        "#
+    )
+    .bind(limit)
+    .fetch_all(&s.db)
+    .await {
+        Ok(rows) => {
+            let mut results = Vec::new();
+            for r in rows {
+                use sqlx::Row;
+                results.push(serde_json::json!({
+                    "id": r.try_get::<i64, _>("id").unwrap_or(0),
+                    "agent_id": r.try_get::<Uuid, _>("agent_id").unwrap_or_default(),
+                    "agent_name": r.try_get::<String, _>("agent_name").unwrap_or_default(),
+                    "connected_at": r.try_get::<chrono::DateTime<chrono::Utc>, _>("connected_at").unwrap_or_default(),
+                    "disconnected_at": r.try_get::<Option<chrono::DateTime<chrono::Utc>>, _>("disconnected_at").unwrap_or_default(),
+                }));
+            }
+            Json(serde_json::json!({ "rows": results })).into_response()
+        }
+        Err(e) => err500(e.into())
+    }
+}

@@ -168,7 +168,7 @@ pub async fn agent_software_collect(
     Json(serde_json::json!({ "ok": true })).into_response()
 }
 
-async fn run_script_and_wait(
+pub(crate) async fn run_script_and_wait(
     s: Arc<AppState>,
     agent_id: Uuid,
     shell: String,
