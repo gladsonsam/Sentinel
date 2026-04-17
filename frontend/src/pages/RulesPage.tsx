@@ -1746,7 +1746,7 @@ function ScheduledScriptsTab({ groups, agents }: { groups: AgentGroup[]; agents:
             </SpaceBetween>
           </FormField>
 
-          <FormField label="Schedule">
+          <FormField label="Schedule" description="Times are in UTC (the server's clock). Use 'Trigger now' to test immediately.">
             <SpaceBetween size="xs">
               {editSchedules.map((r, i) => (
                 <div key={i} style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center", borderBottom: "1px solid #eee", paddingBottom: "8px" }}>
@@ -1804,8 +1804,12 @@ function ScheduledScriptsTab({ groups, agents }: { groups: AgentGroup[]; agents:
                           onChange={({ detail }) => setEditSchedules((prev) => {
                             const next = [...prev];
                             const tm = timeToMinute(detail.value);
-                            next[i] = { ...next[i], timeStr: detail.value };
-                            if (tm != null) next[i].fire_minute = tm;
+                            next[i] = { 
+                              ...next[i], 
+                              timeStr: detail.value,
+                              // Only update fire_minute if the value parses, so half-typed strings don't corrupt it
+                              ...(tm != null ? { fire_minute: tm } : {})
+                            };
                             return next;
                           })}
                           placeholder="HH:MM"

@@ -360,7 +360,7 @@ pub async fn trigger_script(
                     }
                 }
 
-                let final_status = if result.get("ok") == Some(&serde_json::json!(false)) || result.get("error").is_some() && result.get("exit_code").is_none() {
+                let final_status = if (result.get("ok") == Some(&serde_json::json!(false))) || (result.get("error").is_some() && result.get("exit_code").is_none()) {
                     "error"
                 } else if result.get("exit_code") == Some(&serde_json::json!(0)) {
                     "success"
