@@ -3967,16 +3967,23 @@ pub async fn app_block_rule_set_schedules(
     Ok(true)
 }
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+/// A scope row used by app-block rule operations: `(kind, group_id, agent_id)`.
+pub type ScopeRow = (String, Option<Uuid>, Option<Uuid>);
+
+/// Optional fields that can be updated on an app-block rule.
+pub struct AppBlockRuleUpdateOpts<'a> {
+    pub name: Option<&'a str>,
+    pub exe_pattern: Option<&'a str>,
+    pub match_mode: Option<&'a str>,
+    pub enabled: Option<bool>,
+    pub scopes: Option<&'a [ScopeRow]>,
+    pub schedules: Option<&'a [RuleScheduleJson]>,
+}
+
 pub async fn app_block_rule_update(
     pool: &PgPool,
     rule_id: i64,
-    name: Option<&str>,
-    exe_pattern: Option<&str>,
-    match_mode: Option<&str>,
-    enabled: Option<bool>,
-    scopes: Option<&[(String, Option<Uuid>, Option<Uuid>)]>,
-    schedules: Option<&[RuleScheduleJson]>,
+    opts: AppBlockRuleUpdateOpts<'_>,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
     let exists = sqlx::query("SELECT 1 FROM app_block_rules WHERE id = $1")
@@ -3988,7 +3995,7 @@ pub async fn app_block_rule_update(
         return Ok(false);
     }
 
-    if name.is_some() || exe_pattern.is_some() || match_mode.is_some() || enabled.is_some() {
+    if opts.name.is_some() || opts.exe_pattern.is_some() || opts.match_mode.is_some() || opts.enabled.is_some() {
         sqlx::query(
             r#"
             UPDATE app_block_rules
@@ -4000,15 +4007,15 @@ pub async fn app_block_rule_update(
             "#,
         )
         .bind(rule_id)
-        .bind(name)
-        .bind(exe_pattern)
-        .bind(match_mode)
-        .bind(enabled)
+        .bind(opts.name)
+        .bind(opts.exe_pattern)
+        .bind(opts.match_mode)
+        .bind(opts.enabled)
         .execute(tx.deref_mut())
         .await?;
     }
 
-    if let Some(scopes_rows) = scopes {
+    if let Some(scopes_rows) = opts.scopes {
         sqlx::query("DELETE FROM app_block_rule_scopes WHERE rule_id = $1")
             .bind(rule_id)
             .execute(tx.deref_mut())
@@ -4026,7 +4033,7 @@ pub async fn app_block_rule_update(
         }
     }
 
-    if let Some(sched_rows) = schedules {
+    if let Some(sched_rows) = opts.schedules {
         sqlx::query("DELETE FROM app_block_rule_schedules WHERE rule_id = $1")
             .bind(rule_id)
             .execute(tx.deref_mut())

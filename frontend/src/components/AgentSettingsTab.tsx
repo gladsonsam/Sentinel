@@ -127,9 +127,7 @@ export function AgentSettingsTab({
   const [addGroupPick, setAddGroupPick] = useState<string>("");
   const [grpBusy, setGrpBusy] = useState(false);
 
-  useEffect(() => {
-    void api.settingsVersionGet().catch(() => {});
-  }, []);
+  // Version freshness is handled by `GeneralConfig` in the agent header.
 
   const refreshAgentGroups = useCallback(() => {
     if (!isAdmin) return;

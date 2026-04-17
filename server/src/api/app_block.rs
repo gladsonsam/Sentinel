@@ -216,20 +216,21 @@ pub async fn app_block_rules_update(
         }
     }
 
-    #[allow(clippy::type_complexity)]
-    let scopes: Option<Vec<(String, Option<Uuid>, Option<Uuid>)>> = body.scopes.as_ref().map(|sc| {
+    let scopes: Option<Vec<db::ScopeRow>> = body.scopes.as_ref().map(|sc| {
         sc.iter().map(|s| (s.kind.clone(), s.group_id, s.agent_id)).collect()
     });
 
     match db::app_block_rule_update(
         &s.db,
         rule_id,
-        body.name.as_deref(),
-        body.exe_pattern.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()),
-        match_mode,
-        body.enabled,
-        scopes.as_deref(),
-        body.schedules.as_deref(),
+        db::AppBlockRuleUpdateOpts {
+            name: body.name.as_deref(),
+            exe_pattern: body.exe_pattern.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()),
+            match_mode,
+            enabled: body.enabled,
+            scopes: scopes.as_deref(),
+            schedules: body.schedules.as_deref(),
+        },
     )
     .await {
         Ok(false) => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Not found" }))).into_response(),

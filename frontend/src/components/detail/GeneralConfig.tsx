@@ -23,11 +23,12 @@ interface GeneralConfigProps {
 export function GeneralConfig({ agent, info, onAgentInfoRefreshed }: GeneralConfigProps) {
   const agentVersion = info?.agent_version || "—";
   const versionPayload = useServerVersionPayload();
-  const [versionFetchSettled, setVersionFetchSettled] = useState(false);
+  const [versionFetchSettled, setVersionFetchSettled] = useState(versionPayload !== null);
   const [updateNow, setUpdateNow] = useState(false);
   const [updateNowErr, setUpdateNowErr] = useState<string | null>(null);
   const [updateNowOk, setUpdateNowOk] = useState<string | null>(null);
   const pollSessionRef = useRef(0);
+  const didKickOffFetchRef = useRef(false);
 
   useEffect(() => {
     return () => {
@@ -36,9 +37,18 @@ export function GeneralConfig({ agent, info, onAgentInfoRefreshed }: GeneralConf
   }, []);
 
   useEffect(() => {
+    // If another part of the dashboard already fetched versions (e.g. Settings → "Check GitHub now"),
+    // don't issue another request here that could overwrite the shared store.
+    if (versionPayload !== null) {
+      setVersionFetchSettled(true);
+      return;
+    }
+    if (didKickOffFetchRef.current) return;
+    didKickOffFetchRef.current = true;
+
     let cancelled = false;
     api
-      .settingsVersionGet()
+      .settingsVersionGet({ nocache: true })
       .catch(() => {})
       .finally(() => {
         if (!cancelled) setVersionFetchSettled(true);
@@ -46,7 +56,7 @@ export function GeneralConfig({ agent, info, onAgentInfoRefreshed }: GeneralConf
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [versionPayload]);
 
   const latestAgentVersion = versionPayload?.latest_agent_version ?? null;
   const versionsLoad = versionPayload === null && !versionFetchSettled;
