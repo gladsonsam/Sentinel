@@ -31,7 +31,7 @@ export interface DashboardUserAvatarProps {
   style?: CSSProperties;
 }
 
-/** Circle avatar: optional Lucide icon key, photo data URL, or short legacy glyph; otherwise colored initials. */
+/** Circle avatar: optional Lucide icon key, photo data URL, or colored initials. */
 export function DashboardUserAvatar({
   username,
   displayName,
@@ -93,24 +93,6 @@ export function DashboardUserAvatar({
         </span>
       );
     }
-  }
-
-  if (raw.length > 0) {
-    return (
-      <span
-        className={`sentinel-user-avatar sentinel-user-avatar--glyph ${className ?? ""}`}
-        style={{
-          width: size,
-          height: size,
-          fontSize: Math.max(14, size * 0.52),
-          ...style,
-        }}
-        title={label}
-        aria-hidden
-      >
-        {raw}
-      </span>
-    );
   }
 
   const initials = initialsFromUsername(label);

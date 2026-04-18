@@ -235,7 +235,7 @@ export interface DashboardSessionUser {
   /** Optional full name shown in the UI; sign-in uses `username`. */
   display_name?: string;
   role: DashboardRole;
-  /** Lucide key (`icon:lucide:Name`), small JPEG/PNG/WebP/GIF data URL, or legacy short glyph. */
+  /** Lucide key (`icon:lucide:Name`) or small JPEG/PNG/WebP/GIF data URL. */
   display_icon?: string | null;
   csrf_token?: string;
 }
@@ -248,7 +248,7 @@ export interface DashboardUser {
   username: string;
   display_name?: string;
   role: DashboardRole;
-  /** Lucide icon key, photo data URL, or legacy short glyph; initials when unset. */
+  /** Lucide icon key or photo data URL; initials when unset. */
   display_icon?: string | null;
   created_at: string;
 }

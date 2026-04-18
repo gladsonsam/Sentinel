@@ -250,9 +250,6 @@ export const api = {
   clearAgentHistory: (id: string): Promise<{ cleared_rows: number }> =>
     postEmpty(`/agents/${id}/history/clear`),
 
-  /** @deprecated Use {@link mjpegStreamUrl} with a per-tab `session` UUID. */
-  mjpegUrl: (id: string, session: string) => mjpegStreamUrl(id, session),
-
   // ── Retention (server) ───────────────────────────────────────────────────
 
   retentionGlobalGet: (): Promise<RetentionPolicy> => get("/settings/retention"),

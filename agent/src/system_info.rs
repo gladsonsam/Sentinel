@@ -135,7 +135,7 @@ pub fn collect_agent_info() -> serde_json::Value {
         .ok()
         .and_then(|p| p.parent().map(|d| d.to_string_lossy().to_string()));
     let ui_password_set = !cfg.ui_password_hash.is_empty()
-        && cfg.ui_password_hash != crate::config::hash_password("");
+        && cfg.ui_password_hash.starts_with("$argon2");
 
     let current_user = std::env::var("USERNAME")
         .or_else(|_| std::env::var("USER"))

@@ -854,9 +854,9 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                     _ => {}
                 }
 
-                // Legacy URL event remains for live snapshots + URL history.
+                // Per-tick URL sample for live dashboard + `url_visits` (sessions use `url_session`).
                 if let Some(info) = active {
-                    let legacy = serde_json::json!({
+                    let live_url = serde_json::json!({
                         "type"    : "url",
                         "url"     : info.url,
                         "title"   : info.title,
@@ -864,7 +864,7 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                         "ts"      : now_ts_u64,
                     })
                     .to_string();
-                    if out_tx.send(Message::Text(legacy)).await.is_err() {
+                    if out_tx.send(Message::Text(live_url)).await.is_err() {
                         break Err(anyhow::anyhow!(
                             "Outbound channel closed; writer task exited unexpectedly."
                         ));
@@ -1045,7 +1045,6 @@ async fn run_internet_curfew_scheduler(shared_cfg: Arc<Mutex<Config>>) {
                     .iter()
                     .any(|r| sched::is_active_now_local(&r.schedules))
             } else {
-                // Legacy fallback (older server only sends boolean).
                 c.internet_blocked
             };
             (h, p, desired, c.internet_blocked, has_rules)

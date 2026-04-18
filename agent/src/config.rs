@@ -24,11 +24,8 @@
 
 use argon2::password_hash::{rand_core::OsRng, PasswordHasher, SaltString};
 use argon2::Argon2;
-use base64::prelude::*;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use tracing::warn;
 use windows_dpapi::{decrypt_data, encrypt_data, Scope};
 
 // ─── Configuration ────────────────────────────────────────────────────────────
@@ -50,9 +47,8 @@ pub struct Config {
     #[serde(default)]
     pub agent_password: String,
 
-    /// Local UI password verification material: legacy SHA-256 hex digest, or Argon2 PHC string
-    /// from the server. An empty-string hash (`hash_password("")`) means no password required.
-    #[serde(default = "empty_password_hash")]
+    /// Argon2 PHC string from the server (`set_local_ui_password_hash`). Empty means no lock.
+    #[serde(default)]
     pub ui_password_hash: String,
 
     /// When true, checks for updates ~45s after startup and every 6 hours (default off).
@@ -111,10 +107,6 @@ fn default_agent_name() -> String {
     std::env::var("COMPUTERNAME").unwrap_or_else(|_| "agent".into())
 }
 
-fn empty_password_hash() -> String {
-    hash_password("")
-}
-
 fn default_auto_update_enabled() -> bool {
     false
 }
@@ -125,20 +117,13 @@ impl Default for Config {
             server_url: String::new(),
             agent_name: default_agent_name(),
             agent_password: String::new(),
-            ui_password_hash: empty_password_hash(),
+            ui_password_hash: String::new(),
             auto_update_enabled: default_auto_update_enabled(),
             internet_blocked: false,
             internet_block_rules: Vec::new(),
             app_block_rules: Vec::new(),
         }
     }
-}
-
-/// Returns the SHA-256 hex-digest of `password`.
-pub fn hash_password(password: &str) -> String {
-    let mut h = Sha256::new();
-    h.update(password.as_bytes());
-    format!("{:x}", h.finalize())
 }
 
 /// Argon2 PHC string for a **new** local UI password set in the Tauri settings UI.
@@ -197,14 +182,6 @@ fn parse_config_json(s: &str) -> Option<Config> {
     serde_json::from_str::<Config>(s).ok()
 }
 
-/// Try legacy base64-wrapped JSON (`config.dat` from older builds).
-fn try_load_legacy_base64_dat(bytes: &[u8]) -> Option<Config> {
-    let s = std::str::from_utf8(bytes).ok()?.trim();
-    let dec = BASE64_STANDARD.decode(s).ok()?;
-    let s = String::from_utf8(dec).ok()?;
-    parse_config_json(&s)
-}
-
 /// Try DPAPI-encrypted JSON (user scope — non-Windows `config.dat` only).
 #[cfg(not(windows))]
 fn try_load_dpapi_dat_user(bytes: &[u8]) -> Option<Config> {
@@ -227,14 +204,7 @@ fn try_load_machine_config_bytes(bytes: &[u8]) -> Option<Config> {
     if bytes.is_empty() {
         return None;
     }
-    try_load_dpapi_dat_machine(bytes).or_else(|| {
-        try_load_legacy_base64_dat(bytes).inspect(|_c| {
-            warn!(
-                "Loaded legacy base64 config.dat at {}; will use DPAPI machine scope on next save",
-                machine_config_path().display()
-            );
-        })
-    })
+    try_load_dpapi_dat_machine(bytes)
 }
 
 /// `true` when the machine-wide config file exists and decrypts successfully.
@@ -302,20 +272,11 @@ pub fn load_config() -> Config {
     #[cfg(not(windows))]
     {
         let path = config_path();
-        let old_path = path.with_extension("json");
         if let Ok(bytes) = std::fs::read(&path) {
             if !bytes.is_empty() {
                 if let Some(c) = try_load_dpapi_dat_user(&bytes) {
                     cfg = c;
-                } else if let Some(c) = try_load_legacy_base64_dat(&bytes) {
-                    warn!("Loaded legacy base64 config.dat; it will be upgraded to DPAPI on next save");
-                    cfg = c;
                 }
-            }
-        } else if let Ok(json) = std::fs::read_to_string(&old_path) {
-            if let Ok(c) = serde_json::from_str::<Config>(&json) {
-                warn!("Loaded legacy config.json; it will be replaced by encrypted config.dat on next save");
-                cfg = c;
             }
         }
     }
@@ -354,9 +315,6 @@ pub fn save_config(config: &Config) -> anyhow::Result<()> {
     {
         persist_config(&path, config, Scope::User)?;
     }
-
-    let old_path = path.with_extension("json");
-    let _ = std::fs::remove_file(old_path);
 
     Ok(())
 }

@@ -646,16 +646,10 @@ fn pg_is_unique_violation(e: &sqlx::Error) -> bool {
     }
 }
 
-/// Normalize dashboard / agent input: ignore whitespace; if exactly six digits remain, use OTP form.
-/// Otherwise use trimmed input (legacy long enrollment secrets still in the database).
-pub fn normalize_enrollment_code_for_lookup(raw: &str) -> String {
-    let t = raw.trim();
-    let digits: String = t.chars().filter(|c| c.is_ascii_digit()).collect();
-    if digits.len() == 6 {
-        digits
-    } else {
-        t.to_string()
-    }
+/// Enrollment codes are six digits; non-digits are ignored.
+pub fn normalize_enrollment_code_for_lookup(raw: &str) -> Option<String> {
+    let digits: String = raw.chars().filter(|c| c.is_ascii_digit()).collect();
+    (digits.len() == 6).then_some(digits)
 }
 
 /// Issue a short **6-digit** enrollment code (SHA-256 stored). Retries on digest collision.
@@ -704,7 +698,9 @@ pub async fn enroll_agent_with_secret(
     agent_name: &str,
     client_ip: Option<&str>,
 ) -> anyhow::Result<Result<String, EnrollReject>> {
-    let key = normalize_enrollment_code_for_lookup(enrollment_plain);
+    let Some(key) = normalize_enrollment_code_for_lookup(enrollment_plain) else {
+        return Ok(Err(EnrollReject::InvalidOrExpired));
+    };
     let digest = Sha256::digest(key.as_bytes()).to_vec();
 
     let mut tx = pool.begin().await?;
@@ -2364,18 +2360,11 @@ pub async fn prune_auxiliary_retention(
     Ok(())
 }
 
-// ─── Agent local UI password (Argon2 PHC string; legacy SHA-256 hex still supported) ───
+// ─── Agent local UI password (Argon2 PHC string) ───
 
-/// SHA-256 hex digest — legacy agent UI password format (see `hash_agent_local_ui_password`).
-pub fn sha256_hex(plain: &str) -> String {
-    let mut h = Sha256::new();
-    h.update(plain.as_bytes());
-    format!("{:x}", h.finalize())
-}
-
-/// Hash for an empty password (no lock).
+/// Sentinel value meaning “no local UI password” when pushed to the agent.
 pub fn empty_agent_ui_password_hash() -> String {
-    sha256_hex("")
+    String::new()
 }
 
 /// Argon2 hash for a new agent local UI password (pushed to agents as a PHC string).
@@ -2385,11 +2374,7 @@ pub fn hash_agent_local_ui_password(plain: &str) -> Result<String> {
 
 /// `true` if this hash means the user must type a non-empty password to open settings.
 pub fn agent_ui_password_is_set(hash: Option<&str>) -> bool {
-    match hash {
-        None => false,
-        Some("") => false,
-        Some(h) => h != empty_agent_ui_password_hash().as_str(),
-    }
+    matches!(hash, Some(h) if !h.is_empty() && h.starts_with("$argon2"))
 }
 
 pub async fn get_local_ui_global_hash(pool: &PgPool) -> Result<Option<String>> {
@@ -2547,7 +2532,7 @@ pub async fn get_agent_internet_blocked(pool: &PgPool, agent_id: Uuid) -> Result
         SELECT COUNT(*)
         FROM internet_block_rules r
         WHERE r.enabled
-          -- Only "always-on" rules affect the legacy boolean network policy push.
+          -- Only always-on rules (no schedules) affect the boolean `set_network_policy` push.
           -- Scheduled rules are evaluated on-agent using local time.
           AND NOT EXISTS (SELECT 1 FROM internet_block_rule_schedules sch WHERE sch.rule_id = r.id)
           AND EXISTS (
