@@ -77,6 +77,7 @@ serde_json = "1"
 base64     = "0.22"
 percent-encoding = "2"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+url = "2"
 
 # Windows DPAPI: encrypt `config.dat` at rest (tied to this user + machine).
 windows-dpapi = "0.2"

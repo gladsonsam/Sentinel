@@ -1151,6 +1151,9 @@ pub async fn upsert_keys(pool: &PgPool, agent: Uuid, v: &serde_json::Value) -> R
 /// Insert a URL visit, skipping exact consecutive duplicates for this agent.
 pub async fn insert_url(pool: &PgPool, agent: Uuid, v: &serde_json::Value) -> Result<()> {
     let url = v["url"].as_str().unwrap_or("");
+    if !url_categorization::looks_like_complete_navigation_url(url) {
+        return Ok(());
+    }
     let title = v["title"].as_str();
     let browser = v["browser"].as_str();
     let ts = unix_to_dt(v["ts"].as_i64());
@@ -1222,6 +1225,9 @@ pub async fn insert_url(pool: &PgPool, agent: Uuid, v: &serde_json::Value) -> Re
 
 pub async fn insert_url_session(pool: &PgPool, agent: Uuid, v: &serde_json::Value) -> Result<()> {
     let url = v["url"].as_str().unwrap_or("");
+    if !url_categorization::looks_like_complete_navigation_url(url) {
+        return Ok(());
+    }
     let title = v["title"].as_str();
     let browser = v["browser"].as_str();
     let start_ts = unix_to_dt(v["started_at_ts"].as_i64());

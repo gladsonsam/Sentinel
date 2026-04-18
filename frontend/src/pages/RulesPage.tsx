@@ -1341,7 +1341,7 @@ function EventsGlobalTab() {
           type: "script" as const,
           agent_id: r.agent_id,
           agent_name: r.agent_name,
-          rule_name: `${r.rule_name || "Unknown Script"}${r.is_manual ? " ⚡ manual" : ""}`,
+          rule_name: `${r.rule_name || "Unknown Script"}${r.is_manual ? " (manually triggered)" : ""}`,
           detail: r.output || "No output",
           status: r.status,
           time: r.expected_fire_time,

@@ -7,6 +7,7 @@
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use std::net::IpAddr;
 use futures_util::{FutureExt, StreamExt};
 use flate2::read::GzDecoder;
 use idna::domain_to_ascii;
@@ -113,6 +114,56 @@ pub(crate) fn normalize_hostname(host: &str) -> String {
         return String::new();
     }
     domain_to_ascii(&raw).unwrap_or(raw)
+}
+
+/// True only when `raw` looks like a finished browser navigation, not omnibox typing.
+///
+/// UIAutomation reads the address bar edit control, so partial input (e.g. `anti` while
+/// typing `antigravity.com`) must be ignored for URL history and analytics.
+pub(crate) fn looks_like_complete_navigation_url(raw: &str) -> bool {
+    let s = raw.trim();
+    if s.is_empty() {
+        return false;
+    }
+    let lower = s.to_ascii_lowercase();
+
+    // Internal / special browser destinations — never treat as partial search text.
+    if lower.starts_with("chrome:")
+        || lower.starts_with("edge:")
+        || lower.starts_with("brave:")
+        || lower.starts_with("about:")
+        || lower.starts_with("file:")
+        || lower.starts_with("moz-extension:")
+        || lower.starts_with("devtools:")
+    {
+        return true;
+    }
+
+    let to_parse = if s.contains("://") {
+        s.to_string()
+    } else {
+        format!("https://{s}")
+    };
+
+    let Ok(u) = url::Url::parse(&to_parse) else {
+        return false;
+    };
+
+    let Some(host) = u.host_str() else {
+        return false;
+    };
+
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    if host.parse::<IpAddr>().is_ok() {
+        return true;
+    }
+    if host.starts_with('[') && host.ends_with(']') && host[1..host.len() - 1].parse::<IpAddr>().is_ok() {
+        return true;
+    }
+    // Reject single-label hosts (`anti`, `searchterm`) — real public sites use a registered name with a dot.
+    host.contains('.')
 }
 
 pub(crate) fn extract_hostname_from_url(url: &str) -> String {
@@ -695,3 +746,28 @@ pub(crate) async fn categorize_url_now(
     Ok(None)
 }
 
+#[cfg(test)]
+mod navigation_url_tests {
+    use super::looks_like_complete_navigation_url;
+
+    #[test]
+    fn rejects_partial_omnibox_host() {
+        assert!(!looks_like_complete_navigation_url("anti"));
+        assert!(!looks_like_complete_navigation_url("  anti  "));
+    }
+
+    #[test]
+    fn accepts_typical_urls() {
+        assert!(looks_like_complete_navigation_url("https://antigravity.com/path"));
+        assert!(looks_like_complete_navigation_url("antigravity.com/foo"));
+        assert!(looks_like_complete_navigation_url("http://localhost:8080/"));
+        assert!(looks_like_complete_navigation_url("http://127.0.0.1/"));
+        assert!(looks_like_complete_navigation_url("http://[::1]/"));
+    }
+
+    #[test]
+    fn accepts_browser_internal_schemes() {
+        assert!(looks_like_complete_navigation_url("chrome://newtab/"));
+        assert!(looks_like_complete_navigation_url("about:blank"));
+    }
+}
