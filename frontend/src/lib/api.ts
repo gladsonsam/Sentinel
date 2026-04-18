@@ -588,7 +588,7 @@ export const api = {
 
   storageUsage: (): Promise<StorageUsage> => get("/settings/storage"),
 
-  capabilities: (): Promise<{ remote_script: boolean }> =>
+  capabilities: (): Promise<{ remote_script: boolean; scheduler_timezone?: string }> =>
     get("/settings/capabilities"),
 
   agentSoftware: (

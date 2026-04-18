@@ -15,7 +15,7 @@ use uuid::Uuid;
 
 use crate::{auth, db, state::AppState};
 
-use super::helpers::err500;
+use super::helpers::{audit_ip, err500};
 
 type AlertRuleScopeRow = (String, Option<Uuid>, Option<Uuid>);
 
@@ -171,6 +171,8 @@ pub async fn agent_groups_list_h(
 pub async fn agent_groups_create_h(
     State(s): State<Arc<AppState>>,
     Extension(user): Extension<auth::AuthUser>,
+    headers: axum::http::HeaderMap,
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
     Json(body): Json<AgentGroupCreateBody>,
 ) -> Response {
     if !user.is_admin() {
@@ -189,7 +191,14 @@ pub async fn agent_groups_create_h(
             .into_response();
     }
     match db::agent_group_create(&s.db, name, body.description.trim()).await {
-        Ok(id) => (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response(),
+        Ok(id) => {
+            let ip = audit_ip(&headers, addr);
+            db::insert_audit_log_traced(
+                &s.db, &user.username, None, "agent_group_create", "ok",
+                &serde_json::json!({ "id": id, "name": name }), ip.as_deref(),
+            ).await;
+            (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
+        }
         Err(e) => err500(e),
     }
 }
@@ -197,6 +206,8 @@ pub async fn agent_groups_create_h(
 pub async fn agent_groups_update_h(
     State(s): State<Arc<AppState>>,
     Extension(user): Extension<auth::AuthUser>,
+    headers: axum::http::HeaderMap,
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
     Path(group_id): Path<Uuid>,
     Json(body): Json<AgentGroupUpdateBody>,
 ) -> Response {
@@ -216,7 +227,14 @@ pub async fn agent_groups_update_h(
             .into_response();
     }
     match db::agent_group_rename(&s.db, group_id, name, body.description.trim()).await {
-        Ok(true) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Ok(true) => {
+            let ip = audit_ip(&headers, addr);
+            db::insert_audit_log_traced(
+                &s.db, &user.username, None, "agent_group_update", "ok",
+                &serde_json::json!({ "id": group_id, "name": name }), ip.as_deref(),
+            ).await;
+            Json(serde_json::json!({ "ok": true })).into_response()
+        }
         Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "Group not found" })),
@@ -229,6 +247,8 @@ pub async fn agent_groups_update_h(
 pub async fn agent_groups_delete_h(
     State(s): State<Arc<AppState>>,
     Extension(user): Extension<auth::AuthUser>,
+    headers: axum::http::HeaderMap,
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
     Path(group_id): Path<Uuid>,
 ) -> Response {
     if !user.is_admin() {
@@ -239,7 +259,14 @@ pub async fn agent_groups_delete_h(
             .into_response();
     }
     match db::agent_group_delete(&s.db, group_id).await {
-        Ok(true) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Ok(true) => {
+            let ip = audit_ip(&headers, addr);
+            db::insert_audit_log_traced(
+                &s.db, &user.username, None, "agent_group_delete", "ok",
+                &serde_json::json!({ "id": group_id }), ip.as_deref(),
+            ).await;
+            Json(serde_json::json!({ "ok": true })).into_response()
+        }
         Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "Group not found" })),
@@ -336,6 +363,8 @@ pub async fn alert_rules_list_h(
 pub async fn alert_rules_create_h(
     State(s): State<Arc<AppState>>,
     Extension(user): Extension<auth::AuthUser>,
+    headers: axum::http::HeaderMap,
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
     Json(body): Json<AlertRuleCreateBody>,
 ) -> Response {
     if !user.is_admin() {
@@ -380,7 +409,15 @@ pub async fn alert_rules_create_h(
     };
     match db::alert_rule_create_with_scopes(&s.db, &params).await
     {
-        Ok(id) => (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response(),
+        Ok(id) => {
+            let ip = audit_ip(&headers, addr);
+            db::insert_audit_log_traced(
+                &s.db, &user.username, None, "alert_rule_create", "ok",
+                &serde_json::json!({ "id": id, "name": body.name.trim(), "channel": body.channel.trim() }),
+                ip.as_deref(),
+            ).await;
+            (StatusCode::CREATED, Json(serde_json::json!({ "id": id }))).into_response()
+        }
         Err(e) => err500(e),
     }
 }
@@ -388,6 +425,8 @@ pub async fn alert_rules_create_h(
 pub async fn alert_rules_update_h(
     State(s): State<Arc<AppState>>,
     Extension(user): Extension<auth::AuthUser>,
+    headers: axum::http::HeaderMap,
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
     Path(rule_id): Path<i64>,
     Json(body): Json<AlertRuleUpdateBody>,
 ) -> Response {
@@ -433,7 +472,15 @@ pub async fn alert_rules_update_h(
     };
     match db::alert_rule_update_with_scopes(&s.db, rule_id, &params).await
     {
-        Ok(true) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Ok(true) => {
+            let ip = audit_ip(&headers, addr);
+            db::insert_audit_log_traced(
+                &s.db, &user.username, None, "alert_rule_update", "ok",
+                &serde_json::json!({ "id": rule_id, "name": body.name.trim(), "enabled": body.enabled }),
+                ip.as_deref(),
+            ).await;
+            Json(serde_json::json!({ "ok": true })).into_response()
+        }
         Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "Rule not found" })),
@@ -446,6 +493,8 @@ pub async fn alert_rules_update_h(
 pub async fn alert_rules_delete_h(
     State(s): State<Arc<AppState>>,
     Extension(user): Extension<auth::AuthUser>,
+    headers: axum::http::HeaderMap,
+    axum::extract::ConnectInfo(addr): axum::extract::ConnectInfo<std::net::SocketAddr>,
     Path(rule_id): Path<i64>,
 ) -> Response {
     if !user.is_admin() {
@@ -456,7 +505,14 @@ pub async fn alert_rules_delete_h(
             .into_response();
     }
     match db::alert_rule_delete(&s.db, rule_id).await {
-        Ok(true) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Ok(true) => {
+            let ip = audit_ip(&headers, addr);
+            db::insert_audit_log_traced(
+                &s.db, &user.username, None, "alert_rule_delete", "ok",
+                &serde_json::json!({ "id": rule_id }), ip.as_deref(),
+            ).await;
+            Json(serde_json::json!({ "ok": true })).into_response()
+        }
         Ok(false) => (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "Rule not found" })),

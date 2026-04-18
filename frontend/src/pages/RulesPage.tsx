@@ -1297,6 +1297,7 @@ function EventsGlobalTab() {
   const [sessionEvents, setSessionEvents] = useState<UnifiedEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [previewEventId, setPreviewEventId] = useState<number | null>(null);
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -1340,7 +1341,7 @@ function EventsGlobalTab() {
           type: "script" as const,
           agent_id: r.agent_id,
           agent_name: r.agent_name,
-          rule_name: r.rule_name || "Unknown Script",
+          rule_name: `${r.rule_name || "Unknown Script"}${r.is_manual ? " ⚡ manual" : ""}`,
           detail: r.output || "No output",
           status: r.status,
           time: r.expected_fire_time,
@@ -1393,6 +1394,13 @@ function EventsGlobalTab() {
     sorting: { defaultState: { sortingColumn: { sortingField: "time" }, isDescending: true } },
   });
 
+  // Auto-refresh every 30 seconds
+  useEffect(() => {
+    if (!autoRefreshEnabled) return;
+    const id = setInterval(() => { void load(); }, 30_000);
+    return () => clearInterval(id);
+  }, [load, autoRefreshEnabled]);
+
   return (
     <>
       <Table
@@ -1405,9 +1413,16 @@ function EventsGlobalTab() {
         header={
           <Header counter={`(${allEvents.length})`} actions={
             <SpaceBetween direction="horizontal" size="xs">
+              <Toggle
+                checked={autoRefreshEnabled}
+                onChange={({ detail }) => setAutoRefreshEnabled(detail.checked)}
+              >
+                Auto-refresh (30s)
+              </Toggle>
+              <Button iconName="refresh" variant="normal" onClick={() => void load()} loading={loading}>Refresh</Button>
               <SegmentedControl selectedId={filter} options={[
                 { id: "all", text: "All" }, 
-                { id: "alerts", text: "Alert" }, 
+                { id: "alerts", text: "Alerts" }, 
                 { id: "appblock", text: "App Block" },
                 { id: "scripts", text: "Scripts" },
                 { id: "connections", text: "Connections" }
@@ -1454,10 +1469,19 @@ function ScheduledScriptsTab({ groups, agents }: { groups: AgentGroup[]; agents:
   const [rules, setRules] = useState<import("../lib/types").ScheduledScript[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [modalMode, setModalMode] = useState<"create" | "edit">("create");
   const [editRule, setEditRule] = useState<import("../lib/types").ScheduledScript | null>(null);
+  // Map of script_id → last execution info
+  const [lastRuns, setLastRuns] = useState<Record<number, { status: string; time: string }>>({});
+  // Timezone from server capabilities
+  const [schedulerTz, setSchedulerTz] = useState<string>("UTC");
 
+  // Load server timezone once on mount
+  useEffect(() => {
+    api.capabilities().then(c => { if (c.scheduler_timezone) setSchedulerTz(c.scheduler_timezone); }).catch(() => {});
+  }, []);
   const [editName, setEditName] = useState("");
   const [editShell, setEditShell] = useState("powershell");
   const [editScript, setEditScript] = useState("");
@@ -1519,7 +1543,22 @@ function ScheduledScriptsTab({ groups, agents }: { groups: AgentGroup[]; agents:
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { const d = await api.scheduledScriptsList(); setRules(d.scripts ?? []); }
+    try {
+      const [scriptsData, eventsData] = await Promise.all([
+        api.scheduledScriptsList(),
+        api.scheduledScriptEventsAll({ limit: 500 }).catch(() => ({ rows: [] })),
+      ]);
+      setRules(scriptsData.scripts ?? []);
+      // Build last-run map: pick most recent event per script
+      const runs: Record<number, { status: string; time: string }> = {};
+      for (const ev of eventsData.rows) {
+        const existing = runs[ev.script_id];
+        if (!existing || ev.expected_fire_time > existing.time) {
+          runs[ev.script_id] = { status: ev.status, time: ev.expected_fire_time };
+        }
+      }
+      setLastRuns(runs);
+    }
     catch (e) { setError(String(e)); }
     finally { setLoading(false); }
   }, []);
@@ -1616,9 +1655,13 @@ function ScheduledScriptsTab({ groups, agents }: { groups: AgentGroup[]; agents:
   };
 
   const triggerNow = async (r: import("../lib/types").ScheduledScript) => {
+    setError(null);
+    setSuccessMsg(null);
     try {
       const res = await api.scheduledScriptsTrigger(r.id);
-      alert(`Triggered script for ${res.agent_count} agent(s). Check the Events tab for results in a few seconds.`);
+      setSuccessMsg(`Script "${r.name}" triggered for ${res.agent_count} agent(s). Results will appear in the Events tab within a few seconds.`);
+      // Reload after a short delay to pick up the new execution record
+      setTimeout(() => void load(), 3000);
     } catch (e) {
       setError(String(e));
     }
@@ -1633,6 +1676,7 @@ function ScheduledScriptsTab({ groups, agents }: { groups: AgentGroup[]; agents:
   return (
     <>
       {error && <Box color="text-status-error" padding={{ bottom: "s" }}>{error}</Box>}
+      {successMsg && <Box color="text-status-success" padding={{ bottom: "s" }}>{successMsg}</Box>}
 
       <Table
         loading={loading}
@@ -1649,10 +1693,26 @@ function ScheduledScriptsTab({ groups, agents }: { groups: AgentGroup[]; agents:
         }
         empty={<Box textAlign="center" padding="l" color="text-body-secondary">No scheduled scripts.</Box>}
         columnDefinitions={[
-          { id: "name", header: "Name", cell: (r) => r.name, width: "25%" },
-          { id: "shell", header: "Shell", cell: (r) => r.shell, width: "10%" },
-          { id: "scope", header: "Scope", cell: (r) => scopeBadge(r.scopes as unknown as AlertRuleScope[], groups, agentsById), width: "20%" },
-          { id: "schedule", header: "Schedule", cell: (r) => scheduleSummary(r.schedules), width: "25%" },
+          { id: "name", header: "Name", cell: (r) => r.name, width: "22%" },
+          { id: "shell", header: "Shell", cell: (r) => r.shell, width: "8%" },
+          { id: "scope", header: "Scope", cell: (r) => scopeBadge(r.scopes as unknown as AlertRuleScope[], groups, agentsById), width: "18%" },
+          { id: "schedule", header: "Schedule", cell: (r) => scheduleSummary(r.schedules), width: "18%" },
+          {
+            id: "last_run",
+            header: "Last Run",
+            width: "15%",
+            cell: (r) => {
+              const lr = lastRuns[r.id];
+              if (!lr) return <Box color="text-body-secondary" fontSize="body-s">Never</Box>;
+              const statusColor = lr.status === "success" ? "green" : lr.status.includes("error") || lr.status === "failed" ? "red" : lr.status.includes("skipped") ? "grey" : "blue";
+              return (
+                <div style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                  <Badge color={statusColor}>{lr.status}</Badge>
+                  <Box fontSize="body-s" color="text-body-secondary">{fmtDateTime(lr.time)}</Box>
+                </div>
+              );
+            }
+          },
           { id: "enabled", header: "Active", cell: (r) => <Toggle checked={r.enabled} disabled={togglingId === r.id} onChange={() => toggleRule(r)} />, width: 80 },
           {
             id: "actions",
@@ -1746,7 +1806,7 @@ function ScheduledScriptsTab({ groups, agents }: { groups: AgentGroup[]; agents:
             </SpaceBetween>
           </FormField>
 
-          <FormField label="Schedule" description="Times are in UTC (the server's clock). Use 'Trigger now' to test immediately.">
+          <FormField label="Schedule" description={`Times are in ${schedulerTz} (the server's configured timezone). Use 'Trigger now' to test immediately without waiting for the schedule.`}>
             <SpaceBetween size="xs">
               {editSchedules.map((r, i) => (
                 <div key={i} style={{ display: "flex", flexWrap: "wrap", gap: "8px", alignItems: "center", borderBottom: "1px solid #eee", paddingBottom: "8px" }}>

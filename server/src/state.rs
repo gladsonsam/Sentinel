@@ -105,6 +105,10 @@ pub struct AppState {
 
     /// TCP listen port (for mDNS default port hints; same value passed to `mdns_broadcast`).
     pub agent_listen_port: u16,
+
+    /// Timezone used by the scheduler when matching `fire_minute` / `day_of_week`.
+    /// Defaults to UTC if `SCHEDULER_TIMEZONE` is not set or invalid.
+    pub scheduler_tz: chrono_tz::Tz,
 }
 
 /// Cached JPEG with a monotonic `seq` for MJPEG change detection.
@@ -127,6 +131,7 @@ pub struct AppStateParams {
     pub integration_api_token: Option<String>,
     pub public_base_url: Option<String>,
     pub agent_listen_port: u16,
+    pub scheduler_tz: chrono_tz::Tz,
 }
 
 impl AppState {
@@ -143,6 +148,7 @@ impl AppState {
             integration_api_token,
             public_base_url,
             agent_listen_port,
+            scheduler_tz,
         } = p;
         let (tx, _) = broadcast::channel(4096);
         Self {
@@ -170,6 +176,7 @@ impl AppState {
             integration_api_token,
             public_base_url,
             agent_listen_port,
+            scheduler_tz,
         }
     }
 

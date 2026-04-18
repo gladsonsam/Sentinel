@@ -15,6 +15,7 @@ use super::helpers::err500;
 pub async fn settings_capabilities(State(s): State<Arc<AppState>>) -> Response {
     Json(serde_json::json!({
         "remote_script": s.allow_remote_script,
+        "scheduler_timezone": s.scheduler_tz.to_string(),
     }))
     .into_response()
 }

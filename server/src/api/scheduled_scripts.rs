@@ -193,8 +193,8 @@ pub async fn update_script(
     Path(id): Path<i64>,
     State(s): State<Arc<AppState>>,
     Extension(user): Extension<auth::AuthUser>,
-    _headers: HeaderMap,
-    ConnectInfo(_addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
     Json(body): Json<UpdateScheduledScriptBody>,
 ) -> Response {
     if !user.is_admin() {
@@ -255,6 +255,12 @@ pub async fn update_script(
         return err500(e.into());
     }
 
+    let ip = audit_ip(&headers, addr);
+    db::insert_audit_log_traced(
+        &s.db, &user.username, None, "scheduled_script_update", "ok",
+        &serde_json::json!({ "id": id }), ip.as_deref(),
+    ).await;
+
     Json(serde_json::json!({ "ok": true })).into_response()
 }
 
@@ -312,9 +318,9 @@ pub async fn trigger_script(
         let is_online = connected_agents.contains(&agent_id);
         let status = if is_online { "fired" } else { "skipped_offline" };
 
-        // Record execution
+        // Record execution (manual trigger)
         let _ = sqlx::query(
-            "INSERT INTO scheduled_script_executions (script_id, agent_id, status, expected_fire_time) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING"
+            "INSERT INTO scheduled_script_executions (script_id, agent_id, status, expected_fire_time, is_manual) VALUES ($1, $2, $3, $4, true) ON CONFLICT DO NOTHING"
         )
         .bind(id)
         .bind(agent_id)
@@ -382,7 +388,22 @@ pub async fn trigger_script(
         }
     }
 
-    Json(serde_json::json!({ "ok": true, "agent_count": target_agents.len() })).into_response()
+    let agent_count = target_agents.len();
+    db::insert_audit_log_traced(
+        &s.db,
+        &user.username,
+        None,
+        "scheduled_script_trigger",
+        "ok",
+        &serde_json::json!({
+            "script_id": id,
+            "agent_count": agent_count,
+            "agents_online": target_agents.iter().filter(|a| connected_agents.contains(a)).count(),
+        }),
+        None,
+    ).await;
+
+    Json(serde_json::json!({ "ok": true, "agent_count": agent_count })).into_response()
 }
 
 pub async fn resolve_agents(db: &sqlx::PgPool, scopes: &[ScheduledScriptScope]) -> anyhow::Result<std::collections::HashSet<Uuid>> {
@@ -424,7 +445,14 @@ pub async fn delete_script(
     }
     match sqlx::query("DELETE FROM scheduled_scripts WHERE id = $1")
         .bind(id).execute(&s.db).await {
-        Ok(_) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Ok(r) if r.rows_affected() == 0 => (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "Script not found" }))).into_response(),
+        Ok(_) => {
+            db::insert_audit_log_traced(
+                &s.db, &user.username, None, "scheduled_script_delete", "ok",
+                &serde_json::json!({ "id": id }), None,
+            ).await;
+            Json(serde_json::json!({ "ok": true })).into_response()
+        }
         Err(e) => err500(e.into()),
     }
 }
@@ -443,6 +471,7 @@ pub async fn events_all(
         r#"
         SELECT 
             e.script_id, e.agent_id, e.status, e.expected_fire_time, e.output,
+            e.is_manual,
             s.name as rule_name, a.name as agent_name
         FROM scheduled_script_executions e
         JOIN scheduled_scripts s ON s.id = e.script_id
@@ -465,6 +494,7 @@ pub async fn events_all(
                     "status": r.try_get::<String, _>("status").unwrap_or_default(),
                     "expected_fire_time": r.try_get::<chrono::DateTime<chrono::Utc>, _>("expected_fire_time").unwrap_or_default(),
                     "output": r.try_get::<Option<String>, _>("output").unwrap_or_default(),
+                    "is_manual": r.try_get::<bool, _>("is_manual").unwrap_or(false),
                 }));
             }
             Json(serde_json::json!({ "rows": results })).into_response()
@@ -483,6 +513,7 @@ pub async fn events_for_script(
         r#"
         SELECT 
             e.script_id, e.agent_id, e.status, e.expected_fire_time, e.output,
+            e.is_manual,
             a.name as agent_name
         FROM scheduled_script_executions e
         JOIN agents a ON a.id = e.agent_id

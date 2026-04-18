@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
-use chrono::{Datelike, Utc, Timelike};
+use chrono::{Datelike, Timelike};
 use sqlx::Row;
 use tracing::{debug, info, warn};
 
@@ -13,10 +13,10 @@ pub fn spawn(state: Arc<AppState>) {
     }
 
     tokio::spawn(async move {
-        // Sleep until the next minute boundary
-        let now = chrono::Local::now();
-        let seconds = now.second();
-        tokio::time::sleep(Duration::from_secs(60 - seconds as u64)).await;
+        // Sleep until the next minute boundary (use UTC — seconds-within-minute is TZ-independent)
+        let seconds = chrono::Utc::now().second();
+        let wait = if seconds == 0 { 60 } else { 60 - seconds as u64 };
+        tokio::time::sleep(Duration::from_secs(wait)).await;
 
         let mut interval = tokio::time::interval(Duration::from_secs(60));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -31,12 +31,15 @@ pub fn spawn(state: Arc<AppState>) {
 }
 
 async fn tick(state: &Arc<AppState>) -> anyhow::Result<()> {
-    let now = Utc::now();
+    use chrono::TimeZone as _;
+    let now_utc = chrono::Utc::now();
+    // Convert to the configured scheduler timezone so fire_minute/day_of_week match user expectations
+    let now = state.scheduler_tz.from_utc_datetime(&now_utc.naive_utc());
     let current_day_of_week = now.weekday().num_days_from_sunday(); // 0 = Sun, 6 = Sat
     let current_minute_of_day = (now.hour() * 60 + now.minute()) as i32;
 
-    // Truncate to the start of the minute for expected_fire_time
-    let expected_fire_time = now.with_second(0).unwrap().with_nanosecond(0).unwrap();
+    // Truncate to the start of the minute (in UTC) for expected_fire_time storage
+    let expected_fire_time = now_utc.with_second(0).unwrap().with_nanosecond(0).unwrap();
 
     // 1. Fetch enabled scheduled scripts with their schedules and scopes
     let records = sqlx::query(

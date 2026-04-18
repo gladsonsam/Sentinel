@@ -206,6 +206,11 @@ async fn main() -> anyhow::Result<()> {
         info!("Remote script execution from the dashboard is ENABLED (ALLOW_REMOTE_SCRIPT_EXECUTION).");
     }
 
+    let scheduler_tz: chrono_tz::Tz = read_env_or_file("SCHEDULER_TIMEZONE")
+        .and_then(|s| s.trim().parse::<chrono_tz::Tz>().ok())
+        .unwrap_or(chrono_tz::UTC);
+    info!("Scheduler timezone: {} (set SCHEDULER_TIMEZONE to change, e.g. Asia/Kuala_Lumpur)", scheduler_tz);
+
     let prom_metrics = if cfg.metrics_enabled {
         Some(metrics::AppMetrics::new()?)
     } else {
@@ -249,6 +254,7 @@ async fn main() -> anyhow::Result<()> {
         integration_api_token,
         public_base_url,
         agent_listen_port: cfg.listen.port(),
+        scheduler_tz,
     }));
 
     // URL categorization (UT1 lists): background importer + categorization worker (disabled by default).

@@ -414,6 +414,7 @@ export interface ScheduledScriptEvent {
   status: string;
   expected_fire_time: string;
   output?: string;
+  is_manual?: boolean;
 }
 
 export interface AgentSessionEvent {
