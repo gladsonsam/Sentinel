@@ -1,14 +1,14 @@
-![Sentinel banner](docs/images/readme-banner.png)
+![Sentinel banner](.github/images/readme-banner.png)
 
 **A lightweight, self-hosted monitoring system built with Rust and React.** A Windows agent streams real-time telemetry to the server, which feeds a live web dashboard with screen streaming, window/URL tracking, and activity history.
 
 ## Screenshots
 
-<img src="docs/images/dashboard-agents-overview.jpg" alt="Agents overview" width="820" />
+<img src=".github/images/dashboard-agents-overview.jpg" alt="Agents overview" width="820" />
 
-<img src="docs/images/agent-screen-viewer.jpg" alt="Agent screen viewer" width="820" />
+<img src=".github/images/agent-screen-viewer.jpg" alt="Agent screen viewer" width="820" />
 
-<img src="docs/images/agent-activity-timeline.jpg" alt="Agent activity timeline" width="820" />
+<img src=".github/images/agent-activity-timeline.jpg" alt="Agent activity timeline" width="820" />
 
 Tab-by-tab UI tour (with more detail): **[wiki → Features](https://github.com/gladsonsam/Sentinel/wiki/Features)**.
 

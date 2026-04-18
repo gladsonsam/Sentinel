@@ -137,6 +137,25 @@ def render_favicon_rgba(
     return img
 
 
+def _load_windows_font(px: int):
+    """Best-effort TrueType on Windows; falls back to PIL default."""
+    from PIL import ImageFont
+
+    candidates = [
+        r"C:\Windows\Fonts\seguisb.ttf",  # Segoe UI Semibold
+        r"C:\Windows\Fonts\segoeuib.ttf",  # Segoe UI Bold
+        r"C:\Windows\Fonts\segoeui.ttf",
+        r"C:\Windows\Fonts\arialbd.ttf",
+        r"C:\Windows\Fonts\arial.ttf",
+    ]
+    for p in candidates:
+        try:
+            return ImageFont.truetype(p, px)
+        except Exception:
+            pass
+    return ImageFont.load_default()
+
+
 def write_license_rtf(out_path: Path, license_txt_path: Path):
     body = license_txt_path.read_text(encoding="utf-8").replace("\r\n", "\n")
     rtf = r"{\rtf1\ansi\deff0{\fonttbl{\f0 Consolas;}}\fs18" + "\n"
@@ -166,22 +185,7 @@ def write_app_icon_ico(out_path: Path, spec: dict):
 
 
 def write_readme_banner_png(out_path: Path, spec: dict):
-    from PIL import Image, ImageDraw, ImageFont
-
-    def load_font(px: int) -> ImageFont.ImageFont:
-        candidates = [
-            r"C:\Windows\Fonts\seguisb.ttf",  # Segoe UI Semibold
-            r"C:\Windows\Fonts\segoeuib.ttf",  # Segoe UI Bold
-            r"C:\Windows\Fonts\segoeui.ttf",
-            r"C:\Windows\Fonts\arialbd.ttf",
-            r"C:\Windows\Fonts\arial.ttf",
-        ]
-        for p in candidates:
-            try:
-                return ImageFont.truetype(p, px)
-            except Exception:
-                pass
-        return ImageFont.load_default()
+    from PIL import Image, ImageDraw
 
     # GitHub-friendly wide banner, styled like the provided reference (dark bar, icon at left, title text).
     W, H = (1280, 320)
@@ -191,7 +195,7 @@ def write_readme_banner_png(out_path: Path, spec: dict):
     # Centered logo + title group (no panels; everything sits directly on the gradient).
     logo = render_favicon_rgba(spec, 132)
     title = "Sentinel"
-    font = load_font(82)
+    font = _load_windows_font(82)
     text_bbox = draw.textbbox((0, 0), title, font=font)
     text_w = text_bbox[2] - text_bbox[0]
     text_h = text_bbox[3] - text_bbox[1]
@@ -207,6 +211,63 @@ def write_readme_banner_png(out_path: Path, spec: dict):
     text_x = logo_x + logo.width + gap
     text_y = (H - text_h) // 2 - text_bbox[1]
     draw.text((text_x, text_y), title, font=font, fill=(245, 247, 250, 255))
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.unlink(missing_ok=True)
+    base.convert("RGB").save(out_path, format="PNG", optimize=True)
+
+
+def write_github_repo_social_card_png(out_path: Path, spec: dict):
+    """
+    GitHub repository social preview / Open Graph image (2:1, typically 1280×640).
+    Keeps branding inside ~40px margins so crops on various platforms stay safe.
+    """
+    from PIL import Image, ImageDraw
+
+    W, H = 1280, 640
+    margin = 40
+    base = vertical_gradient((W, H), (20, 28, 40), (12, 18, 28)).convert("RGBA")
+    draw = ImageDraw.Draw(base)
+
+    title = "Sentinel"
+    subtitle = "Windows monitoring agent"
+
+    logo = render_favicon_rgba(spec, 168)
+    title_font = _load_windows_font(96)
+    sub_font = _load_windows_font(34)
+
+    title_bbox = draw.textbbox((0, 0), title, font=title_font)
+    sub_bbox = draw.textbbox((0, 0), subtitle, font=sub_font)
+    title_w = title_bbox[2] - title_bbox[0]
+    sub_w = sub_bbox[2] - sub_bbox[0]
+
+    gap_logo_title = 36
+    gap_title_sub = 22
+    title_span = title_bbox[3] - title_bbox[1]
+    sub_span = sub_bbox[3] - sub_bbox[1]
+    text_stack_h = title_span + gap_title_sub + sub_span
+
+    group_w = logo.width + gap_logo_title + max(title_w, sub_w)
+    group_h = max(logo.height, text_stack_h)
+
+    # Center the block in the canvas, respecting margins (content stays in safe zone).
+    cx = margin + (W - 2 * margin - group_w) // 2
+    cy = margin + (H - 2 * margin - group_h) // 2
+
+    logo_x = cx
+    logo_y = cy + (group_h - logo.height) // 2
+    base.alpha_composite(logo, (logo_x, logo_y))
+
+    text_block_left = logo_x + logo.width + gap_logo_title
+    title_x = text_block_left
+    # Stack using ink bounds: subtitle top = title bottom + gap (avoids overlap when bbox[1] != 0).
+    text_stack_top = cy + (group_h - text_stack_h) // 2
+    title_y = text_stack_top - title_bbox[1]
+    draw.text((title_x, title_y), title, font=title_font, fill=(245, 247, 250, 255))
+
+    sub_x = text_block_left
+    sub_y = title_y + title_bbox[3] + gap_title_sub - sub_bbox[1]
+    draw.text((sub_x, sub_y), subtitle, font=sub_font, fill=(180, 190, 205, 255))
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.unlink(missing_ok=True)
@@ -270,14 +331,18 @@ def main():
     ico_path = root / "icons" / "icon.ico"
     write_app_icon_ico(ico_path, spec)
 
-    readme_banner_path = repo / "docs" / "images" / "readme-banner.png"
+    readme_banner_path = repo / ".github" / "images" / "readme-banner.png"
     write_readme_banner_png(readme_banner_path, spec)
+
+    repo_social_path = repo / ".github" / "images" / "github-repo-social-card.png"
+    write_github_repo_social_card_png(repo_social_path, spec)
 
     print(f"Wrote {out_dir / 'wix-banner.bmp'}")
     print(f"Wrote {out_dir / 'wix-dialog.bmp'}")
     print(f"Wrote {out_dir / 'license.rtf'}")
     print(f"Wrote {ico_path} (from {svg_path})")
     print(f"Wrote {readme_banner_path}")
+    print(f"Wrote {repo_social_path} (GitHub repo Settings -> General -> Social preview)")
 
 
 if __name__ == "__main__":
