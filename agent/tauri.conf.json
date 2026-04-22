@@ -36,6 +36,7 @@
   "bundle": {
     "active": true,
     "targets": ["msi"],
+    "publisher": "Sentinel",
     "licenseFile": "./wix/assets/license.rtf",
     "icon": [
       "icons/icon.ico"
