@@ -194,6 +194,9 @@ export const api = {
 
   agents: (): Promise<{ agents: Agent[] }> => get("/agents"),
 
+  /** Overview list with live `online` + session timestamps (preferred for dashboard refresh). */
+  agentsOverview: (): Promise<{ agents: Agent[] }> => get("/agents/overview"),
+
   // ── Agent UI metadata ─────────────────────────────────────────────────────
 
   agentIconGet: (id: string): Promise<{ icon: string | null }> =>

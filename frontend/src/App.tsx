@@ -503,6 +503,95 @@ export function App() {
     }
   }, []);
 
+  const refreshDashboard = useCallback(async () => {
+    // One place to emulate a browser refresh: re-check auth + refetch the main caches we normally
+    // seed on load (agents list + last-known telemetry + agent info).
+    await checkAuth();
+
+    let nextAgents: Agent[] = [];
+    try {
+      const res = await api.agentsOverview();
+      nextAgents = Array.isArray(res?.agents) ? res.agents : [];
+    } catch {
+      nextAgents = [];
+    }
+
+    if (nextAgents.length > 0) {
+      const agentMap: Record<string, Agent> = {};
+      for (const a of nextAgents) agentMap[a.id] = a;
+      setAllAgents(agentMap);
+    }
+
+    const ids = nextAgents.map((a) => a.id);
+    if (ids.length === 0) {
+      return;
+    }
+
+    // Concurrency-limited fanout so we don't spam the server on large fleets.
+    const withConcurrency = async <T,>(
+      items: string[],
+      limit: number,
+      fn: (id: string) => Promise<T>,
+    ): Promise<void> => {
+      let i = 0;
+      const runners = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+        while (true) {
+          const idx = i++;
+          if (idx >= items.length) return;
+          await fn(items[idx]).catch(() => undefined);
+        }
+      });
+      await Promise.all(runners);
+    };
+
+    await withConcurrency(ids, 8, async (id) => {
+      // Merge live-status updates locally and commit once to avoid overwriting fields
+      // with stale snapshots (e.g. window update then url update reverting window).
+      let nextLive: AgentLiveStatus = { ...(liveStatus[id] ?? {}) };
+
+      // Agent info (uptime/hostname/etc.)
+      try {
+        const infoRes = await api.agentInfo(id);
+        updateAgentInfo(id, infoRes?.info ?? null);
+      } catch {
+        // keep stale
+      }
+
+      // Last window (fallback for when WS live events were missed/disconnected)
+      try {
+        const winRes = await api.windows(id, { limit: 1, offset: 0 });
+        const row = Array.isArray(winRes?.rows) ? winRes.rows[0] : null;
+        const title = typeof row?.title === "string" ? row.title : null;
+        const app = typeof row?.app === "string" ? row.app : null;
+        if (title && title.trim() !== "") {
+          nextLive = {
+            ...nextLive,
+            window: title,
+            app: app ?? nextLive.app,
+          };
+        }
+      } catch {
+        // keep stale
+      }
+
+      // Last URL (same idea as last window; not shown on cards today but used across the UI)
+      try {
+        const urlRes = await api.urls(id, { limit: 1, offset: 0 });
+        const row = Array.isArray(urlRes?.rows) ? urlRes.rows[0] : null;
+        const url = typeof row?.url === "string" ? row.url : null;
+        if (url && url.trim() !== "") {
+          nextLive = { ...nextLive, url };
+        }
+      } catch {
+        // keep stale
+      }
+
+      // Commit merged snapshot once.
+      updateAgentLiveStatus(id, nextLive);
+    });
+
+  }, [checkAuth, liveStatus, setAllAgents, updateAgentInfo, updateAgentLiveStatus]);
+
   useEffect(() => {
     checkAuth();
   }, [checkAuth]);
@@ -766,7 +855,7 @@ export function App() {
             onOpenUsers={() => navigate("/users")}
             onOpenNotifications={adminAlertRulesNav}
             currentUser={me}
-            checkAuth={checkAuth}
+            checkAuth={refreshDashboard}
             runBatchWake={runBatchWake}
             runBatchAction={runBatchAction}
             handleLogout={handleLogout}

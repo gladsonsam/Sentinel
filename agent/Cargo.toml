@@ -107,7 +107,9 @@ windows-service = "0.7"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
-tauri = { version = "2", features = [] }
+# Tray icon is used to keep the agent discoverable while the settings window is destroyed.
+# `image-png` is required because we generate small status-overlay tray PNGs at runtime.
+tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-updater = "2"
