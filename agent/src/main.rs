@@ -239,12 +239,12 @@ fn init_logging(
 // Tunables
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Maximum frames to deliver per second.
-const TARGET_FPS: u64 = 15;
-const FRAME_INTERVAL_MS: u64 = 1_000 / TARGET_FPS;
+    // NOTE: The capture worker already runs at ~5fps (see `capture.rs`). We avoid a separate
+    // fixed-rate "send" ticker so the agent doesn't wake up unnecessarily while streaming.
 
-/// How long to wait before attempting a reconnect after a failed session.
-const RECONNECT_DELAY_SECS: u64 = 5;
+/// Exponential reconnect backoff parameters (WAN-friendly).
+const RECONNECT_BACKOFF_BASE_MS: u64 = 750;
+const RECONNECT_BACKOFF_MAX_MS: u64 = 30_000;
 
 /// Bounded capacity for the JPEG frame channel.
 const FRAME_CHANNEL_CAP: usize = 4;
@@ -257,6 +257,20 @@ const WINDOW_POLL_INTERVAL_MS: u64 = 200;
 
 /// How often to sample the active browser URL (UIAutomation-backed).
 const URL_POLL_INTERVAL_SECS: u64 = 2;
+
+fn reconnect_backoff_delay(attempt: u32) -> Duration {
+    // Exponential backoff with small jitter, no RNG dependency.
+    let pow = attempt.min(6); // cap exponential growth (2^6 = 64x)
+    let exp = 1u64.checked_shl(pow).unwrap_or(u64::MAX);
+    let base = RECONNECT_BACKOFF_BASE_MS.saturating_mul(exp);
+    let capped = base.min(RECONNECT_BACKOFF_MAX_MS);
+    let jitter_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .subsec_millis() as u64
+        % 500; // 0..499ms
+    Duration::from_millis(capped.saturating_add(jitter_ms))
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Entry point  (synchronous — eframe owns the main thread)
@@ -396,7 +410,10 @@ fn main() {
             rt.block_on(async move {
                 // Keyboard capture channels must be created inside the async context
                 // because keyboard_capture::start() spawns a tokio task internally.
-                let (key_tx, key_rx) = mpsc::unbounded_channel::<InputEvent>();
+                // Bounded queue: prevents unbounded RAM growth while offline (WAN laptops).
+                // Best-effort producers use `try_send`, so overload drops bursts instead of blocking input threads.
+                const INPUT_EVENT_CHANNEL_CAP: usize = 2048;
+                let (key_tx, key_rx) = mpsc::channel::<InputEvent>(INPUT_EVENT_CHANNEL_CAP);
                 match keyboard_capture::start(key_tx) {
                     Ok(()) => {
                         info!("Keyboard hook installed.");
@@ -505,7 +522,7 @@ async fn run_agent_loop(
     shared_cfg: Arc<Mutex<Config>>,
     frame_tx: mpsc::Sender<Vec<u8>>,
     mut frame_rx: mpsc::Receiver<Vec<u8>>,
-    mut key_rx: mpsc::UnboundedReceiver<InputEvent>,
+    mut key_rx: mpsc::Receiver<InputEvent>,
     status: Arc<Mutex<AgentStatus>>,
 ) {
     // Load persisted app block rules from config so enforcement starts immediately.
@@ -552,6 +569,7 @@ async fn run_agent_loop(
 
     // The capture stop-flag survives reconnects.
     let mut capture_stop: Option<Arc<AtomicBool>> = None;
+    let mut reconnect_attempt: u32 = 0;
 
     loop {
         // Snapshot current config (clears the "changed" flag too)
@@ -579,7 +597,7 @@ async fn run_agent_loop(
                 let ws_url_for_log = redact_secret_from_ws_url(&ws_url);
                 set_status(&status, AgentStatus::Connecting);
                 info!("Connecting to {ws_url_for_log} …");
-                info!("Target FPS (streaming): {TARGET_FPS}");
+                info!("Streaming: sends frames as produced (no fixed send FPS).");
 
                 // Internet exposure requires TLS; refuse plaintext `ws://` URLs.
                 if !ws_url.starts_with("wss://") {
@@ -595,8 +613,10 @@ async fn run_agent_loop(
                         "Refusing to connect due to non-TLS WebSocket URL: {}",
                         redact_secret_from_ws_url(&ws_url)
                     );
+                    reconnect_attempt = reconnect_attempt.saturating_add(1);
+                    let delay = reconnect_backoff_delay(reconnect_attempt);
                     tokio::select! {
-                        _ = tokio::time::sleep(Duration::from_secs(RECONNECT_DELAY_SECS)) => {}
+                        _ = tokio::time::sleep(delay) => {}
                         _ = config_rx.changed() => { info!("Config changed – applying new settings immediately."); }
                     }
                     continue;
@@ -636,18 +656,23 @@ async fn run_agent_loop(
                         *kill_report_tx.lock().unwrap() = None;
 
                         set_status(&status, AgentStatus::Disconnected);
+                        // Any successful connect resets backoff.
+                        reconnect_attempt = 0;
                     }
                     Err(e) => {
                         set_status(&status, AgentStatus::Error(e.to_string()));
                         error!("Connection failed: {e:#}");
+                        reconnect_attempt = reconnect_attempt.saturating_add(1);
                     }
                 }
 
                 // Wait before reconnect; wake early if the user updates config
-                info!("Reconnecting in {RECONNECT_DELAY_SECS}s …");
+                let delay = reconnect_backoff_delay(reconnect_attempt.max(1));
+                info!("Reconnecting in {}ms …", delay.as_millis());
                 tokio::select! {
-                    _ = tokio::time::sleep(Duration::from_secs(RECONNECT_DELAY_SECS)) => {}
+                    _ = tokio::time::sleep(delay) => {}
                     _ = config_rx.changed() => {
+                        reconnect_attempt = 0;
                         info!("Config changed – applying new settings immediately.");
                     }
                 }
@@ -672,7 +697,7 @@ struct RunSessionArgs<'a> {
     ws_stream: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
     frame_tx: &'a mpsc::Sender<Vec<u8>>,
     frame_rx: &'a mut mpsc::Receiver<Vec<u8>>,
-    key_rx: &'a mut mpsc::UnboundedReceiver<InputEvent>,
+    key_rx: &'a mut mpsc::Receiver<InputEvent>,
     capture_stop: &'a mut Option<Arc<AtomicBool>>,
     shared_cfg: Arc<Mutex<Config>>,
     config_tx: tokio::sync::watch::Sender<Option<Config>>,
@@ -729,9 +754,10 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
     let mut sent_app_icons: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // ── Timers ────────────────────────────────────────────────────────────
-    let mut frame_ticker = interval(Duration::from_millis(FRAME_INTERVAL_MS));
     let mut url_ticker = interval(Duration::from_secs(URL_POLL_INTERVAL_SECS));
     let mut window_ticker = interval(Duration::from_millis(WINDOW_POLL_INTERVAL_MS));
+    let mut ping_ticker = interval(Duration::from_secs(20));
+    let mut liveness_ticker = interval(Duration::from_secs(5));
 
     // First software inventory ~1 minute after connect, then every 24 hours.
     let mut software_ticker = interval_at(
@@ -739,14 +765,20 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
         Duration::from_secs(86_400),
     );
 
-    frame_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     url_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     window_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     software_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    ping_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    liveness_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     // URL sessions (time-on-site): maintained locally, emitted on transitions.
     let mut url_session: Option<UrlSession> = None;
     let mut url_session_blocked_by_afk = false;
+    let mut last_live_url_key: Option<String> = None;
+
+    // WebSocket liveness: avoid half-open WAN stalls.
+    let mut last_rx_at = Instant::now();
+    const WS_LIVENESS_TIMEOUT_SECS: u64 = 75;
 
     // ── Event loop ────────────────────────────────────────────────────────
     let result: Result<()> = loop {
@@ -755,6 +787,7 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
 
             // ── Branch 1: inbound server commands ────────────────────────
             msg = ws_rx.next() => {
+                last_rx_at = Instant::now();
                 match msg {
                     Some(Ok(Message::Text(text))) => {
                         handle_server_command(ServerCommandArgs {
@@ -775,13 +808,29 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                         info!("Server sent Close frame: {reason}");
                         break Ok(());
                     }
-                    Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {}
+                    Some(Ok(Message::Ping(v))) => {
+                        // Reply promptly so intermediaries keep the connection alive.
+                        let _ = out_tx.send(Message::Pong(v)).await;
+                    }
+                    Some(Ok(Message::Pong(_))) => {}
                     Some(Ok(_)) => {}
                     Some(Err(e)) => break Err(anyhow::anyhow!("WS receive error: {e}")),
                     None => {
                         info!("WebSocket stream ended.");
                         break Ok(());
                     }
+                }
+            }
+
+            // ── Branch 1b: protocol ping (keep idle WAN links alive) ──────
+            _ = ping_ticker.tick() => {
+                let _ = out_tx.send(Message::Ping(Vec::new())).await;
+            }
+
+            // ── Branch 1c: liveness timeout (detect half-open WAN) ────────
+            _ = liveness_ticker.tick() => {
+                if last_rx_at.elapsed() > Duration::from_secs(WS_LIVENESS_TIMEOUT_SECS) {
+                    break Err(anyhow::anyhow!("WS liveness timeout (no inbound traffic)"));
                 }
             }
 
@@ -799,10 +848,11 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
             }
 
             // ── Branch 3: screen frame delivery ──────────────────────────
-            _ = frame_ticker.tick() => {
-                let mut latest: Option<Vec<u8>> = None;
-                while let Ok(jpeg) = frame_rx.try_recv() {
-                    latest = Some(jpeg);
+            // Stream only when frames exist. Always drop to the latest frame.
+            jpeg = frame_rx.recv() => {
+                let mut latest = jpeg;
+                while let Ok(j) = frame_rx.try_recv() {
+                    latest = Some(j);
                 }
                 if let Some(jpeg) = latest {
                     if out_tx.send(Message::Binary(jpeg)).await.is_err() {
@@ -810,6 +860,8 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                             "Outbound channel closed; writer task exited unexpectedly."
                         ));
                     }
+                } else {
+                    // Frame channel closed => capture stopped; keep session alive.
                 }
             }
 
@@ -854,21 +906,28 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                     _ => {}
                 }
 
-                // Per-tick URL sample for live dashboard + `url_visits` (sessions use `url_session`).
+                // Live URL sample for dashboard + `url_visits` (sessions use `url_session`).
+                // Only emit when the URL changes to save WAN bandwidth.
                 if let Some(info) = active {
-                    let live_url = serde_json::json!({
-                        "type"    : "url",
-                        "url"     : info.url,
-                        "title"   : info.title,
-                        "browser" : info.browser_name,
-                        "ts"      : now_ts_u64,
-                    })
-                    .to_string();
-                    if out_tx.send(Message::Text(live_url)).await.is_err() {
-                        break Err(anyhow::anyhow!(
-                            "Outbound channel closed; writer task exited unexpectedly."
-                        ));
+                    let key = format!("{}\n{}\n{}", info.url, info.title, info.browser_name);
+                    if last_live_url_key.as_deref() != Some(key.as_str()) {
+                        last_live_url_key = Some(key);
+                        let live_url = serde_json::json!({
+                            "type"    : "url",
+                            "url"     : info.url,
+                            "title"   : info.title,
+                            "browser" : info.browser_name,
+                            "ts"      : now_ts_u64,
+                        })
+                        .to_string();
+                        if out_tx.send(Message::Text(live_url)).await.is_err() {
+                            break Err(anyhow::anyhow!(
+                                "Outbound channel closed; writer task exited unexpectedly."
+                            ));
+                        }
                     }
+                } else {
+                    last_live_url_key = None;
                 }
             }
 

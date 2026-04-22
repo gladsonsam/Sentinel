@@ -33,7 +33,7 @@
 
 use std::cell::Cell;
 use std::sync::OnceLock;
-use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::Sender;
 use windows::core::PWSTR;
 use windows::Win32::Foundation::{CloseHandle, LPARAM, LRESULT, WPARAM};
 use windows::Win32::System::Threading::{
@@ -186,7 +186,7 @@ unsafe fn decode_key(vk: u32, scan: u32) -> String {
 ///
 /// All [`InputEvent`]s (keystrokes + AFK transitions) are delivered on
 /// `out_tx`. The hook remains active for the lifetime of the process.
-pub fn start(out_tx: UnboundedSender<InputEvent>) -> anyhow::Result<()> {
+pub fn start(out_tx: Sender<InputEvent>) -> anyhow::Result<()> {
     let (raw_tx, raw_rx) = std::sync::mpsc::sync_channel::<String>(512);
     HOOK_TX
         .set(raw_tx)
@@ -226,7 +226,7 @@ pub fn start(out_tx: UnboundedSender<InputEvent>) -> anyhow::Result<()> {
 
 // ─── Decoder thread ───────────────────────────────────────────────────────────
 
-fn run_decoder(raw_rx: std::sync::mpsc::Receiver<String>, out_tx: UnboundedSender<InputEvent>) {
+fn run_decoder(raw_rx: std::sync::mpsc::Receiver<String>, out_tx: Sender<InputEvent>) {
     use std::time::{Duration, Instant};
 
     let mut buf = String::new();
@@ -273,8 +273,9 @@ fn run_decoder(raw_rx: std::sync::mpsc::Receiver<String>, out_tx: UnboundedSende
     }
 }
 
-fn emit(text: &str, app: &str, app_display: &str, win: &str, tx: &UnboundedSender<InputEvent>) {
-    let _ = tx.send(InputEvent::Keys {
+fn emit(text: &str, app: &str, app_display: &str, win: &str, tx: &Sender<InputEvent>) {
+    // Best-effort: never block input threads. If the queue is full, drop the burst.
+    let _ = tx.try_send(InputEvent::Keys {
         text: text.to_owned(),
         app: app.to_owned(),
         app_display: app_display.to_owned(),
@@ -289,7 +290,7 @@ fn emit(text: &str, app: &str, app_display: &str, win: &str, tx: &UnboundedSende
 ///
 /// Detects idle → active and active → idle transitions without needing
 /// `GetTickCount` — just compares the `dwTime` tick for changes.
-async fn run_afk_watcher(out_tx: UnboundedSender<InputEvent>) {
+async fn run_afk_watcher(out_tx: Sender<InputEvent>) {
     use std::time::Instant;
     use tokio::time::{interval, Duration, MissedTickBehavior};
 
@@ -319,13 +320,13 @@ async fn run_afk_watcher(out_tx: UnboundedSender<InputEvent>) {
 
             if was_afk {
                 was_afk = false;
-                let _ = out_tx.send(InputEvent::Active);
+                let _ = out_tx.try_send(InputEvent::Active);
             }
         } else {
             let idle_secs = last_input_mono.elapsed().as_secs();
             if idle_secs >= AFK_THRESHOLD_SECS && !was_afk {
                 was_afk = true;
-                let _ = out_tx.send(InputEvent::Afk { idle_secs });
+                let _ = out_tx.try_send(InputEvent::Afk { idle_secs });
             }
         }
     }

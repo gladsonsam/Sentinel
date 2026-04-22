@@ -41,7 +41,7 @@ use tauri::image::Image;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri::{
     menu::{MenuBuilder, MenuItem, PredefinedMenuItem},
-    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
+    tray::TrayIconBuilder,
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 #[cfg(not(target_os = "windows"))]
@@ -53,6 +53,7 @@ use crate::config::{AgentStatus, Config};
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
 static TRAY_ICONS: OnceLock<TrayIcons> = OnceLock::new();
+static TRAY_TOGGLE_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
 
 #[derive(Clone)]
 struct TrayIcons {
@@ -143,37 +144,47 @@ fn settings_window_visible(app: &AppHandle) -> bool {
         .unwrap_or(false)
 }
 
-fn build_tray_menu(app: &AppHandle) -> Result<tauri::menu::Menu<tauri::Wry>, String> {
-    // Dynamic label: show only the relevant action.
-    let toggle_label = if settings_window_visible(app) {
+fn set_toggle_label(app: &AppHandle) {
+    let label = if settings_window_visible(app) {
         "Hide Agent Settings"
     } else {
         "Show Agent Settings"
     };
-
-    let toggle_i =
-        MenuItem::with_id(app, "toggle_settings", toggle_label, true, None::<&str>)
-            .map_err(|e| e.to_string())?;
-    let quit_i = MenuItem::with_id(app, "quit", "Exit Agent", true, None::<&str>)
-        .map_err(|e| e.to_string())?;
-
-    // Only one separator line.
-    MenuBuilder::new(app)
-        .item(&toggle_i)
-        .item(&PredefinedMenuItem::separator(app).map_err(|e| e.to_string())?)
-        .item(&quit_i)
-        .build()
-        .map_err(|e| e.to_string())
+    if let Some(item) = TRAY_TOGGLE_ITEM.get() {
+        let _ = item.set_text(label);
+    }
 }
 
-fn install_tray(app: &tauri::App) -> Result<(), String> {
+fn install_tray(handle: AppHandle) -> Result<(), String> {
     let icons = TRAY_ICONS
         .get()
         .cloned()
         .ok_or_else(|| "tray icons not initialised".to_string())?;
 
-    let handle = app.handle().clone();
-    let menu = build_tray_menu(&handle)?;
+    let initial_toggle_label = if settings_window_visible(&handle) {
+        "Hide Agent Settings"
+    } else {
+        "Show Agent Settings"
+    };
+    let toggle_i = MenuItem::with_id(
+        &handle,
+        "toggle_settings",
+        initial_toggle_label,
+        true,
+        None::<&str>,
+    )
+    .map_err(|e| e.to_string())?;
+    let _ = TRAY_TOGGLE_ITEM.set(toggle_i.clone());
+
+    let quit_i = MenuItem::with_id(&handle, "quit", "Exit Agent", true, None::<&str>)
+        .map_err(|e| e.to_string())?;
+
+    let menu = MenuBuilder::new(&handle)
+        .item(&toggle_i)
+        .item(&PredefinedMenuItem::separator(&handle).map_err(|e| e.to_string())?)
+        .item(&quit_i)
+        .build()
+        .map_err(|e| e.to_string())?;
 
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(icons.bad.clone())
@@ -187,6 +198,7 @@ fn install_tray(app: &tauri::App) -> Result<(), String> {
                 } else {
                     show_settings_window(app.clone());
                 }
+                set_toggle_label(app);
             }
             "quit" => {
                 // Use existing command path to keep behavior consistent.
@@ -195,25 +207,34 @@ fn install_tray(app: &tauri::App) -> Result<(), String> {
             }
             _ => {}
         })
-        // Clicking the tray icon should do nothing. We only update the menu label
-        // right before the user opens it via right-click.
-        .on_tray_icon_event(move |tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Right,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                let app = tray.app_handle().clone();
-                if let Ok(menu) = build_tray_menu(&app) {
-                    let _ = tray.set_menu(Some(menu));
-                }
-            }
-        })
-        .build(app)
+        .build(&handle)
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+fn ensure_tray_matches_config(app: &AppHandle) {
+    let enabled = app
+        .state::<StoredConfig>()
+        .0
+        .lock()
+        .map(|c| c.tray_icon_enabled)
+        .unwrap_or(true);
+
+    if enabled {
+        if app.tray_by_id(TRAY_ID).is_none() {
+            if let Err(e) = install_tray(app.clone()) {
+                warn!("Failed to install tray icon: {e}");
+            }
+        } else if let Some(tray) = app.tray_by_id(TRAY_ID) {
+            let _ = tray.set_visible(true);
+        }
+        set_toggle_label(app);
+    } else {
+        if let Some(tray) = app.tray_by_id(TRAY_ID) {
+            let _ = tray.set_visible(false);
+        }
+    }
 }
 
 fn start_tray_status_watcher(app: AppHandle) {
@@ -225,14 +246,39 @@ fn start_tray_status_watcher(app: AppHandle) {
         let mut last_status = AgentStatus::Disconnected;
         let mut last_tooltip = String::new();
         let mut last_kind = "";
+        let mut last_visible = settings_window_visible(&app);
+        let mut last_tray_enabled = app
+            .state::<StoredConfig>()
+            .0
+            .lock()
+            .map(|c| c.tray_icon_enabled)
+            .unwrap_or(true);
 
         loop {
+            let tray_enabled = app
+                .state::<StoredConfig>()
+                .0
+                .lock()
+                .map(|c| c.tray_icon_enabled)
+                .unwrap_or(true);
+
+            if tray_enabled != last_tray_enabled {
+                ensure_tray_matches_config(&app);
+                last_tray_enabled = tray_enabled;
+            }
+
             let status = app
                 .state::<SharedStatus>()
                 .0
                 .lock()
                 .map(|s| s.clone())
                 .unwrap_or(AgentStatus::Error("status lock poisoned".into()));
+
+            let visible_now = settings_window_visible(&app);
+            if visible_now != last_visible {
+                set_toggle_label(&app);
+                last_visible = visible_now;
+            }
 
             if status != last_status {
                 let (tooltip, kind) = status_to_tray_payload(&status);
@@ -299,12 +345,18 @@ pub struct SaveConfigPayload {
     pub ui_password_hash: String,
     #[serde(default = "default_auto_update_enabled")]
     pub auto_update_enabled: bool,
+    #[serde(default = "default_tray_icon_enabled")]
+    pub tray_icon_enabled: bool,
     /// Present only when the user is changing the UI password.
     pub new_password: Option<String>,
 }
 
 fn default_auto_update_enabled() -> bool {
     false
+}
+
+fn default_tray_icon_enabled() -> bool {
+    true
 }
 
 /// Quick adoption: exchange dashboard enrollment code for a per-device token (no shared server secret).
@@ -540,6 +592,7 @@ fn save_config(
     config: SaveConfigPayload,
     stored: State<StoredConfig>,
     config_tx: State<SharedConfigTx>,
+    app: AppHandle,
 ) -> Result<(), String> {
     // Lock once to avoid deadlocks (multiple lock() calls in one expression can re-lock).
     let (preserve_ui_hash, preserve_internet_blocked, preserve_internet_block_rules, preserve_app_block_rules) = {
@@ -569,6 +622,7 @@ fn save_config(
         agent_password: config.agent_password,
         ui_password_hash: ui_hash,
         auto_update_enabled: config.auto_update_enabled,
+        tray_icon_enabled: config.tray_icon_enabled,
         // Preserve the server-managed internet block state; the settings UI does not touch it.
         internet_blocked: preserve_internet_blocked,
         // Preserve internet block rules; managed remotely.
@@ -584,6 +638,9 @@ fn save_config(
 
     // Update the in-memory copy so subsequent get_config() reads are fresh.
     *stored.0.lock().unwrap() = new_cfg;
+
+    // Apply tray visibility preference immediately.
+    ensure_tray_matches_config(&app);
 
     info!("Config saved and hot-reloaded.");
     Ok(())
@@ -820,12 +877,19 @@ pub fn run_tauri(
                 }
             }
 
-            // Install the tray. Even if icon generation fails, keep the agent functional.
-            if let Err(e) = install_tray(app) {
-                warn!("Failed to install tray icon: {e}");
-            } else {
-                start_tray_status_watcher(app.handle().clone());
+            // Install the tray if enabled. Even if it fails, keep the agent functional.
+            let enabled = app
+                .state::<StoredConfig>()
+                .0
+                .lock()
+                .map(|c| c.tray_icon_enabled)
+                .unwrap_or(true);
+            if enabled {
+                if let Err(e) = install_tray(app.handle().clone()) {
+                    warn!("Failed to install tray icon: {e}");
+                }
             }
+            start_tray_status_watcher(app.handle().clone());
 
             // When `auto_update_enabled` is true (default off): check shortly after app startup,
             // then every 6 hours. Windows uses `update_via_service` + MSI; other OSes use Tauri updater.

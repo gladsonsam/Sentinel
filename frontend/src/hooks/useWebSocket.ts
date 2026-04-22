@@ -14,6 +14,7 @@ interface Options {
 export function useWebSocket({ onMessage, onStatusChange, enabled = true }: Options) {
   const wsRef = useRef<WebSocket | null>(null);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryAttemptRef = useRef(0);
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
 
@@ -30,6 +31,7 @@ export function useWebSocket({ onMessage, onStatusChange, enabled = true }: Opti
 
     ws.onopen = () => {
       statusCbRef.current("connected");
+      retryAttemptRef.current = 0;
       if (retryTimer.current) {
         clearTimeout(retryTimer.current);
         retryTimer.current = null;
@@ -50,9 +52,15 @@ export function useWebSocket({ onMessage, onStatusChange, enabled = true }: Opti
 
     ws.onclose = () => {
       statusCbRef.current("disconnected");
+      const attempt = retryAttemptRef.current++;
+      const baseMs = 750;
+      const maxMs = 30_000;
+      const exp = Math.min(6, attempt);
+      const delay = Math.min(maxMs, baseMs * Math.pow(2, exp));
+      const jitter = Math.floor(Math.random() * 500);
       retryTimer.current = setTimeout(() => {
         if (enabledRef.current) connect();
-      }, 3000);
+      }, delay + jitter);
     };
 
     ws.onerror = () => ws.close();

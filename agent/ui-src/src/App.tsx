@@ -38,6 +38,7 @@ interface AgentConfig {
   agent_password: string;
   ui_password_hash: string;
   auto_update_enabled: boolean;
+  tray_icon_enabled: boolean;
 }
 
 type ConnectionStatus = "Connected" | "Connecting" | "Disconnected" | "Error";
@@ -196,6 +197,7 @@ function SettingsPanel() {
     agent_password: "",
     ui_password_hash: "",
     auto_update_enabled: false,
+    tray_icon_enabled: true,
   });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -771,6 +773,14 @@ function SettingsPanel() {
                             }
                           >
                             Auto-update agent
+                          </Toggle>
+                          <Toggle
+                            checked={config.tray_icon_enabled}
+                            onChange={({ detail }) =>
+                              setConfig((c) => ({ ...c, tray_icon_enabled: detail.checked }))
+                            }
+                          >
+                            Show tray icon
                           </Toggle>
                         </SpaceBetween>
                       </Container>

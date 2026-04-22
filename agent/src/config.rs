@@ -58,6 +58,11 @@ pub struct Config {
     #[serde(default = "default_auto_update_enabled")]
     pub auto_update_enabled: bool,
 
+    /// When true (default), show the system tray icon for quick access to settings.
+    /// When false, the agent still runs but will not create a tray icon.
+    #[serde(default = "default_tray_icon_enabled")]
+    pub tray_icon_enabled: bool,
+
     /// When true, all outbound internet access is blocked via Windows Firewall.
     /// The agent's own connection to the Sentinel server is always permitted.
     /// Controlled remotely via `set_network_policy` from the dashboard.
@@ -111,6 +116,10 @@ fn default_auto_update_enabled() -> bool {
     false
 }
 
+fn default_tray_icon_enabled() -> bool {
+    true
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -119,6 +128,7 @@ impl Default for Config {
             agent_password: String::new(),
             ui_password_hash: String::new(),
             auto_update_enabled: default_auto_update_enabled(),
+            tray_icon_enabled: default_tray_icon_enabled(),
             internet_blocked: false,
             internet_block_rules: Vec::new(),
             app_block_rules: Vec::new(),
