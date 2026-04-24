@@ -34,6 +34,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicI64, Ordering};
 
 use argon2::{Argon2, PasswordHash, PasswordVerifier};
 
@@ -51,6 +52,7 @@ use tracing::{error, info, warn};
 use crate::config::{AgentStatus, Config};
 
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
+static LAST_UI_AUTH_OK_AT: OnceLock<AtomicI64> = OnceLock::new();
 
 static TRAY_ICONS: OnceLock<TrayIcons> = OnceLock::new();
 static TRAY_TOGGLE_ITEM: OnceLock<MenuItem<tauri::Wry>> = OnceLock::new();
@@ -201,9 +203,10 @@ fn install_tray(handle: AppHandle) -> Result<(), String> {
                 set_toggle_label(app);
             }
             "quit" => {
-                // Use existing command path to keep behavior consistent.
+                // Never exit directly from the tray/taskbar context menu.
+                // Require UI authentication (password gate) before quitting.
                 let _ = app.emit("lock_ui", ());
-                std::process::exit(0);
+                show_settings_window(app.clone());
             }
             _ => {}
         })
@@ -686,6 +689,10 @@ fn verify_ui_password(password: String, stored: State<StoredConfig>) -> Result<(
     let cfg = stored.0.lock().unwrap();
     let expected = cfg.ui_password_hash.as_str();
     if expected.is_empty() {
+        // No lock configured.
+        LAST_UI_AUTH_OK_AT
+            .get_or_init(|| AtomicI64::new(0))
+            .store(crate::unix_timestamp_secs() as i64, Ordering::Relaxed);
         return Ok(());
     }
     let Ok(parsed) = PasswordHash::new(expected) else {
@@ -693,7 +700,11 @@ fn verify_ui_password(password: String, stored: State<StoredConfig>) -> Result<(
     };
     Argon2::default()
         .verify_password(password.as_bytes(), &parsed)
-        .map_err(|_| "Wrong password".into())
+        .map_err(|_| "Wrong password".to_string())?;
+    LAST_UI_AUTH_OK_AT
+        .get_or_init(|| AtomicI64::new(0))
+        .store(crate::unix_timestamp_secs() as i64, Ordering::Relaxed);
+    Ok(())
 }
 
 #[tauri::command]
@@ -707,7 +718,23 @@ fn hide_window(app: AppHandle) {
 }
 
 #[tauri::command]
-fn exit_agent() {
+fn exit_agent(stored: State<StoredConfig>) -> Result<(), String> {
+    // If a UI password is set, require a recent successful verification.
+    let cfg = stored.0.lock().unwrap();
+    let expected = cfg.ui_password_hash.as_str();
+    let has_pw = !expected.is_empty() && expected.starts_with("$argon2");
+    drop(cfg);
+
+    if has_pw {
+        let now = crate::unix_timestamp_secs() as i64;
+        let last = LAST_UI_AUTH_OK_AT
+            .get_or_init(|| AtomicI64::new(0))
+            .load(Ordering::Relaxed);
+        // Tight window: quitting is sensitive; require a fresh auth.
+        if last <= 0 || (now - last).abs() > 60 {
+            return Err("Authentication required to exit".into());
+        }
+    }
     std::process::exit(0);
 }
 

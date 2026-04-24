@@ -514,11 +514,137 @@ async fn dispatch_val(val: serde_json::Value, agent_id: uuid::Uuid, name: &str, 
         }
         "agent_info" => db::upsert_agent_info(&state.db, agent_id, &val).await,
         "software_inventory" => {
-            let items = val["items"].as_array().cloned().unwrap_or_default();
-            let v: Vec<serde_json::Value> = items.into_iter().take(12_000).collect();
-            db::replace_agent_software(&state.db, agent_id, &v)
+            use std::collections::{HashMap, HashSet};
+
+            const MAX_SOFTWARE_ITEMS: usize = 12_000;
+            const MAX_SOFTWARE_CHANGE_EVENTS: usize = 250;
+
+            fn key_for_item(v: &serde_json::Value) -> Option<String> {
+                let name = v["name"].as_str()?.trim();
+                if name.is_empty() {
+                    return None;
+                }
+                // Make a stable-ish identity; keep it conservative to avoid flip-flopping.
+                let version = v["version"].as_str().unwrap_or("").trim();
+                let publisher = v["publisher"].as_str().unwrap_or("").trim();
+                Some(format!(
+                    "{}\n{}\n{}",
+                    name.to_ascii_lowercase(),
+                    version.to_ascii_lowercase(),
+                    publisher.to_ascii_lowercase()
+                ))
+            }
+
+            fn key_for_row(r: &db::AgentSoftwareRow) -> String {
+                let version = r.version.as_deref().unwrap_or("").trim();
+                let publisher = r.publisher.as_deref().unwrap_or("").trim();
+                format!(
+                    "{}\n{}\n{}",
+                    r.name.trim().to_ascii_lowercase(),
+                    version.to_ascii_lowercase(),
+                    publisher.to_ascii_lowercase()
+                )
+            }
+
+            // Grab previous snapshot before replacing, so we can emit a diff.
+            let prev_rows = db::list_agent_software(&state.db, agent_id)
                 .await
-                .map(|_| ())
+                .unwrap_or_default();
+
+            let items = val["items"].as_array().cloned().unwrap_or_default();
+            let new_items: Vec<serde_json::Value> = items.into_iter().take(MAX_SOFTWARE_ITEMS).collect();
+
+            let replace_res = db::replace_agent_software(&state.db, agent_id, &new_items)
+                .await
+                .map(|_| ());
+            if let Err(e) = replace_res {
+                Err(e)
+            } else {
+
+            // Avoid blasting a flood on first ever snapshot.
+            if !prev_rows.is_empty() {
+                let mut prev_keys: HashSet<String> = HashSet::with_capacity(prev_rows.len().saturating_mul(2));
+                for r in &prev_rows {
+                    prev_keys.insert(key_for_row(r));
+                }
+
+                let mut new_by_key: HashMap<String, serde_json::Value> =
+                    HashMap::with_capacity(new_items.len().saturating_mul(2));
+                let mut new_keys: HashSet<String> = HashSet::with_capacity(new_items.len().saturating_mul(2));
+                for it in &new_items {
+                    if let Some(k) = key_for_item(it) {
+                        new_keys.insert(k.clone());
+                        // Keep the first encountered payload for this key.
+                        new_by_key.entry(k).or_insert_with(|| it.clone());
+                    }
+                }
+
+                let captured_at = val["captured_at"].as_i64();
+
+                let mut installed: Vec<serde_json::Value> = Vec::new();
+                for k in new_keys.difference(&prev_keys) {
+                    if let Some(it) = new_by_key.get(k) {
+                        installed.push(serde_json::json!({
+                            "type": "software_installed",
+                            "key": k,
+                            "captured_at": captured_at,
+                            "item": it,
+                        }));
+                    }
+                    if installed.len() >= MAX_SOFTWARE_CHANGE_EVENTS {
+                        break;
+                    }
+                }
+
+                let mut removed: Vec<serde_json::Value> = Vec::new();
+                if installed.len() < MAX_SOFTWARE_CHANGE_EVENTS {
+                    for k in prev_keys.difference(&new_keys) {
+                        removed.push(serde_json::json!({
+                            "type": "software_removed",
+                            "key": k,
+                            "captured_at": captured_at,
+                        }));
+                        if installed.len() + removed.len() >= MAX_SOFTWARE_CHANGE_EVENTS {
+                            break;
+                        }
+                    }
+                }
+
+                // Emit a summary first if there are any changes.
+                if !installed.is_empty() || !removed.is_empty() {
+                    state.broadcast(
+                        serde_json::json!({
+                            "event": "software_change_summary",
+                            "agent_id": agent_id,
+                            "agent_name": name,
+                            "data": {
+                                "captured_at": captured_at,
+                                "installed_count": installed.len(),
+                                "removed_count": removed.len(),
+                                "capped": (installed.len() + removed.len()) >= MAX_SOFTWARE_CHANGE_EVENTS,
+                            }
+                        })
+                        .to_string(),
+                    );
+                }
+
+                // Then emit per-item change events (same viewer fanout format as other telemetry).
+                for ev in installed.into_iter().chain(removed) {
+                    let ev_type = ev["type"].as_str().unwrap_or("software_change");
+                    state.broadcast(
+                        serde_json::json!({
+                            "event": ev_type,
+                            "agent_id": agent_id,
+                            "agent_name": name,
+                            "data": ev,
+                        })
+                        .to_string(),
+                    );
+                }
+            }
+
+            Ok(())
+            }
         }
         "script_result" => {
             if let Some(rid) = val["request_id"]

@@ -408,9 +408,40 @@ function SettingsPanel() {
     invoke("hide_window").catch(() => {});
   }, []);
 
+  const [exitDialog, setExitDialog] = useState<{ visible: boolean }>({ visible: false });
+  const [exitPw, setExitPw] = useState("");
+  const [exitBusy, setExitBusy] = useState(false);
+  const [exitError, setExitError] = useState<string | null>(null);
+
   const handleExit = useCallback(() => {
-    invoke("exit_agent").catch(() => {});
+    void (async () => {
+      try {
+        const has = await invoke<boolean>("has_ui_password");
+        if (has) {
+          setExitDialog({ visible: true });
+          return;
+        }
+        await invoke("exit_agent");
+      } catch {
+        // ignore
+      }
+    })();
   }, []);
+
+  const confirmExit = useCallback(async () => {
+    setExitBusy(true);
+    setExitError(null);
+    try {
+      await invoke("verify_ui_password", { password: exitPw });
+      await invoke("exit_agent");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setExitError(msg || "Authentication required");
+      setExitPw("");
+    } finally {
+      setExitBusy(false);
+    }
+  }, [exitPw]);
 
   const openUpdateCheck = useCallback(async () => {
     setUpdateDialog({ phase: "checking" });
@@ -939,6 +970,58 @@ function SettingsPanel() {
           Exit agent
         </Button>
       </Box>
+
+      <Modal
+        visible={exitDialog.visible}
+        onDismiss={() => {
+          if (exitBusy) return;
+          setExitDialog({ visible: false });
+          setExitPw("");
+          setExitError(null);
+        }}
+        size="small"
+        closeAriaLabel="Close"
+        header="Exit agent"
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button
+                variant="link"
+                disabled={exitBusy}
+                onClick={() => {
+                  setExitDialog({ visible: false });
+                  setExitPw("");
+                  setExitError(null);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button variant="primary" disabled={exitBusy || !exitPw} loading={exitBusy} onClick={() => void confirmExit()}>
+                Exit
+              </Button>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        <SpaceBetween size="m" direction="vertical">
+          {exitError ? (
+            <Alert type="error" header="Can't exit">
+              {exitError}
+            </Alert>
+          ) : (
+            <Box color="text-body-secondary">Enter the UI access password to quit this agent.</Box>
+          )}
+          <FormField label="Password">
+            <Input
+              value={exitPw}
+              onChange={({ detail }) => setExitPw(detail.value)}
+              type="password"
+              placeholder="Password"
+              autoComplete="current-password"
+            />
+          </FormField>
+        </SpaceBetween>
+      </Modal>
 
       <Modal
         visible={updateDialog !== null}

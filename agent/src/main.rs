@@ -804,10 +804,10 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
     let mut ping_ticker = interval(Duration::from_secs(20));
     let mut liveness_ticker = interval(Duration::from_secs(5));
 
-    // First software inventory ~1 minute after connect, then every 24 hours.
+    // First software inventory ~1 minute after connect, then periodically (only if changed).
     let mut software_ticker = interval_at(
         Instant::now() + Duration::from_secs(60),
-        Duration::from_secs(86_400),
+        Duration::from_secs(300),
     );
 
     software_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -822,6 +822,9 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
     // WebSocket liveness: avoid half-open WAN stalls.
     let mut last_rx_at = Instant::now();
     const WS_LIVENESS_TIMEOUT_SECS: u64 = 75;
+
+    let last_software_fingerprint: Arc<tokio::sync::Mutex<Option<u64>>> =
+        Arc::new(tokio::sync::Mutex::new(None));
 
     // ── Event loop ────────────────────────────────────────────────────────
     let result: Result<()> = loop {
@@ -1072,11 +1075,12 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                 }
             }
 
-            // ── Branch 6: daily installed-software inventory ──────────────
+            // ── Branch 6: installed-software inventory (only if changed) ───
             _ = software_ticker.tick() => {
                 let o = out_tx.clone();
+                let fp = last_software_fingerprint.clone();
                 tokio::spawn(async move {
-                    software_inventory::send_inventory(o).await;
+                    software_inventory::send_inventory_if_changed(o, &fp).await;
                 });
             }
         }

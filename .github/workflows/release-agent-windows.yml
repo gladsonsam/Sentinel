@@ -28,12 +28,8 @@ jobs:
           {
             echo "body<<$delim"
             if [ -n "$prev" ]; then
-              echo "### Commits since ${prev}"
-              echo ""
               git log --no-merges --pretty=format:'- %s (%h)' "${prev}..${tag}"
             else
-              echo "### Recent commits"
-              echo ""
               git log --no-merges --pretty=format:'- %s (%h)' -n 40 "${tag}"
             fi
             echo ""
@@ -99,5 +95,5 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: Sentinel Agent ${{ github.ref_name }}
           releaseBody: ${{ steps.rel_notes.outputs.body }}
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false

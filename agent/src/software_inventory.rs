@@ -11,6 +11,25 @@ use crate::unix_timestamp_secs;
 
 const MAX_ITEMS: usize = 8000;
 
+fn fingerprint_items(items: &[Value]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    items.len().hash(&mut h);
+    for it in items {
+        let name = it["name"].as_str().unwrap_or("").trim().to_ascii_lowercase();
+        let version = it["version"].as_str().unwrap_or("").trim().to_ascii_lowercase();
+        let publisher = it["publisher"]
+            .as_str()
+            .unwrap_or("")
+            .trim()
+            .to_ascii_lowercase();
+        name.hash(&mut h);
+        version.hash(&mut h);
+        publisher.hash(&mut h);
+    }
+    h.finish()
+}
+
 /// ASCII-only case folding; avoids per-comparison `to_lowercase()` allocations (MSRV-safe).
 pub(crate) fn cmp_str_ascii_case_insensitive(a: &str, b: &str) -> Ordering {
     let mut ab = a.bytes().map(|x| x.to_ascii_lowercase());
@@ -149,5 +168,36 @@ pub async fn send_inventory(out_tx: mpsc::Sender<Message>) {
         warn!("Failed to send software_inventory (writer closed)");
     } else {
         info!("Sent software_inventory ({n} entries)");
+    }
+}
+
+/// Collect and send a fresh snapshot only when it differs from the last sent fingerprint.
+pub async fn send_inventory_if_changed(
+    out_tx: mpsc::Sender<Message>,
+    last_fingerprint: &tokio::sync::Mutex<Option<u64>>,
+) {
+    let items = tokio::task::spawn_blocking(collect_items)
+        .await
+        .unwrap_or_default();
+    let n = items.len();
+    let fp = fingerprint_items(&items);
+
+    let mut g = last_fingerprint.lock().await;
+    if g.as_ref() == Some(&fp) {
+        return;
+    }
+    *g = Some(fp);
+    drop(g);
+
+    let payload = serde_json::json!({
+        "type": "software_inventory",
+        "items": items,
+        "captured_at": unix_timestamp_secs(),
+    })
+    .to_string();
+    if out_tx.send(Message::Text(payload)).await.is_err() {
+        warn!("Failed to send software_inventory (writer closed)");
+    } else {
+        info!("Sent software_inventory ({n} entries; changed)");
     }
 }
