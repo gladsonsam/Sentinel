@@ -721,6 +721,9 @@ export function App() {
     },
   });
 
+  // Agent versions now come from the server's WS init payload (`agent_version` per agent),
+  // so we don't need an N+1 `/agents/:id/info` prefetch here.
+
   useEffect(() => {
     return () => {
       if (disconnectTimerRef.current) {

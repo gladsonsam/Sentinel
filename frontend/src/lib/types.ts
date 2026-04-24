@@ -7,6 +7,8 @@ export interface Agent {
   last_seen: string;
   /** Optional emoji / short label assigned by operator. */
   icon?: string | null;
+  /** Latest stored agent version (from `agent_info`), if available. */
+  agent_version?: string | null;
   online: boolean;
   connected_at: string | null;       // null when offline
   last_connected_at: string | null;

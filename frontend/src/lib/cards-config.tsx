@@ -17,6 +17,15 @@ export interface AgentCardItem extends Agent {
   fallbackUptimeReceivedAtMs?: number;
 }
 
+/** Overview card title: prefer the server `agents.name` (matches `?name=` casing), not WMI/env hostname. */
+export function agentCardDisplayName(item: Pick<AgentCardItem, "name" | "agentInfo">): string {
+  const fromDb = item.name?.trim();
+  if (fromDb) return fromDb;
+  const fromCfg = item.agentInfo?.config_agent_name?.trim();
+  if (fromCfg) return fromCfg;
+  return item.agentInfo?.hostname?.trim() || "";
+}
+
 const formatTimestamp = (timestamp: string | null | undefined) => {
   if (!timestamp) return "—";
   const parsed = new Date(timestamp);
@@ -82,7 +91,7 @@ export function createCardDefinitions(
               onSelectAgent(item.id);
             }}
           >
-            {item.agentInfo?.hostname || item.name}
+            {agentCardDisplayName(item)}
           </Link>
           <SpaceBetween direction="horizontal" size="xs" alignItems="center">
             <ConnectionStatus
@@ -104,6 +113,7 @@ export function createCardDefinitions(
           const lastWindow = item.liveStatus?.window || item.fallbackLastWindow || "—";
           const lastSeen = formatTimestamp(item.last_seen);
           const uptime = formatUptime(displayUptimeSecs(item));
+          const version = item.agent_version ?? item.agentInfo?.agent_version ?? null;
 
           const leftLabel = item.online ? "Uptime" : "Last seen";
           const leftValue = item.online ? uptime : lastSeen;
@@ -114,6 +124,12 @@ export function createCardDefinitions(
                 <Box className="sentinel-agent-card-block sentinel-agent-card-block-details">
                   <Box variant="h3">Details</Box>
                   <SpaceBetween size="xs" className="sentinel-agent-card-detail-stack">
+                    {version ? (
+                      <Box>
+                        <Box variant="awsui-key-label">Version</Box>
+                        <Box className="sentinel-agent-version">v{version}</Box>
+                      </Box>
+                    ) : null}
                     <Box>
                       <Box variant="awsui-key-label">{leftLabel}</Box>
                       <Box>{leftValue}</Box>

@@ -974,6 +974,40 @@ pub async fn get_agent_info(pool: &PgPool, agent_id: Uuid) -> Result<Option<serd
     Ok(row.and_then(|r| r.try_get::<serde_json::Value, _>("info").ok()))
 }
 
+/// Fetch latest stored agent versions in batch (best-effort; missing entries omitted).
+pub async fn agent_versions_batch(
+    pool: &PgPool,
+    agent_ids: &[Uuid],
+) -> Result<std::collections::HashMap<Uuid, String>> {
+    use sqlx::Row;
+    if agent_ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let rows = sqlx::query(
+        r#"
+        SELECT agent_id, info->>'agent_version' AS agent_version
+        FROM agent_info
+        WHERE agent_id = ANY($1)
+        "#,
+    )
+    .bind(agent_ids)
+    .fetch_all(pool)
+    .await?;
+
+    let mut out = std::collections::HashMap::new();
+    for r in rows {
+        let id: Uuid = r.try_get("agent_id").unwrap_or_default();
+        let v: Option<String> = r.try_get("agent_version").ok();
+        if let Some(s) = v {
+            let t = s.trim();
+            if !t.is_empty() {
+                out.insert(id, t.to_string());
+            }
+        }
+    }
+    Ok(out)
+}
+
 // ─── Agent sessions (connection history) ──────────────────────────────────────
 
 /// Record a new WebSocket session for an agent. Returns the session row id.

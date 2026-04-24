@@ -732,6 +732,13 @@ a.sentinel-account-menu-version__pill:focus-visible {
   gap: 6px;
 }
 
+.sentinel-agent-version {
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--awsui-color-text-body-secondary);
+  margin-top: -2px;
+}
+
 .sentinel-icon-picker-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(52px, 1fr));

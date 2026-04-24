@@ -415,12 +415,7 @@ pub async fn push_local_ui_password_to_all_connected(state: &Arc<AppState>) {
     }
 }
 
-async fn dispatch_text(text: &str, agent_id: uuid::Uuid, name: &str, state: &Arc<AppState>) {
-    let Ok(val) = serde_json::from_str::<serde_json::Value>(text) else {
-        warn!("Bad JSON from {agent_id}");
-        return;
-    };
-
+async fn dispatch_val(val: serde_json::Value, agent_id: uuid::Uuid, name: &str, state: &Arc<AppState>) {
     let kind = val["type"].as_str().unwrap_or("");
 
     // One-shot RPC responses (agent -> server -> HTTP). Do not persist to DB; do not broadcast.
@@ -564,4 +559,26 @@ async fn dispatch_text(text: &str, agent_id: uuid::Uuid, name: &str, state: &Arc
         })
         .to_string(),
     );
+}
+
+async fn dispatch_text(text: &str, agent_id: uuid::Uuid, name: &str, state: &Arc<AppState>) {
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(text) else {
+        warn!("Bad JSON from {agent_id}");
+        return;
+    };
+
+    // Agent-side batching: { type:"batch", events:[{type:"url",...}, ...] }
+    if val["type"].as_str().unwrap_or("") == "batch" {
+        let events = val["events"].as_array().cloned().unwrap_or_default();
+        for ev in events {
+            // Prevent recursive batches.
+            if ev["type"].as_str().unwrap_or("") == "batch" {
+                continue;
+            }
+            dispatch_val(ev, agent_id, name, state).await;
+        }
+        return;
+    }
+
+    dispatch_val(val, agent_id, name, state).await;
 }

@@ -128,13 +128,13 @@ struct UrlSession {
     started_at_ts: i64,
 }
 
-async fn emit_url_session(out_tx: &mpsc::Sender<Message>, sess: UrlSession, ended_at_ts: i64) {
+fn url_session_event_value(sess: UrlSession, ended_at_ts: i64) -> serde_json::Value {
     let duration_ms = sess
         .started_at_instant
         .elapsed()
         .as_millis()
         .min(u128::from(u64::MAX)) as u64;
-    let payload = serde_json::json!({
+    serde_json::json!({
         "type": "url_session",
         "url": sess.url,
         "title": sess.title,
@@ -143,8 +143,6 @@ async fn emit_url_session(out_tx: &mpsc::Sender<Message>, sess: UrlSession, ende
         "ended_at_ts": ended_at_ts,
         "duration_ms": duration_ms,
     })
-    .to_string();
-    let _ = out_tx.send(Message::Text(payload)).await;
 }
 
 // HANDLE is just a numeric/opaque OS handle. Holding it for process lifetime is safe.
@@ -257,6 +255,10 @@ const WINDOW_POLL_INTERVAL_MS: u64 = 200;
 
 /// How often to sample the active browser URL (UIAutomation-backed).
 const URL_POLL_INTERVAL_SECS: u64 = 2;
+
+// Adaptive polling while AFK (saves laptop CPU/battery; resumes instantly on activity).
+const URL_POLL_AFK_INTERVAL_SECS: u64 = 10;
+const WINDOW_POLL_AFK_INTERVAL_MS: u64 = 1_000;
 
 fn reconnect_backoff_delay(attempt: u32) -> Duration {
     // Exponential backoff with small jitter, no RNG dependency.
@@ -725,6 +727,44 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
 
     // ── Outbound message bus ──────────────────────────────────────────────
     let (out_tx, mut out_rx) = mpsc::channel::<Message>(OUTBOUND_CHANNEL_CAP);
+    let mut pending_events: Vec<serde_json::Value> = Vec::new();
+    let mut flush_ticker = interval(Duration::from_millis(250));
+    flush_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
+    async fn flush_events(out_tx: &mpsc::Sender<Message>, pending: &mut Vec<serde_json::Value>) -> Result<()> {
+        if pending.is_empty() {
+            return Ok(());
+        }
+        if pending.len() == 1 {
+            let one = pending.pop().unwrap();
+            let s = one.to_string();
+            if out_tx.send(Message::Text(s)).await.is_err() {
+                return Err(anyhow::anyhow!("Outbound channel closed; writer task exited unexpectedly."));
+            }
+            return Ok(());
+        }
+        // Prefer batching; fall back to individual sends if the batch is too large.
+        let batch = serde_json::json!({ "type": "batch", "events": pending }).to_string();
+        if batch.len() <= 250_000 {
+            pending.clear();
+            if out_tx.send(Message::Text(batch)).await.is_err() {
+                return Err(anyhow::anyhow!("Outbound channel closed; writer task exited unexpectedly."));
+            }
+            return Ok(());
+        }
+        // Too large: send individually in order.
+        let mut items = std::mem::take(pending);
+        for v in items.drain(..) {
+            let s = v.to_string();
+            if out_tx.send(Message::Text(s)).await.is_err() {
+                return Err(anyhow::anyhow!("Outbound channel closed; writer task exited unexpectedly."));
+            }
+        }
+        Ok(())
+    }
+
+    // Note: avoid capturing `&mut pending_events` in a closure; it makes borrowing across
+    // `.await` sites harder for the compiler. Push directly instead.
 
     let writer_handle = tokio::spawn(async move {
         while let Some(msg) = out_rx.recv().await {
@@ -743,6 +783,7 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
     });
 
     // ── Send system info once per session ────────────────────────────────
+    // Send system info once per session (not batched; helps server seed agent state immediately).
     let info_payload = system_info::collect_agent_info().to_string();
     let _ = out_tx.send(Message::Text(info_payload)).await;
 
@@ -754,8 +795,12 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
     let mut sent_app_icons: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // ── Timers ────────────────────────────────────────────────────────────
-    let mut url_ticker = interval(Duration::from_secs(URL_POLL_INTERVAL_SECS));
-    let mut window_ticker = interval(Duration::from_millis(WINDOW_POLL_INTERVAL_MS));
+    // Adaptive timers (AFK -> slower polling).
+    let mut is_afk = false;
+    let url_sleep = tokio::time::sleep(Duration::from_secs(URL_POLL_INTERVAL_SECS));
+    let window_sleep = tokio::time::sleep(Duration::from_millis(WINDOW_POLL_INTERVAL_MS));
+    tokio::pin!(url_sleep);
+    tokio::pin!(window_sleep);
     let mut ping_ticker = interval(Duration::from_secs(20));
     let mut liveness_ticker = interval(Duration::from_secs(5));
 
@@ -765,8 +810,6 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
         Duration::from_secs(86_400),
     );
 
-    url_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
-    window_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     software_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     ping_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
     liveness_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -834,16 +877,25 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                 }
             }
 
+            // ── Branch 1d: telemetry flush ────────────────────────────────
+            _ = flush_ticker.tick() => {
+                if pending_events.len() >= 25 {
+                    flush_events(&out_tx, &mut pending_events).await?;
+                } else if !pending_events.is_empty() {
+                    // Time-based flush keeps UI reasonably fresh without spamming frames.
+                    flush_events(&out_tx, &mut pending_events).await?;
+                }
+            }
+
             // ── Branch 2: app block kill reports ─────────────────────────
             ev = kill_ev_rx.recv() => {
                 if let Some(kill) = ev {
-                    let payload = serde_json::json!({
+                    pending_events.push(serde_json::json!({
                         "type": "app_block_kill",
                         "rule_id": kill.rule_id,
                         "rule_name": kill.rule_name,
                         "exe_name": kill.exe_name,
-                    }).to_string();
-                    let _ = out_tx.send(Message::Text(payload)).await;
+                    }));
                 }
             }
 
@@ -866,7 +918,8 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
             }
 
             // ── Branch 3: active browser URL ─────────────────────────────
-            _ = url_ticker.tick() => {
+            _ = &mut url_sleep => {
+                url_sleep.as_mut().reset(Instant::now() + Duration::from_secs(if is_afk { URL_POLL_AFK_INTERVAL_SECS } else { URL_POLL_INTERVAL_SECS }));
                 let now_ts_u64 = unix_timestamp_secs();
                 let now_ts = now_ts_u64 as i64;
                 let active = if url_session_blocked_by_afk {
@@ -888,7 +941,7 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                     }
                     (Some(sess), Some(info)) if sess.url != info.url => {
                         if let Some(prev) = url_session.take() {
-                            emit_url_session(&out_tx, prev, now_ts).await;
+                            pending_events.push(url_session_event_value(prev, now_ts));
                         }
                         url_session = Some(UrlSession {
                             url: info.url.clone(),
@@ -900,7 +953,7 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                     }
                     (Some(_), None) => {
                         if let Some(prev) = url_session.take() {
-                            emit_url_session(&out_tx, prev, now_ts).await;
+                            pending_events.push(url_session_event_value(prev, now_ts));
                         }
                     }
                     _ => {}
@@ -912,19 +965,13 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                     let key = format!("{}\n{}\n{}", info.url, info.title, info.browser_name);
                     if last_live_url_key.as_deref() != Some(key.as_str()) {
                         last_live_url_key = Some(key);
-                        let live_url = serde_json::json!({
+                        pending_events.push(serde_json::json!({
                             "type"    : "url",
                             "url"     : info.url,
                             "title"   : info.title,
                             "browser" : info.browser_name,
                             "ts"      : now_ts_u64,
-                        })
-                        .to_string();
-                        if out_tx.send(Message::Text(live_url)).await.is_err() {
-                            break Err(anyhow::anyhow!(
-                                "Outbound channel closed; writer task exited unexpectedly."
-                            ));
-                        }
+                        }));
                     }
                 } else {
                     last_live_url_key = None;
@@ -941,49 +988,53 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                         window,
                         ts,
                     }) => {
-                        serde_json::json!({
+                        Some(serde_json::json!({
                             "type"   : "keys",
                             "text"   : text,
                             "app"    : app,
                             "app_display": app_display,
                             "window" : window,
                             "ts"     : ts,
-                        })
-                        .to_string()
+                        }))
                     }
                     Some(InputEvent::Afk { idle_secs }) => {
                         // Close any in-flight URL session when user goes AFK.
+                        is_afk = true;
                         url_session_blocked_by_afk = true;
                         if let Some(prev) = url_session.take() {
                             let now_ts = unix_timestamp_secs() as i64;
-                            emit_url_session(&out_tx, prev, now_ts).await;
+                            pending_events.push(url_session_event_value(prev, now_ts));
                         }
-                        serde_json::json!({
+                        // Slow down polling immediately while AFK.
+                        url_sleep.as_mut().reset(Instant::now() + Duration::from_secs(URL_POLL_AFK_INTERVAL_SECS));
+                        window_sleep.as_mut().reset(Instant::now() + Duration::from_millis(WINDOW_POLL_AFK_INTERVAL_MS));
+                        Some(serde_json::json!({
                             "type"     : "afk",
                             "idle_secs": idle_secs,
                             "ts"       : unix_timestamp_secs(),
-                        })
-                        .to_string()
+                        }))
                     }
                     Some(InputEvent::Active) => {
+                        is_afk = false;
                         url_session_blocked_by_afk = false;
-                        serde_json::json!({
+                        // Resume normal polling immediately.
+                        url_sleep.as_mut().reset(Instant::now() + Duration::from_secs(URL_POLL_INTERVAL_SECS));
+                        window_sleep.as_mut().reset(Instant::now() + Duration::from_millis(WINDOW_POLL_INTERVAL_MS));
+                        Some(serde_json::json!({
                             "type": "active",
                             "ts"  : unix_timestamp_secs(),
-                        })
-                        .to_string()
+                        }))
                     }
                     None => break Ok(()),
                 };
-                if out_tx.send(Message::Text(payload)).await.is_err() {
-                    break Err(anyhow::anyhow!(
-                        "Outbound channel closed; writer task exited unexpectedly."
-                    ));
+                if let Some(v) = payload {
+                    pending_events.push(v);
                 }
             }
 
             // ── Branch 5: foreground window changes ───────────────────────
-            _ = window_ticker.tick() => {
+            _ = &mut window_sleep => {
+                window_sleep.as_mut().reset(Instant::now() + Duration::from_millis(if is_afk { WINDOW_POLL_AFK_INTERVAL_MS } else { WINDOW_POLL_INTERVAL_MS }));
                 if let Some(event) = win_tracker.poll() {
                     // Opportunistically upload an app icon once per exe name per session.
                     // This keeps the dashboard snappy without requiring extra round trips.
@@ -999,19 +1050,17 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                             Err(e) => Err(e),
                         };
                         if let Ok(png) = png {
-                            let payload = serde_json::json!({
+                            pending_events.push(serde_json::json!({
                                 "type": "app_icon",
                                 "exe_name": exe_key,
                                 "png_base64": base64::engine::general_purpose::STANDARD.encode(png),
                                 "ts": unix_timestamp_secs(),
-                            }).to_string();
-                            // Best-effort; ignore failures (icons are optional).
-                            let _ = out_tx.send(Message::Text(payload)).await;
+                            }));
                         }
                         // Avoid retrying constantly for executables that can't produce icons.
                         sent_app_icons.insert(exe_key);
                     }
-                    let payload = serde_json::json!({
+                    pending_events.push(serde_json::json!({
                         "type"  : "window_focus",
                         "title" : event.title,
                         "app"   : event.app,
@@ -1019,13 +1068,7 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                         "app_path": event.app_path,
                         "hwnd"  : event.hwnd,
                         "ts"    : unix_timestamp_secs(),
-                    })
-                    .to_string();
-                    if out_tx.send(Message::Text(payload)).await.is_err() {
-                        break Err(anyhow::anyhow!(
-                            "Outbound channel closed; writer task exited unexpectedly."
-                        ));
-                    }
+                    }));
                 }
             }
 
@@ -1042,8 +1085,10 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
     // ── Shutdown ──────────────────────────────────────────────────────────
     if let Some(prev) = url_session.take() {
         let now_ts = unix_timestamp_secs() as i64;
-        emit_url_session(&out_tx, prev, now_ts).await;
+        pending_events.push(url_session_event_value(prev, now_ts));
     }
+    // Final best-effort flush (ensures last activity/url_session isn't lost).
+    let _ = flush_events(&out_tx, &mut pending_events).await;
     drop(out_tx);
     if let Err(e) = writer_handle.await {
         warn!("Writer task panicked: {e}");

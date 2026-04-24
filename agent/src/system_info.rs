@@ -55,7 +55,10 @@ pub fn collect_agent_info() -> serde_json::Value {
     sys.refresh_all();
     let app_version = env!("CARGO_PKG_VERSION").to_string();
 
-    let hostname = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "unknown".into());
+    // Prefer a WMI/CIM hostname so casing matches Windows (NetBIOS env vars are often ALL CAPS).
+    let hostname = powershell_cim_value("Win32_ComputerSystem", "DNSHostName")
+        .or_else(|| powershell_cim_value("Win32_ComputerSystem", "Name"))
+        .unwrap_or_else(|| std::env::var("COMPUTERNAME").unwrap_or_else(|_| "unknown".into()));
     let os_name = System::name().unwrap_or_else(|| "Windows".into());
     let os_version = System::os_version();
     let os_long_version = System::long_os_version();

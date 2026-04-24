@@ -163,6 +163,13 @@ pub async fn list_agents_overview(State(s): State<Arc<AppState>>) -> Response {
         .iter()
         .filter_map(|a| a["id"].as_str().and_then(|s| s.parse().ok()))
         .collect();
+    let versions = match db::agent_versions_batch(&s.db, &agent_ids).await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!(error = %e, "agent_versions_batch failed for overview");
+            std::collections::HashMap::new()
+        }
+    };
     let session_times = match db::agent_last_session_times_batch(&s.db, &agent_ids).await {
         Ok(m) => m,
         Err(e) => return err500(e),
@@ -185,6 +192,7 @@ pub async fn list_agents_overview(State(s): State<Arc<AppState>>) -> Response {
             "first_seen": a["first_seen"],
             "last_seen": a["last_seen"],
             "icon": a["icon"],
+            "agent_version": versions.get(&id).cloned(),
             "online": connected_at.is_some(),
             "connected_at": connected_at,
             "last_connected_at": last_connected_at,

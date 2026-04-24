@@ -10,6 +10,7 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import { useCollection } from "@cloudscape-design/collection-hooks";
 import type { Agent, AgentInfo, AgentLiveStatus } from "../../lib/types";
 import {
+  agentCardDisplayName,
   createCardDefinitions,
   type AgentCardItem,
 } from "../../lib/cards-config";
@@ -145,7 +146,9 @@ export function AgentCard({
       filteringFunction: (item, filteringText) => {
         const searchText = filteringText.toLowerCase();
         const detailsWindow = (item.liveStatus?.window || item.fallbackLastWindow || "").toLowerCase();
+        const displayName = agentCardDisplayName(item).toLowerCase();
         const hostname = (item.agentInfo?.hostname || "").toLowerCase();
+        const cfgName = (item.agentInfo?.config_agent_name || "").toLowerCase();
 
         const statusOk =
           statusFilter === "all"
@@ -160,6 +163,8 @@ export function AgentCard({
         return (
           item.name.toLowerCase().includes(searchText) ||
           item.id.toLowerCase().includes(searchText) ||
+          displayName.includes(searchText) ||
+          cfgName.includes(searchText) ||
           hostname.includes(searchText) ||
           (detailsWindow.includes(searchText) ?? false)
         );
