@@ -9,6 +9,7 @@ interface WindowEvent {
   exe_name: string;
   app_display?: string;
   timestamp: string;
+  user?: string | null;
 }
 
 interface URLEvent {
@@ -16,6 +17,7 @@ interface URLEvent {
   url: string;
   browser: string;
   timestamp: string;
+  user?: string | null;
 }
 
 interface KeystrokeEvent {
@@ -25,6 +27,7 @@ interface KeystrokeEvent {
   app_display?: string;
   keys: string;
   timestamp: string;
+  user?: string | null;
 }
 
 /** Alert rule firings shown on the activity timeline (screenshots load from the API by id). */
@@ -42,6 +45,8 @@ export interface Session {
   id: string;
   /** Optional agent id (for UI helpers like app icon URLs). */
   agentId?: string;
+  /** Best-effort logged-in user for this session (`DOMAIN\\user`). */
+  user?: string | null;
   appName: string;
   appDisplayName: string;
   windowTitle: string;
@@ -281,6 +286,7 @@ export function aggregateSessions({
 
       currentSession = {
         id: `session-${window.id}-${windowTime.getTime()}`,
+        user: window.user ?? null,
         appName: window.exe_name,
         appDisplayName: deriveAppDisplayName(window),
         windowTitle: window.window_title,
@@ -300,6 +306,7 @@ export function aggregateSessions({
       // Some executables host multiple "real" apps (e.g. ApplicationFrameHost.exe).
       // Keep the display name aligned with the most recent foreground title.
       currentSession.appDisplayName = deriveAppDisplayName(window);
+      if (!currentSession.user && window.user) currentSession.user = window.user;
       currentSession.windows.push(window);
     }
   }
@@ -338,6 +345,7 @@ export function aggregateSessions({
       timeline.push({
         id: `idle-${s.endTime.getTime()}-${next.startTime.getTime()}`,
         appName: "__idle__",
+        user: s.user ?? null,
         appDisplayName: "Idle / Away",
         windowTitle: "No foreground window events",
         startTime: new Date(s.endTime),
@@ -374,6 +382,7 @@ export function aggregateSessions({
       timeline.push({
         id: `idle-${Math.max(last.endTime.getTime(), maxEventMs)}-${nowMs}`,
         appName: "__idle__",
+        user: last.user ?? null,
         appDisplayName: "Idle / Away",
         windowTitle: "No foreground window events",
         startTime: new Date(Math.max(last.endTime.getTime(), maxEventMs)),
@@ -419,6 +428,14 @@ export function aggregateSessions({
     );
 
     session.hasKeystrokes = session.keystrokes.length > 0;
+    if (!session.user) {
+      const u =
+        session.keystrokes.find((k) => k.user)?.user ??
+        session.urls.find((u) => u.user)?.user ??
+        session.windows.find((w) => w.user)?.user ??
+        null;
+      if (u) session.user = u;
+    }
   }
 
   // Redistribute URLs to browser sessions only.

@@ -17,6 +17,7 @@ interface WindowEvent {
   exe_name: string;
   app_display?: string;
   timestamp: string;
+  user?: string | null;
 }
 
 interface TopWindowRow {
@@ -50,6 +51,7 @@ export function WindowsTab({ agentId }: WindowsTabProps) {
           exe_name: row.app ?? "—",
           app_display: row.app ?? "—",
           timestamp: row.ts || row.created || "",
+          user: row.user ?? null,
         })),
       );
 
@@ -83,7 +85,8 @@ export function WindowsTab({ agentId }: WindowsTabProps) {
           return (
               (item.app_display || "").toLowerCase().includes(searchText) ||
             (item.exe_name || "").toLowerCase().includes(searchText) ||
-            (item.window_title || "").toLowerCase().includes(searchText)
+          (item.window_title || "").toLowerCase().includes(searchText) ||
+          (item.user || "").toLowerCase().includes(searchText)
           );
         },
       },
@@ -103,6 +106,13 @@ export function WindowsTab({ agentId }: WindowsTabProps) {
       loading={loading}
       loadingText="Loading windows..."
       columnDefinitions={[
+        {
+          id: "user",
+          header: "User",
+          cell: (item) => item.user || "—",
+          sortingField: "user",
+          width: 160,
+        },
         {
           id: "timestamp",
           header: "Time",

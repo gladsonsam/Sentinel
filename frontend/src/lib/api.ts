@@ -510,7 +510,7 @@ export const api = {
   agentAnalyticsUrlSessions: (
     id: string,
     { from, to, limit = 200 }: { from: string; to: string; limit?: number },
-  ): Promise<{ rows: { id: number; url: string; hostname: string; ts_start: string; ts_end: string; duration_ms: number; category_key?: string | null; category_label?: string | null; browser?: string | null; title?: string | null }[] }> =>
+  ): Promise<{ rows: { id: number; url: string; hostname: string; ts_start: string; ts_end: string; duration_ms: number; user?: string | null; category_key?: string | null; category_label?: string | null; browser?: string | null; title?: string | null }[] }> =>
     get(`/agents/${id}/analytics/url-sessions?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=${limit}`),
 
   // ── Network policy (parental controls) ──────────────────────────────────────

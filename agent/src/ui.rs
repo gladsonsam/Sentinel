@@ -41,7 +41,7 @@ use argon2::{Argon2, PasswordHash, PasswordVerifier};
 use tauri::image::Image;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri::{
-    menu::{MenuBuilder, MenuItem, PredefinedMenuItem},
+    menu::{MenuBuilder, MenuItem},
     tray::TrayIconBuilder,
 };
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
@@ -178,13 +178,8 @@ fn install_tray(handle: AppHandle) -> Result<(), String> {
     .map_err(|e| e.to_string())?;
     let _ = TRAY_TOGGLE_ITEM.set(toggle_i.clone());
 
-    let quit_i = MenuItem::with_id(&handle, "quit", "Exit Agent", true, None::<&str>)
-        .map_err(|e| e.to_string())?;
-
     let menu = MenuBuilder::new(&handle)
         .item(&toggle_i)
-        .item(&PredefinedMenuItem::separator(&handle).map_err(|e| e.to_string())?)
-        .item(&quit_i)
         .build()
         .map_err(|e| e.to_string())?;
 
@@ -193,8 +188,8 @@ fn install_tray(handle: AppHandle) -> Result<(), String> {
         .tooltip("Sentinel Agent — Disconnected")
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .on_menu_event(move |app, event| match event.id().as_ref() {
-            "toggle_settings" => {
+        .on_menu_event(move |app, event| {
+            if event.id().as_ref() == "toggle_settings" {
                 if settings_window_visible(app) {
                     hide_settings_window(app);
                 } else {
@@ -202,13 +197,6 @@ fn install_tray(handle: AppHandle) -> Result<(), String> {
                 }
                 set_toggle_label(app);
             }
-            "quit" => {
-                // Never exit directly from the tray/taskbar context menu.
-                // Require UI authentication (password gate) before quitting.
-                let _ = app.emit("lock_ui", ());
-                show_settings_window(app.clone());
-            }
-            _ => {}
         })
         .build(&handle)
         .map_err(|e| e.to_string())?;
@@ -233,10 +221,8 @@ fn ensure_tray_matches_config(app: &AppHandle) {
             let _ = tray.set_visible(true);
         }
         set_toggle_label(app);
-    } else {
-        if let Some(tray) = app.tray_by_id(TRAY_ID) {
-            let _ = tray.set_visible(false);
-        }
+    } else if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        let _ = tray.set_visible(false);
     }
 }
 

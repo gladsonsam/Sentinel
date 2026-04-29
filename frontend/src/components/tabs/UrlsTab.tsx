@@ -16,6 +16,7 @@ interface URLEvent {
   url: string;
   browser: string;
   timestamp: string;
+  user?: string | null;
   category?: string | null;
 }
 
@@ -84,6 +85,7 @@ export function UrlsTab({ agentId }: UrlsTabProps) {
           url: row.url ?? "",
           browser: row.browser ?? "—",
           timestamp: row.ts ?? "",
+          user: row.user ?? null,
           category: row.category ?? null,
         })),
       );
@@ -144,7 +146,8 @@ export function UrlsTab({ agentId }: UrlsTabProps) {
           return (
             (item.url || "").toLowerCase().includes(searchText) ||
             (item.browser || "").toLowerCase().includes(searchText) ||
-            (item.category || "").toLowerCase().includes(searchText)
+            (item.category || "").toLowerCase().includes(searchText) ||
+            (item.user || "").toLowerCase().includes(searchText)
           );
         },
       },
@@ -186,6 +189,13 @@ export function UrlsTab({ agentId }: UrlsTabProps) {
       loading={loading}
       loadingText="Loading URLs..."
       columnDefinitions={[
+        {
+          id: "user",
+          header: "User",
+          cell: (item) => item.user || "—",
+          sortingField: "user",
+          width: 160,
+        },
         {
           id: "timestamp",
           header: "Time",

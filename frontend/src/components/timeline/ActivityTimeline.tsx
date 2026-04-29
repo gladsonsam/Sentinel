@@ -81,6 +81,7 @@ function sessionMatchesSearch(session: Session, q: string): boolean {
     session.appName,
     session.appDisplayName,
     session.windowTitle,
+    session.user ?? "",
     ...session.urls.map((u) => `${u.url} ${u.browser}`),
     ...session.windows.map((w) => w.window_title),
     ...session.keystrokes.map((k) => `${k.keys} ${k.window_title}`),
@@ -659,6 +660,11 @@ function SessionItem({
                   {isLockScreen ? <Lock size={14} /> : null}
                   {session.agentId ? <AppIcon agentId={session.agentId} exeName={session.appName} size={16} /> : null}
                   <span>{session.appDisplayName || session.appName}</span>
+                  {session.user ? (
+                    <span style={{ marginLeft: 6, opacity: 0.7, fontSize: 12 }}>
+                      {session.user}
+                    </span>
+                  ) : null}
                 </button>
               ) : (
                 <span>Idle / Away</span>

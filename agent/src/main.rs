@@ -65,6 +65,8 @@ mod schedule;
 mod remote_script;
 #[cfg(target_os = "windows")]
 mod service;
+mod ipc;
+mod ws_client;
 #[cfg(target_os = "windows")]
 mod updater_client;
 #[cfg(target_os = "windows")]
@@ -101,15 +103,12 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use base64::Engine;
-use futures_util::{SinkExt, StreamExt};
 use input::InputController;
 use keyboard_capture::InputEvent;
 use tokio::sync::mpsc;
 use tokio::time::{interval, interval_at, Instant, MissedTickBehavior};
 use tokio_tungstenite::{
-    connect_async,
-    tungstenite::{protocol::frame::coding::CloseCode, protocol::CloseFrame, Message},
-    MaybeTlsStream, WebSocketStream,
+    tungstenite::Message,
 };
 use tracing::{error, info, warn};
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Registry};
@@ -125,6 +124,7 @@ struct UrlSession {
     url: String,
     title: Option<String>,
     browser: Option<String>,
+    user: Option<String>,
     started_at_instant: std::time::Instant,
     started_at_ts: i64,
 }
@@ -140,6 +140,7 @@ fn url_session_event_value(sess: UrlSession, ended_at_ts: i64) -> serde_json::Va
         "url": sess.url,
         "title": sess.title,
         "browser": sess.browser,
+        "user": sess.user,
         "started_at_ts": sess.started_at_ts,
         "ended_at_ts": ended_at_ts,
         "duration_ms": duration_ms,
@@ -595,42 +596,87 @@ async fn run_agent_loop(
                 }
                 continue;
             }
-            Some(cfg) => {
-                let ws_url = build_ws_url(&cfg);
-                let ws_url_for_log = redact_secret_from_ws_url(&ws_url);
+            Some(_cfg) => {
                 set_status(&status, AgentStatus::Connecting);
-                info!("Connecting to {ws_url_for_log} …");
-                info!("Streaming: sends frames as produced (no fixed send FPS).");
+                info!("Connecting to service IPC pipe …");
 
-                // Internet exposure requires TLS; refuse plaintext `ws://` URLs.
-                if !ws_url.starts_with("wss://") {
-                    set_status(
-                        &status,
-                        AgentStatus::Error(
-                            "Refusing to connect: server URL must be wss:// (HTTPS required)"
-                                .into(),
-                        ),
-                    );
-                    // Do not log secrets embedded in the URL query string.
-                    warn!(
-                        "Refusing to connect due to non-TLS WebSocket URL: {}",
-                        redact_secret_from_ws_url(&ws_url)
-                    );
-                    reconnect_attempt = reconnect_attempt.saturating_add(1);
-                    let delay = reconnect_backoff_delay(reconnect_attempt);
-                    tokio::select! {
-                        _ = tokio::time::sleep(delay) => {}
-                        _ = config_rx.changed() => { info!("Config changed – applying new settings immediately."); }
-                    }
-                    continue;
-                }
+                #[cfg(target_os = "windows")]
+                let connect_res = async {
+                    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+                    use tokio::net::windows::named_pipe::ClientOptions;
 
-                match connect_ws(&ws_url).await {
-                    Ok((ws_stream, response)) => {
+                    let pipe = ClientOptions::new()
+                        .open(crate::ipc::AGENT_IPC_PIPE_NAME)
+                        .context("open agent IPC pipe")?;
+
+                    let (pipe_r, mut pipe_w) = tokio::io::split(pipe);
+                    let mut reader = BufReader::new(pipe_r);
+
+                    // Ensure the service reloads machine config (best-effort) so changes from the UI
+                    // take effect without restarting the service.
+                    let _ = pipe_w
+                        .write_all(crate::ipc::IpcLine::ConfigChanged.to_line().as_bytes())
+                        .await;
+                    let _ = pipe_w.flush().await;
+
+                    let (in_tx, in_rx) = mpsc::channel::<Message>(256);
+                    let (out_tx, mut out_rx) = mpsc::channel::<Message>(OUTBOUND_CHANNEL_CAP);
+
+                    // Writer: translate tungstenite Messages to IPC lines.
+                    let writer = tokio::spawn(async move {
+                        while let Some(msg) = out_rx.recv().await {
+                            match msg {
+                                Message::Text(text) => {
+                                    let line = crate::ipc::IpcLine::WsText { text }.to_line();
+                                    if pipe_w.write_all(line.as_bytes()).await.is_err() {
+                                        break;
+                                    }
+                                }
+                                Message::Binary(bytes) => {
+                                    let line = crate::ipc::outbound_binary_line(&bytes);
+                                    if pipe_w.write_all(line.as_bytes()).await.is_err() {
+                                        break;
+                                    }
+                                }
+                                Message::Pong(_) | Message::Ping(_) => {}
+                                Message::Close(_) => break,
+                                _ => {}
+                            }
+                            let _ = pipe_w.flush().await;
+                        }
+                    });
+
+                    // Reader: one JSON line per command text from server (forwarded by service).
+                    tokio::spawn(async move {
+                        let mut buf = Vec::new();
+                        loop {
+                            buf.clear();
+                            match reader.read_until(b'\n', &mut buf).await {
+                                Ok(0) => break,
+                                Ok(_) => {}
+                                Err(_) => break,
+                            }
+                            while matches!(buf.last().copied(), Some(b'\n' | b'\r')) { buf.pop(); }
+                            if buf.is_empty() { continue; }
+                            if let Ok(text) = String::from_utf8(buf.clone()) {
+                                let _ = in_tx.send(Message::Text(text)).await;
+                            }
+                        }
+                    });
+
+                    Ok::<(mpsc::Receiver<Message>, mpsc::Sender<Message>, tokio::task::JoinHandle<()>), anyhow::Error>((in_rx, out_tx, writer))
+                }.await;
+
+                #[cfg(not(target_os = "windows"))]
+                let connect_res: Result<(mpsc::Receiver<Message>, mpsc::Sender<Message>, tokio::task::JoinHandle<()>), anyhow::Error> =
+                    Err(anyhow::anyhow!("IPC mode is Windows-only"));
+
+                match connect_res {
+                    Ok((in_rx, out_tx, writer_handle)) => {
                         set_status(&status, AgentStatus::Connected);
-                        info!("WebSocket connected (HTTP {}).", response.status().as_u16());
                         match run_session(RunSessionArgs {
-                            ws_stream,
+                            in_rx,
+                            out_tx: out_tx.clone(),
                             frame_tx: &frame_tx,
                             frame_rx: &mut frame_rx,
                             key_rx: &mut key_rx,
@@ -639,12 +685,11 @@ async fn run_agent_loop(
                             config_tx: config_tx.clone(),
                             shared_rules: shared_rules.clone(),
                             kill_report_tx: kill_report_tx.clone(),
-                        })
-                        .await
-                        {
+                        }).await {
                             Ok(()) => info!("Session closed gracefully."),
                             Err(e) => error!("Session error: {e:#}"),
                         }
+                        let _ = writer_handle.await;
 
                         // Stop the capture thread on every session end so it
                         // never bleeds into the next reconnect without an
@@ -664,7 +709,7 @@ async fn run_agent_loop(
                     }
                     Err(e) => {
                         set_status(&status, AgentStatus::Error(e.to_string()));
-                        error!("Connection failed: {e:#}");
+                        error!("IPC connection failed: {e:#}");
                         reconnect_attempt = reconnect_attempt.saturating_add(1);
                     }
                 }
@@ -684,20 +729,10 @@ async fn run_agent_loop(
     }
 }
 
-async fn connect_ws(
-    ws_url: &str,
-) -> Result<(
-    WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
-    tokio_tungstenite::tungstenite::handshake::client::Response,
-)> {
-    connect_async(ws_url)
-        .await
-        .context("WebSocket connect failed")
-}
-
 /// Bundles handles for [`run_session`] so the entry point stays under Clippy's argument limit.
 struct RunSessionArgs<'a> {
-    ws_stream: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
+    in_rx: mpsc::Receiver<Message>,
+    out_tx: mpsc::Sender<Message>,
     frame_tx: &'a mpsc::Sender<Vec<u8>>,
     frame_rx: &'a mut mpsc::Receiver<Vec<u8>>,
     key_rx: &'a mut mpsc::Receiver<InputEvent>,
@@ -710,7 +745,8 @@ struct RunSessionArgs<'a> {
 
 async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
     let RunSessionArgs {
-        ws_stream,
+        mut in_rx,
+        out_tx,
         frame_tx,
         frame_rx,
         key_rx,
@@ -724,10 +760,7 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
     // Register this session as the kill-event sink so the enforcer can report kills.
     let (kill_ev_tx, mut kill_ev_rx) = tokio::sync::mpsc::unbounded_channel::<app_block::KillEvent>();
     *kill_report_tx.lock().unwrap() = Some(kill_ev_tx);
-    let (mut ws_tx, mut ws_rx) = ws_stream.split();
-
-    // ── Outbound message bus ──────────────────────────────────────────────
-    let (out_tx, mut out_rx) = mpsc::channel::<Message>(OUTBOUND_CHANNEL_CAP);
+    // NOTE: `out_tx` writes to the Session 0 service over IPC; the service owns the real WebSocket.
     let mut pending_events: Vec<serde_json::Value> = Vec::new();
     let mut flush_ticker = interval(Duration::from_millis(250));
     flush_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -767,22 +800,6 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
     // Note: avoid capturing `&mut pending_events` in a closure; it makes borrowing across
     // `.await` sites harder for the compiler. Push directly instead.
 
-    let writer_handle = tokio::spawn(async move {
-        while let Some(msg) = out_rx.recv().await {
-            if let Err(e) = ws_tx.send(msg).await {
-                warn!("WS write error (writer exiting): {e}");
-                break;
-            }
-        }
-        let _ = ws_tx
-            .send(Message::Close(Some(CloseFrame {
-                code: CloseCode::Normal,
-                reason: "agent shutting down".into(),
-            })))
-            .await;
-        let _ = ws_tx.close().await;
-    });
-
     // ── Send system info once per session ────────────────────────────────
     // Send system info once per session (not batched; helps server seed agent state immediately).
     let info_payload = system_info::collect_agent_info().to_string();
@@ -802,8 +819,7 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
     let window_sleep = tokio::time::sleep(Duration::from_millis(WINDOW_POLL_INTERVAL_MS));
     tokio::pin!(url_sleep);
     tokio::pin!(window_sleep);
-    let mut ping_ticker = interval(Duration::from_secs(20));
-    let mut liveness_ticker = interval(Duration::from_secs(5));
+    let mut user_ticker = interval(Duration::from_secs(10));
 
     // First software inventory ~1 minute after connect, then periodically (only if changed).
     let mut software_ticker = interval_at(
@@ -812,31 +828,31 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
     );
 
     software_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
-    ping_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
-    liveness_ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
 
     // URL sessions (time-on-site): maintained locally, emitted on transitions.
     let mut url_session: Option<UrlSession> = None;
     let mut url_session_blocked_by_afk = false;
     let mut last_live_url_key: Option<String> = None;
 
-    // WebSocket liveness: avoid half-open WAN stalls.
-    let mut last_rx_at = Instant::now();
-    const WS_LIVENESS_TIMEOUT_SECS: u64 = 75;
+    // WS liveness is handled by the Session 0 service-owned connection.
 
     let last_software_fingerprint: Arc<tokio::sync::Mutex<Option<u64>>> =
         Arc::new(tokio::sync::Mutex::new(None));
+
+    // ── Active user attribution ───────────────────────────────────────────
+    // Keep a cached username so we don't run PowerShell for every event.
+    let mut active_user: Option<String> = crate::system_info::active_username()
+        .or_else(crate::system_info::env_username_fallback);
 
     // ── Event loop ────────────────────────────────────────────────────────
     let result: Result<()> = loop {
         tokio::select! {
             biased;
 
-            // ── Branch 1: inbound server commands ────────────────────────
-            msg = ws_rx.next() => {
-                last_rx_at = Instant::now();
+            // ── Branch 1: inbound server commands (forwarded by service over IPC) ─
+            msg = in_rx.recv() => {
                 match msg {
-                    Some(Ok(Message::Text(text))) => {
+                    Some(Message::Text(text)) => {
                         handle_server_command(ServerCommandArgs {
                             text: &text,
                             frame_tx,
@@ -848,36 +864,20 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                             shared_rules: &shared_rules,
                         });
                     }
-                    Some(Ok(Message::Close(frame))) => {
-                        let reason = frame.as_ref()
-                            .map(|f| f.reason.as_ref())
-                            .unwrap_or("no reason");
-                        info!("Server sent Close frame: {reason}");
-                        break Ok(());
-                    }
-                    Some(Ok(Message::Ping(v))) => {
-                        // Reply promptly so intermediaries keep the connection alive.
-                        let _ = out_tx.send(Message::Pong(v)).await;
-                    }
-                    Some(Ok(Message::Pong(_))) => {}
-                    Some(Ok(_)) => {}
-                    Some(Err(e)) => break Err(anyhow::anyhow!("WS receive error: {e}")),
-                    None => {
-                        info!("WebSocket stream ended.");
-                        break Ok(());
-                    }
+                    Some(_) => {}
+                    None => break Ok(()),
                 }
             }
 
-            // ── Branch 1b: protocol ping (keep idle WAN links alive) ──────
-            _ = ping_ticker.tick() => {
-                let _ = out_tx.send(Message::Ping(Vec::new())).await;
-            }
-
-            // ── Branch 1c: liveness timeout (detect half-open WAN) ────────
-            _ = liveness_ticker.tick() => {
-                if last_rx_at.elapsed() > Duration::from_secs(WS_LIVENESS_TIMEOUT_SECS) {
-                    break Err(anyhow::anyhow!("WS liveness timeout (no inbound traffic)"));
+            // ── Branch 1e: active username refresh (best-effort) ───────────
+            _ = user_ticker.tick() => {
+                // Running PowerShell can block; do it off-thread.
+                let next = tokio::task::spawn_blocking(|| {
+                    crate::system_info::active_username()
+                        .or_else(crate::system_info::env_username_fallback)
+                }).await.ok().flatten();
+                if next != active_user {
+                    active_user = next;
                 }
             }
 
@@ -939,6 +939,7 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                             url: info.url.clone(),
                             title: if info.title.trim().is_empty() { None } else { Some(info.title.clone()) },
                             browser: Some(info.browser_name.clone()),
+                            user: active_user.clone(),
                             started_at_instant: std::time::Instant::now(),
                             started_at_ts: now_ts,
                         });
@@ -951,6 +952,7 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                             url: info.url.clone(),
                             title: if info.title.trim().is_empty() { None } else { Some(info.title.clone()) },
                             browser: Some(info.browser_name.clone()),
+                            user: active_user.clone(),
                             started_at_instant: std::time::Instant::now(),
                             started_at_ts: now_ts,
                         });
@@ -975,6 +977,7 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                             "title"   : info.title,
                             "browser" : info.browser_name,
                             "ts"      : now_ts_u64,
+                            "user"    : active_user,
                         }));
                     }
                 } else {
@@ -999,6 +1002,7 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                             "app_display": app_display,
                             "window" : window,
                             "ts"     : ts,
+                            "user"   : active_user,
                         }))
                     }
                     Some(InputEvent::Afk { idle_secs }) => {
@@ -1016,6 +1020,7 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                             "type"     : "afk",
                             "idle_secs": idle_secs,
                             "ts"       : unix_timestamp_secs(),
+                            "user"     : active_user,
                         }))
                     }
                     Some(InputEvent::Active) => {
@@ -1027,6 +1032,7 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                         Some(serde_json::json!({
                             "type": "active",
                             "ts"  : unix_timestamp_secs(),
+                            "user": active_user,
                         }))
                     }
                     None => break Ok(()),
@@ -1072,6 +1078,7 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
                         "app_path": event.app_path,
                         "hwnd"  : event.hwnd,
                         "ts"    : unix_timestamp_secs(),
+                        "user"  : active_user,
                     }));
                 }
             }
@@ -1094,10 +1101,6 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
     }
     // Final best-effort flush (ensures last activity/url_session isn't lost).
     let _ = flush_events(&out_tx, &mut pending_events).await;
-    drop(out_tx);
-    if let Err(e) = writer_handle.await {
-        warn!("Writer task panicked: {e}");
-    }
 
     result
 }
@@ -2270,82 +2273,6 @@ fn handle_server_command(args: ServerCommandArgs<'_>) {
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// Build the full WebSocket URL, appending `?name=<agent_name>` and (optionally)
-/// `&secret=<agent_password>` for server-side agent authentication.
-fn build_ws_url(cfg: &Config) -> String {
-    let base = cfg.server_url.trim_end_matches('/');
-    let mut url = base.to_string();
-
-    // Percent-encode query values so `name`/`secret` cannot inject additional
-    // parameters (e.g. via `&x=y`) and so auth secrets are transmitted verbatim.
-    // This also avoids accidental breakage when values contain spaces or `+`.
-    fn enc(v: &str) -> String {
-        use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
-        // Encode everything except a conservative unreserved set.
-        const SAFE: &AsciiSet = &CONTROLS
-            .add(b' ')
-            .add(b'"')
-            .add(b'#')
-            .add(b'%')
-            .add(b'&')
-            .add(b'+')
-            .add(b',')
-            .add(b'/')
-            .add(b':')
-            .add(b';')
-            .add(b'<')
-            .add(b'=')
-            .add(b'>')
-            .add(b'?')
-            .add(b'@')
-            .add(b'\\')
-            .add(b'|')
-            .add(b'[')
-            .add(b']')
-            .add(b'{')
-            .add(b'}');
-        utf8_percent_encode(v, SAFE).to_string()
-    }
-    let mut first_param = !url.contains('?');
-
-    if !cfg.agent_name.is_empty() {
-        url.push(if first_param { '?' } else { '&' });
-        first_param = false;
-        url.push_str("name=");
-        url.push_str(&enc(cfg.agent_name.trim()));
-    }
-
-    if !cfg.agent_password.is_empty() {
-        url.push(if first_param { '?' } else { '&' });
-        url.push_str("secret=");
-        url.push_str(&enc(cfg.agent_password.trim()));
-    }
-
-    url
-}
-
-/// Redact `secret=...` query parameter so agent secrets don't leak via logs,
-/// proxies, or crash reports.
-fn redact_secret_from_ws_url(url: &str) -> String {
-    let Some(secret_start) = url.find("secret=") else {
-        return url.to_string();
-    };
-
-    let mut out = url.to_string();
-    let value_start = secret_start + "secret=".len();
-    if value_start >= out.len() {
-        return out;
-    }
-
-    let value_end = out[value_start..]
-        .find('&')
-        .map(|i| value_start + i)
-        .unwrap_or(out.len());
-
-    out.replace_range(value_start..value_end, "***");
-    out
-}
 
 /// Write to the shared status mutex, ignoring lock-poison errors.
 fn set_status(status: &Mutex<AgentStatus>, s: AgentStatus) {

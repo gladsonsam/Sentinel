@@ -301,7 +301,7 @@ pub async fn trigger_script(
 
     let target_agents = match resolve_agents(&s.db, &scopes).await {
         Ok(v) => v,
-        Err(e) => return err500(e.into()),
+        Err(e) => return err500(e),
     };
 
     if target_agents.is_empty() {
@@ -315,7 +315,7 @@ pub async fn trigger_script(
     let fire_time = now_utc;
 
     for agent_id in &target_agents {
-        let is_online = connected_agents.contains(&agent_id);
+        let is_online = connected_agents.contains(agent_id);
         let status = if is_online { "fired" } else { "skipped_offline" };
 
         // Record execution (manual trigger)

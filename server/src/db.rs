@@ -1093,9 +1093,13 @@ pub async fn insert_window(pool: &PgPool, agent: Uuid, v: &serde_json::Value) ->
     let app_display = v["app_display"].as_str().unwrap_or(app);
     let hwnd = v["hwnd"].as_i64().unwrap_or(0);
     let ts = unix_to_dt(v["ts"].as_i64());
+    let user_name = v["user"]
+        .as_str()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
 
     sqlx::query(
-        "INSERT INTO window_events (agent_id, title, app, app_display, hwnd, ts) VALUES ($1,$2,$3,$4,$5,$6)",
+        "INSERT INTO window_events (agent_id, title, app, app_display, hwnd, ts, user_name) VALUES ($1,$2,$3,$4,$5,$6,$7)",
     )
     .bind(agent)
     .bind(title)
@@ -1103,6 +1107,7 @@ pub async fn insert_window(pool: &PgPool, agent: Uuid, v: &serde_json::Value) ->
     .bind(app_display)
     .bind(hwnd)
     .bind(ts)
+    .bind(user_name)
     .execute(pool)
     .await?;
 
@@ -1137,12 +1142,17 @@ pub async fn upsert_keys(pool: &PgPool, agent: Uuid, v: &serde_json::Value) -> R
     let window = v["window"].as_str().unwrap_or("");
     let text = v["text"].as_str().unwrap_or("");
     let ts = unix_to_dt(v["ts"].as_i64());
+    let user_name = v["user"]
+        .as_str()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
 
     let updated = sqlx::query(
         r#"
         UPDATE key_sessions
         SET    text         = text || $1,
                app_display  = $2,
+               user_name    = COALESCE($6, user_name),
                updated_at   = NOW()
         WHERE  agent_id     = $3
           AND  app          = $4
@@ -1155,13 +1165,14 @@ pub async fn upsert_keys(pool: &PgPool, agent: Uuid, v: &serde_json::Value) -> R
     .bind(agent)
     .bind(app)
     .bind(window)
+    .bind(user_name)
     .execute(pool)
     .await?;
 
     if updated.rows_affected() == 0 {
         sqlx::query(
-            "INSERT INTO key_sessions (agent_id, app, app_display, window_title, text, started_at, updated_at) \
-             VALUES ($1,$2,$3,$4,$5,$6,NOW())",
+            "INSERT INTO key_sessions (agent_id, app, app_display, window_title, text, started_at, updated_at, user_name) \
+             VALUES ($1,$2,$3,$4,$5,$6,NOW(),$7)",
         )
         .bind(agent)
         .bind(app)
@@ -1169,6 +1180,7 @@ pub async fn upsert_keys(pool: &PgPool, agent: Uuid, v: &serde_json::Value) -> R
         .bind(window)
         .bind(text)
         .bind(ts)
+        .bind(user_name)
         .execute(pool)
         .await?;
     }
@@ -1187,6 +1199,10 @@ pub async fn insert_url(pool: &PgPool, agent: Uuid, v: &serde_json::Value) -> Re
     let title = v["title"].as_str();
     let browser = v["browser"].as_str();
     let ts = unix_to_dt(v["ts"].as_i64());
+    let user_name = v["user"]
+        .as_str()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
 
     // Skip if same URL as the most-recent visit for this agent.
     let last: Option<String> = sqlx::query_scalar(
@@ -1202,8 +1218,8 @@ pub async fn insert_url(pool: &PgPool, agent: Uuid, v: &serde_json::Value) -> Re
 
     let visit_id: i64 = sqlx::query_scalar(
         r#"
-        INSERT INTO url_visits (agent_id, url, title, browser, ts)
-        VALUES ($1,$2,$3,$4,$5)
+        INSERT INTO url_visits (agent_id, url, title, browser, ts, user_name)
+        VALUES ($1,$2,$3,$4,$5,$6)
         RETURNING id
         "#,
     )
@@ -1212,6 +1228,7 @@ pub async fn insert_url(pool: &PgPool, agent: Uuid, v: &serde_json::Value) -> Re
     .bind(title)
     .bind(browser)
     .bind(ts)
+    .bind(user_name)
     .fetch_one(pool)
     .await?;
 
@@ -1267,6 +1284,10 @@ pub async fn insert_url_session(pool: &PgPool, agent: Uuid, v: &serde_json::Valu
         .or_else(|| v["duration_ms"].as_u64().and_then(|u| i64::try_from(u).ok()))
         .unwrap_or(0)
         .max(0);
+    let user_name = v["user"]
+        .as_str()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
 
     let hostname = url_categorization::extract_hostname_from_url(url);
     let cat = url_categorization::categorize_url_now(pool, &hostname, url).await?;
@@ -1274,8 +1295,8 @@ pub async fn insert_url_session(pool: &PgPool, agent: Uuid, v: &serde_json::Valu
 
     sqlx::query(
         r#"
-        INSERT INTO url_sessions (agent_id, url, hostname, title, browser, ts_start, ts_end, duration_ms, category_id)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        INSERT INTO url_sessions (agent_id, url, hostname, title, browser, ts_start, ts_end, duration_ms, category_id, user_name)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
         "#,
     )
     .bind(agent)
@@ -1287,6 +1308,7 @@ pub async fn insert_url_session(pool: &PgPool, agent: Uuid, v: &serde_json::Valu
     .bind(end_ts)
     .bind(duration_ms)
     .bind(category_id)
+    .bind(user_name)
     .execute(pool)
     .await?;
 
@@ -1339,14 +1361,19 @@ pub async fn insert_activity(pool: &PgPool, agent: Uuid, v: &serde_json::Value) 
     let kind = v["type"].as_str().unwrap_or("");
     let idle_secs = v["idle_secs"].as_i64();
     let ts = unix_to_dt(v["ts"].as_i64());
+    let user_name = v["user"]
+        .as_str()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty());
 
     sqlx::query(
-        "INSERT INTO activity_log (agent_id, event_type, idle_secs, ts) VALUES ($1,$2,$3,$4)",
+        "INSERT INTO activity_log (agent_id, event_type, idle_secs, ts, user_name) VALUES ($1,$2,$3,$4,$5)",
     )
     .bind(agent)
     .bind(kind)
     .bind(idle_secs)
     .bind(ts)
+    .bind(user_name)
     .execute(pool)
     .await?;
 
@@ -1704,7 +1731,7 @@ pub async fn query_windows(
     offset: i64,
 ) -> Result<Vec<serde_json::Value>> {
     let rows = sqlx::query(
-        "SELECT title, app, app_display, hwnd, ts \
+        "SELECT title, app, app_display, hwnd, ts, user_name \
          FROM window_events WHERE agent_id=$1 ORDER BY ts DESC LIMIT $2 OFFSET $3",
     )
     .bind(agent)
@@ -1721,7 +1748,8 @@ pub async fn query_windows(
             let app_display: String = r.try_get("app_display").unwrap_or_default();
             let hwnd: i64 = r.try_get("hwnd").unwrap_or_default();
             let ts: DateTime<Utc> = r.try_get("ts").unwrap_or_else(|_| Utc::now());
-            serde_json::json!({ "title": title, "app": app, "app_display": app_display, "hwnd": hwnd, "ts": ts })
+            let user_name: Option<String> = r.try_get("user_name").ok().flatten();
+            serde_json::json!({ "title": title, "app": app, "app_display": app_display, "hwnd": hwnd, "ts": ts, "user": user_name })
         })
         .collect())
 }
@@ -1733,7 +1761,7 @@ pub async fn query_keys(
     offset: i64,
 ) -> Result<Vec<serde_json::Value>> {
     let rows = sqlx::query(
-        "SELECT app, app_display, window_title, text, started_at, updated_at \
+        "SELECT app, app_display, window_title, text, started_at, updated_at, user_name \
          FROM key_sessions WHERE agent_id=$1 ORDER BY updated_at DESC LIMIT $2 OFFSET $3",
     )
     .bind(agent)
@@ -1751,10 +1779,12 @@ pub async fn query_keys(
             let text: String = r.try_get("text").unwrap_or_default();
             let started_at: DateTime<Utc> = r.try_get("started_at").unwrap_or_else(|_| Utc::now());
             let updated_at: DateTime<Utc> = r.try_get("updated_at").unwrap_or_else(|_| Utc::now());
+            let user_name: Option<String> = r.try_get("user_name").ok().flatten();
             serde_json::json!({
                 "app": app, "app_display": app_display,
                 "window_title": window, "text": text,
-                "started_at": started_at, "updated_at": updated_at
+                "started_at": started_at, "updated_at": updated_at,
+                "user": user_name
             })
         })
         .collect())
@@ -1768,7 +1798,7 @@ pub async fn query_urls(
 ) -> Result<Vec<serde_json::Value>> {
     let rows = sqlx::query(
         r#"
-        SELECT v.id, v.url, v.title, v.browser, v.ts,
+        SELECT v.id, v.url, v.title, v.browser, v.ts, v.user_name,
                COALESCE(cc.key, c.key, 'uncategorized') AS category_key,
                COALESCE(cc.label_en, COALESCE(l.label_en, initcap(replace(replace(c.key, '_', ' '), '-', ' '))), 'Uncategorized') AS category
         FROM url_visits v
@@ -1796,9 +1826,10 @@ pub async fn query_urls(
             let title: Option<String> = r.try_get("title").ok().flatten();
             let browser: Option<String> = r.try_get("browser").ok().flatten();
             let ts: DateTime<Utc> = r.try_get("ts").unwrap_or_else(|_| Utc::now());
+            let user_name: Option<String> = r.try_get("user_name").ok().flatten();
             let category: Option<String> = r.try_get("category").ok().flatten();
             let category_key: Option<String> = r.try_get("category_key").ok().flatten();
-            serde_json::json!({ "id": id, "url": url, "title": title, "browser": browser, "ts": ts, "category_key": category_key, "category": category })
+            serde_json::json!({ "id": id, "url": url, "title": title, "browser": browser, "ts": ts, "user": user_name, "category_key": category_key, "category": category })
         })
         .collect())
 }
@@ -1973,6 +2004,7 @@ pub struct AgentUrlSessionRow {
     pub ts_start: DateTime<Utc>,
     pub ts_end: DateTime<Utc>,
     pub duration_ms: i64,
+    pub user: Option<String>,
     pub category_key: Option<String>,
     pub category_label: Option<String>,
     pub browser: Option<String>,
@@ -1988,7 +2020,7 @@ pub async fn query_agent_url_sessions(
 ) -> Result<Vec<AgentUrlSessionRow>> {
     let rows = sqlx::query(
         r#"
-        SELECT s.id, s.url, s.hostname, s.ts_start, s.ts_end, s.duration_ms, s.browser, s.title,
+        SELECT s.id, s.url, s.hostname, s.ts_start, s.ts_end, s.duration_ms, s.browser, s.title, s.user_name,
                COALESCE(cc.key, c.key, 'uncategorized') AS category_key,
                COALESCE(cc.label_en, COALESCE(l.label_en, initcap(replace(replace(c.key, '_', ' '), '-', ' '))), 'Uncategorized') AS category_label
         FROM url_sessions s
@@ -2018,6 +2050,7 @@ pub async fn query_agent_url_sessions(
             ts_start: r.try_get::<DateTime<Utc>, _>("ts_start").unwrap_or_else(|_| Utc::now()),
             ts_end: r.try_get::<DateTime<Utc>, _>("ts_end").unwrap_or_else(|_| Utc::now()),
             duration_ms: r.try_get::<i64, _>("duration_ms").unwrap_or(0),
+            user: r.try_get::<Option<String>, _>("user_name").unwrap_or(None),
             category_key: r.try_get::<Option<String>, _>("category_key").unwrap_or(None),
             category_label: r.try_get::<Option<String>, _>("category_label").unwrap_or(None),
             browser: r.try_get::<Option<String>, _>("browser").unwrap_or(None),
@@ -2128,7 +2161,7 @@ pub async fn query_activity(
     offset: i64,
 ) -> Result<Vec<serde_json::Value>> {
     let rows = sqlx::query(
-        "SELECT event_type, idle_secs, ts \
+        "SELECT event_type, idle_secs, ts, user_name \
          FROM activity_log WHERE agent_id=$1 ORDER BY ts DESC LIMIT $2 OFFSET $3",
     )
     .bind(agent)
@@ -2143,7 +2176,8 @@ pub async fn query_activity(
             let event_type: String = r.try_get("event_type").unwrap_or_default();
             let idle_secs: Option<i64> = r.try_get("idle_secs").ok().flatten();
             let ts: DateTime<Utc> = r.try_get("ts").unwrap_or_else(|_| Utc::now());
-            serde_json::json!({ "event_type": event_type, "idle_secs": idle_secs, "ts": ts })
+            let user_name: Option<String> = r.try_get("user_name").ok().flatten();
+            serde_json::json!({ "event_type": event_type, "idle_secs": idle_secs, "ts": ts, "user": user_name })
         })
         .collect())
 }

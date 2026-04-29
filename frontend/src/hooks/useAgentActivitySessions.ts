@@ -55,6 +55,7 @@ export function useAgentActivitySessions(agentId: string, activeTab: TabKey) {
           exe_name: row.app,
           app_display: row.app,
           timestamp: row.ts || row.created,
+          user: row.user ?? null,
         }))
         .filter((row) => parseTimestamp(row.timestamp));
 
@@ -64,6 +65,7 @@ export function useAgentActivitySessions(agentId: string, activeTab: TabKey) {
           url: row.url,
           browser: row.browser,
           timestamp: row.ts,
+          user: row.user ?? null,
         }))
         .filter((row) => parseTimestamp(row.timestamp));
 
@@ -75,6 +77,7 @@ export function useAgentActivitySessions(agentId: string, activeTab: TabKey) {
           app_display: row.app,
           keys: row.text,
           timestamp: row.updated_at || row.started_at,
+          user: row.user ?? null,
         }))
         .filter((row) => parseTimestamp(row.timestamp));
 

@@ -34,6 +34,8 @@ use windows_service::service_control_handler::{
 use windows_service::service_dispatcher;
 
 use std::sync::OnceLock;
+use tokio::sync::watch;
+use tokio::sync::{broadcast, mpsc as tokio_mpsc};
 
 /// `std::process::exit` does not run `Drop`; `tracing_appender::non_blocking` only flushes when its
 /// `WorkerGuard` is dropped. Register the guard from `--service` `main` so we can drop it before
@@ -85,6 +87,9 @@ windows_service::define_windows_service!(ffi_service_main, service_main);
 
 /// Must match `PIPE_NAME` in `updater_client.rs`.
 const SERVICE_PIPE_NAME: &str = r"\\.\pipe\SentinelAgentService";
+
+/// Persistent duplex channel between the Session 0 service (WS owner) and the user-session companion.
+const AGENT_IPC_PIPE_NAME: &str = r"\\.\pipe\SentinelAgentIpc";
 
 /// Max bytes for one service JSON line (see `updater_client::pipe_request_line`).
 const MAX_SERVICE_PIPE_LINE: usize = 256 * 1024;
@@ -141,6 +146,61 @@ fn create_sentinel_service_pipe_server(
     }
 
     server
+}
+
+fn create_agent_ipc_pipe_server(
+) -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
+    use std::ffi::c_void;
+    use std::io;
+    use tokio::net::windows::named_pipe::ServerOptions;
+
+    let mut p_sd = PSECURITY_DESCRIPTOR(std::ptr::null_mut());
+    unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            w!("D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)"),
+            SDDL_REVISION_1,
+            &mut p_sd,
+            None,
+        )
+        .map_err(|e| io::Error::other(format!("agent ipc pipe SDDL: {e}")))?;
+    }
+
+    let mut sa = SECURITY_ATTRIBUTES {
+        nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+        lpSecurityDescriptor: p_sd.0,
+        bInheritHandle: false.into(),
+    };
+
+    let server = unsafe {
+        ServerOptions::new().create_with_security_attributes_raw(
+            AGENT_IPC_PIPE_NAME,
+            &mut sa as *mut SECURITY_ATTRIBUTES as *mut c_void,
+        )
+    };
+
+    unsafe {
+        if !p_sd.0.is_null() {
+            let _ = LocalFree(Some(HLOCAL(p_sd.0)));
+        }
+    }
+
+    server
+}
+
+fn ensure_agent_ipc_pipe_server() -> tokio::net::windows::named_pipe::NamedPipeServer {
+    let mut attempts = 0u32;
+    loop {
+        match create_agent_ipc_pipe_server() {
+            Ok(s) => return s,
+            Err(e) => {
+                attempts += 1;
+                if attempts == 1 || attempts.is_multiple_of(25) {
+                    warn!("Failed to create agent IPC pipe (attempt {attempts}): {e}");
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+    }
 }
 
 /// Create a listening pipe instance, blocking until it succeeds.
@@ -219,14 +279,35 @@ fn run_service() -> windows_service::Result<()> {
         use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
         use windows::Win32::System::Threading::CREATE_NO_WINDOW;
 
+        // WebSocket owner (Session 0): accepts frames from user-session companion via IPC
+        // and forwards to the server, while also staying online at lock screen.
+        let ws_status: std::sync::Arc<std::sync::Mutex<crate::config::AgentStatus>> =
+            std::sync::Arc::new(std::sync::Mutex::new(crate::config::AgentStatus::Disconnected));
+        let shared_cfg = std::sync::Arc::new(std::sync::Mutex::new(crate::config::load_config()));
+        let (ws_stop_tx, ws_stop_rx) = watch::channel(false);
+        let (to_ws_tx, to_ws_rx) = tokio_mpsc::channel::<crate::ipc::OutboundFrame>(1024);
+        let (from_ws_tx, _from_ws_rx_unused) = broadcast::channel::<String>(256);
+        tokio::spawn(crate::ws_client::run_ws_client(
+            shared_cfg.clone(),
+            ws_status.clone(),
+            to_ws_rx,
+            from_ws_tx.clone(),
+            ws_stop_rx,
+            crate::ws_client::WsClientOpts::default(),
+        ));
+
         // Create the next pipe instance synchronously after each accept so another client never
         // hits ERROR_PIPE_BUSY (231) while a long handler runs.
-        let mut server = ensure_sentinel_service_pipe_server();
+        let mut updater_server = ensure_sentinel_service_pipe_server();
+        let mut agent_ipc_server = ensure_agent_ipc_pipe_server();
 
         loop {
             // Stop requested?
             match stop_rx.try_recv() {
-                Ok(()) => break,
+                Ok(()) => {
+                    let _ = ws_stop_tx.send(true);
+                    break;
+                }
                 Err(mpsc::TryRecvError::Empty) => {}
                 Err(mpsc::TryRecvError::Disconnected) => {}
             }
@@ -247,12 +328,12 @@ fn run_service() -> windows_service::Result<()> {
 
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_millis(250)) => {}
-                res = server.connect() => {
+                res = updater_server.connect() => {
                     if let Err(e) = res {
                         warn!("Named pipe connect failed: {e}");
                     } else {
-                        let pipe = server;
-                        server = ensure_sentinel_service_pipe_server();
+                        let pipe = updater_server;
+                        updater_server = ensure_sentinel_service_pipe_server();
 
                         tokio::spawn(async move {
                             let mut reader = BufReader::new(pipe);
@@ -403,6 +484,71 @@ fn run_service() -> windows_service::Result<()> {
                                         warn!(
                                             "Updater: msiexec spawn failed after pipe reply; client may have exited ({e:#})"
                                         );
+                                    }
+                                }
+                            }
+                        });
+                    }
+                }
+                res = agent_ipc_server.connect() => {
+                    if let Err(e) = res {
+                        warn!("Agent IPC pipe connect failed: {e}");
+                    } else {
+                        let pipe = agent_ipc_server;
+                        agent_ipc_server = ensure_agent_ipc_pipe_server();
+                        let to_ws_tx = to_ws_tx.clone();
+                        let shared_cfg = shared_cfg.clone();
+                        let mut cmd_rx = from_ws_tx.subscribe();
+
+                        tokio::spawn(async move {
+                            let mut reader = BufReader::new(pipe);
+                            let mut buf = Vec::new();
+                            loop {
+                                buf.clear();
+                                tokio::select! {
+                                    res = reader.read_until(b'\n', &mut buf) => {
+                                        match res {
+                                            Ok(0) => break,
+                                            Ok(_) => {}
+                                            Err(e) => {
+                                                warn!("Agent IPC pipe read failed: {e:#}");
+                                                break;
+                                            }
+                                        }
+                                        while matches!(buf.last().copied(), Some(b'\n' | b'\r')) { buf.pop(); }
+                                        if buf.is_empty() { continue; }
+
+                                        if let Some(line) = crate::ipc::IpcLine::from_slice(&buf) {
+                                            match line {
+                                                crate::ipc::IpcLine::ConfigChanged => {
+                                                    // Reload machine config so WS URL/auth changes apply without service restart.
+                                                    if let Ok(mut g) = shared_cfg.lock() {
+                                                        *g = crate::config::load_config();
+                                                    }
+                                                }
+                                                other => {
+                                                    if let Some(frame) = other.into_outbound() {
+                                                        let _ = to_ws_tx.send(frame).await;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    cmd = cmd_rx.recv() => {
+                                        match cmd {
+                                            Ok(text) => {
+                                                let pipe = reader.get_mut();
+                                                let mut s = text;
+                                                s.push('\n');
+                                                if let Err(e) = pipe.write_all(s.as_bytes()).await {
+                                                    warn!("Agent IPC pipe write failed: {e:#}");
+                                                    break;
+                                                }
+                                                let _ = pipe.flush().await;
+                                            }
+                                            Err(broadcast::error::RecvError::Lagged(_)) => {}
+                                            Err(broadcast::error::RecvError::Closed) => break,
+                                        }
                                     }
                                 }
                             }
@@ -616,11 +762,25 @@ fn launch_msi_detached(msi_path: &std::path::Path) -> Result<()> {
         .join("System32")
         .join("msiexec.exe");
 
+    // Log to ProgramData so silent update failures are diagnosable on locked-down systems.
+    // Keep it stable (overwritten each run) to avoid unbounded growth.
+    let log_path = program_data_path("msi-install.log");
+
     let _child = std::process::Command::new(&msiexec)
         .creation_flags(CREATE_NO_WINDOW.0)
         .arg("/i")
         .arg(&msi_arg)
-        .args(["/qn", "/norestart"])
+        .args([
+            // Silent install
+            "/qn",
+            "/norestart",
+            // Force reinstall of all features/resources (important for same-version upgrades and “repair-ish” runs).
+            "REINSTALL=ALL",
+            "REINSTALLMODE=amus",
+            // Verbose MSI log
+            "/l*v",
+        ])
+        .arg(log_path.as_os_str())
         .spawn()
         .context("msiexec spawn")?;
     info!("Updater: msiexec process started");

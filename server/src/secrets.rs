@@ -9,5 +9,6 @@ use subtle::ConstantTimeEq;
 pub fn ct_compare_secret(provided: &str, expected: &str) -> bool {
     let a = Sha256::digest(provided.as_bytes());
     let b = Sha256::digest(expected.as_bytes());
-    ConstantTimeEq::ct_eq(a.as_slice(), b.as_slice()).into()
+    // Avoid raw string equality checks; compare fixed-width digests in constant time.
+    a.ct_eq(&b).into()
 }

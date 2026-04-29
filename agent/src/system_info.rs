@@ -50,6 +50,29 @@ fn powershell_cim_value(_class_name: &str, _property: &str) -> Option<String> {
     None
 }
 
+/// Best-effort active console user (Windows: `Win32_ComputerSystem.UserName`).
+///
+/// Returns values like `DOMAIN\\Username` or `COMPUTER\\Username` when available.
+pub fn active_username() -> Option<String> {
+    #[cfg(target_os = "windows")]
+    {
+        powershell_cim_value("Win32_ComputerSystem", "UserName")
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
+}
+
+/// Fast local fallback (may be empty when running as a service / non-interactive).
+pub fn env_username_fallback() -> Option<String> {
+    std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 pub fn collect_agent_info() -> serde_json::Value {
     let mut sys = System::new_all();
     sys.refresh_all();
@@ -140,8 +163,8 @@ pub fn collect_agent_info() -> serde_json::Value {
     let ui_password_set = !cfg.ui_password_hash.is_empty()
         && cfg.ui_password_hash.starts_with("$argon2");
 
-    let current_user = std::env::var("USERNAME")
-        .or_else(|_| std::env::var("USER"))
+    let current_user = active_username()
+        .or_else(env_username_fallback)
         .unwrap_or_default();
 
     json!({

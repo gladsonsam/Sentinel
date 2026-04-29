@@ -33,24 +33,33 @@ export interface AgentLiveStatus {
 export interface WindowEvent {
   title: string;
   app: string;
+  app_display?: string;
   hwnd: number;
   ts: string;
   created: string;
+  /** Best-effort logged-in user at time of event (e.g. `DOMAIN\\user`). */
+  user?: string | null;
 }
 
 export interface KeySession {
   app: string;
+  app_display?: string;
   window_title: string;
   text: string;
   started_at: string;
   updated_at: string;
+  user?: string | null;
 }
 
 export interface UrlVisit {
   id?: number;
   url: string;
+  title?: string | null;
   browser: string;
   ts: string;
+  /** Best-effort logged-in user at time of event (e.g. `DOMAIN\\user`). */
+  user?: string | null;
+  category_key?: string | null;
   category?: string | null;
 }
 
@@ -58,6 +67,7 @@ export interface ActivityEvent {
   kind: "afk" | "active";
   idle_secs?: number;
   ts: string;
+  user?: string | null;
 }
 
 /** One row from installed-software inventory (Windows Uninstall registry). */

@@ -20,6 +20,7 @@ interface KeystrokeEvent {
   window_title: string;
   keys: string;
   timestamp: string;
+  user?: string | null;
 }
 
 interface KeysTabProps {
@@ -43,6 +44,7 @@ export function KeysTab({ agentId }: KeysTabProps) {
           window_title: row.window_title ?? "—",
           keys: row.text ?? "",
           timestamp: row.updated_at || row.started_at || "",
+          user: row.user ?? null,
         })),
       );
     } catch (err) {
@@ -87,7 +89,8 @@ export function KeysTab({ agentId }: KeysTabProps) {
             (item.app_display || "").toLowerCase().includes(searchText) ||
             (item.exe_name || "").toLowerCase().includes(searchText) ||
             (item.window_title || "").toLowerCase().includes(searchText) ||
-            (item.keys || "").toLowerCase().includes(searchText)
+            (item.keys || "").toLowerCase().includes(searchText) ||
+            (item.user || "").toLowerCase().includes(searchText)
           );
         },
       },
@@ -107,6 +110,13 @@ export function KeysTab({ agentId }: KeysTabProps) {
       loading={loading}
       loadingText="Loading keystrokes..."
       columnDefinitions={[
+        {
+          id: "user",
+          header: "User",
+          cell: (item) => item.user || "—",
+          sortingField: "user",
+          width: 160,
+        },
         {
           id: "timestamp",
           header: "Time",
