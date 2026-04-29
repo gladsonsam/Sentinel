@@ -25,6 +25,7 @@ use base64::Engine;
 use serde::Deserialize;
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
+use uuid::Uuid;
 
 use crate::{
     alert_rules, db,
@@ -150,11 +151,18 @@ async fn run(mut ws: WebSocket, name: String, state: Arc<AppState>) {
 
     info!("Agent connected: {name} ({agent_id})");
     let connected_at = chrono::Utc::now();
+    let conn_id = Uuid::new_v4();
 
     // Add to in-memory agent map.
     {
         let mut map = state.agents.lock();
-        map.insert(agent_id, crate::state::AgentConn { connected_at });
+        map.insert(
+            agent_id,
+            crate::state::AgentConn {
+                conn_id,
+                connected_at,
+            },
+        );
     }
 
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<AgentControl>(AGENT_CMD_CHANNEL_CAPACITY);
@@ -293,25 +301,37 @@ async fn run(mut ws: WebSocket, name: String, state: Arc<AppState>) {
 
     // ── Cleanup ───────────────────────────────────────────────────────────────
     let disconnected_at = chrono::Utc::now();
-    state.clear_agent_live(agent_id);
-    state.agents.lock().remove(&agent_id);
-    state.agent_cmds.lock().remove(&agent_id);
-    // Clear stale frame so MJPEG stream goes blank rather than serving the
-    // last screenshot of a disconnected agent.
-    state.frames.lock().remove(&agent_id);
+    // Only clean up if this is still the current connection for this agent.
+    // Otherwise, a newer WS session is active and we must not mark it offline.
+    let is_current = {
+        let map = state.agents.lock();
+        map.get(&agent_id).map(|c| c.conn_id) == Some(conn_id)
+    };
+    if is_current {
+        state.clear_agent_live(agent_id);
+        state.agents.lock().remove(&agent_id);
+        state.agent_cmds.lock().remove(&agent_id);
+        // Clear stale frame so MJPEG stream goes blank rather than serving the
+        // last screenshot of a disconnected agent.
+        state.frames.lock().remove(&agent_id);
+    } else {
+        info!("Skipping stale disconnect cleanup for {name} ({agent_id})");
+    }
     let _ = db::touch_agent(&state.db, agent_id).await;
     let _ = db::end_agent_session(&state.db, session_id).await;
 
-    state.broadcast(
-        serde_json::json!({
-            "event":    "agent_disconnected",
-            "agent_id": agent_id,
-            "disconnected_at": disconnected_at,
-        })
-        .to_string(),
-    );
+    if is_current {
+        state.broadcast(
+            serde_json::json!({
+                "event":    "agent_disconnected",
+                "agent_id": agent_id,
+                "disconnected_at": disconnected_at,
+            })
+            .to_string(),
+        );
 
-    info!("Agent disconnected: {name} ({agent_id})");
+        info!("Agent disconnected: {name} ({agent_id})");
+    }
 }
 
 /// Push updated local UI password hash to a connected agent (after dashboard edit).
