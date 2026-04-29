@@ -77,11 +77,35 @@ export function PageHeader({
 
   const connectedText = `Connected: ${agent.connected_at ? fmtDateTime(agent.connected_at) : "offline"}`;
 
-  const canWake = !agent.online;
   const canLock = agent.online;
   const canRestart = agent.online;
   const canShutdown = agent.online;
   const canRequestInfo = agent.online;
+
+  const actionItems: ButtonDropdownProps.Item[] = [
+    // Only show Wake when it's actually useful (offline). Avoid a disabled/grey button.
+    ...(!agent.online
+      ? ([
+          { id: "wake-lan", text: "Wake on LAN" } satisfies ButtonDropdownProps.Item,
+        ] as ButtonDropdownProps.Item[])
+      : []),
+    ...(canLock
+      ? ([
+          { id: "lock-host", text: "Lock computer" } satisfies ButtonDropdownProps.Item,
+        ] as ButtonDropdownProps.Item[])
+      : []),
+    ...(canRestart
+      ? ([
+          { id: "restart-host", text: "Restart computer" } satisfies ButtonDropdownProps.Item,
+        ] as ButtonDropdownProps.Item[])
+      : []),
+    ...(canShutdown
+      ? ([
+          { id: "shutdown-host", text: "Shutdown computer" } satisfies ButtonDropdownProps.Item,
+        ] as ButtonDropdownProps.Item[])
+      : []),
+    { id: "help", text: "Open help" },
+  ];
 
   return (
     <Header
@@ -103,60 +127,17 @@ export function PageHeader({
             Refresh info
           </Button>
 
-          <Button
-            iconName="status-stopped"
-            disabled={!canWake || pendingAction === "wake-lan"}
-            loading={pendingAction === "wake-lan"}
-            onClick={() => onRunAction("wake-lan")}
-          >
-            Wake
-          </Button>
-
-          <Button
-            iconName="lock-private"
-            disabled={!canLock || pendingAction === "lock-host"}
-            loading={pendingAction === "lock-host"}
-            onClick={() => onRunAction("lock-host")}
-          >
-            Lock
-          </Button>
-
-          <Button
-            iconName="redo"
-            disabled={!canRestart || pendingAction === "restart-host"}
-            loading={pendingAction === "restart-host"}
-            onClick={() => onRunAction("restart-host")}
-          >
-            Restart
-          </Button>
-
-          <Button
-            iconName="close"
-            variant="primary"
-            disabled={!canShutdown || pendingAction === "shutdown-host"}
-            loading={pendingAction === "shutdown-host"}
-            onClick={() => onRunAction("shutdown-host")}
-          >
-            Shutdown
-          </Button>
-
           <ButtonDropdown
-            items={[{ id: "help", text: "Open help" }]}
-            onItemClick={() => onOpenHelp()}
-          >
-            Help
-          </ButtonDropdown>
-
-          <ButtonDropdown
-            items={[
-              { id: "wake-lan", text: "Wake on LAN" },
-              { id: "lock-host", text: "Lock computer" },
-              { id: "restart-host", text: "Restart computer" },
-              { id: "shutdown-host", text: "Shutdown computer" },
-            ]}
-            onItemClick={handleItemClick}
-            variant="icon"
-            ariaLabel="More actions"
+            items={actionItems}
+            onItemClick={(e) => {
+              const id = String(e.detail.id);
+              if (id === "help") {
+                onOpenHelp();
+                return;
+              }
+              handleItemClick(e);
+            }}
+            variant="normal"
           />
         </SpaceBetween>
       }
