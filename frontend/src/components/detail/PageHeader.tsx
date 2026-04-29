@@ -7,10 +7,12 @@ import type { Agent, AgentLiveStatus } from "../../lib/types";
 import { fmtDateTime } from "../../lib/utils";
 import { ActivityStatus } from "../common/StatusIndicator";
 import StatusIndicator from "@cloudscape-design/components/status-indicator";
+import Button from "@cloudscape-design/components/button";
 
 export type AgentAction =
   | "restart-host"
   | "shutdown-host"
+  | "lock-host"
   | "request-info"
   | "wake-lan";
 
@@ -24,6 +26,7 @@ interface PageHeaderProps {
   inferredIdleSeconds?: number | null;
   onOpenHelp: () => void;
   onRunAction: (action: AgentAction) => void;
+  pendingAction?: AgentAction | null;
 }
 
 export function PageHeader({
@@ -32,6 +35,7 @@ export function PageHeader({
   inferredIdleSeconds,
   onOpenHelp,
   onRunAction,
+  pendingAction = null,
 }: PageHeaderProps) {
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -73,6 +77,12 @@ export function PageHeader({
 
   const connectedText = `Connected: ${agent.connected_at ? fmtDateTime(agent.connected_at) : "offline"}`;
 
+  const canWake = !agent.online;
+  const canLock = agent.online;
+  const canRestart = agent.online;
+  const canShutdown = agent.online;
+  const canRequestInfo = agent.online;
+
   return (
     <Header
       variant="h1"
@@ -80,25 +90,74 @@ export function PageHeader({
         <SpaceBetween size="xs">
           {idleLine}
           <div>{connectedText}</div>
-          <SpaceBetween direction="horizontal" size="xs">
-            <ButtonDropdown
-              items={[{ id: "help", text: "Open help" }]}
-              onItemClick={() => onOpenHelp()}
-            >
-              Open help
-            </ButtonDropdown>
-            <ButtonDropdown
-              items={[
-                { id: "wake-lan", text: "Wake on LAN" },
-                { id: "request-info", text: "Request fresh system info" },
-                { id: "restart-host", text: "Restart computer" },
-                { id: "shutdown-host", text: "Shutdown computer" },
-              ]}
-              onItemClick={handleItemClick}
-            >
-              Actions
-            </ButtonDropdown>
-          </SpaceBetween>
+        </SpaceBetween>
+      }
+      actions={
+        <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+          <Button
+            iconName="refresh"
+            disabled={!canRequestInfo || pendingAction === "request-info"}
+            loading={pendingAction === "request-info"}
+            onClick={() => onRunAction("request-info")}
+          >
+            Refresh info
+          </Button>
+
+          <Button
+            iconName="status-stopped"
+            disabled={!canWake || pendingAction === "wake-lan"}
+            loading={pendingAction === "wake-lan"}
+            onClick={() => onRunAction("wake-lan")}
+          >
+            Wake
+          </Button>
+
+          <Button
+            iconName="lock-private"
+            disabled={!canLock || pendingAction === "lock-host"}
+            loading={pendingAction === "lock-host"}
+            onClick={() => onRunAction("lock-host")}
+          >
+            Lock
+          </Button>
+
+          <Button
+            iconName="redo"
+            disabled={!canRestart || pendingAction === "restart-host"}
+            loading={pendingAction === "restart-host"}
+            onClick={() => onRunAction("restart-host")}
+          >
+            Restart
+          </Button>
+
+          <Button
+            iconName="close"
+            variant="primary"
+            disabled={!canShutdown || pendingAction === "shutdown-host"}
+            loading={pendingAction === "shutdown-host"}
+            onClick={() => onRunAction("shutdown-host")}
+          >
+            Shutdown
+          </Button>
+
+          <ButtonDropdown
+            items={[{ id: "help", text: "Open help" }]}
+            onItemClick={() => onOpenHelp()}
+          >
+            Help
+          </ButtonDropdown>
+
+          <ButtonDropdown
+            items={[
+              { id: "wake-lan", text: "Wake on LAN" },
+              { id: "lock-host", text: "Lock computer" },
+              { id: "restart-host", text: "Restart computer" },
+              { id: "shutdown-host", text: "Shutdown computer" },
+            ]}
+            onItemClick={handleItemClick}
+            variant="icon"
+            ariaLabel="More actions"
+          />
         </SpaceBetween>
       }
     >

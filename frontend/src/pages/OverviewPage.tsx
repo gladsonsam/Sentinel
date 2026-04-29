@@ -19,6 +19,7 @@ interface OverviewPageProps {
   onOpenScreen: (agentId: string) => void;
   onRefresh: () => void;
   onBatchWake: (agentIds: string[]) => void;
+  onBatchLock: (agentIds: string[]) => void;
   onBatchRestart: (agentIds: string[]) => void;
   onBatchShutdown: (agentIds: string[]) => void;
   /** Admin: show “Add selected to group” in bulk actions. */
@@ -37,6 +38,7 @@ export function OverviewPage({
   onOpenScreen,
   onRefresh,
   onBatchWake,
+  onBatchLock,
   onBatchRestart,
   onBatchShutdown,
   adminBulkGroupAssignment,
@@ -63,6 +65,7 @@ export function OverviewPage({
             onRefresh={onRefresh}
             onBatchWake={onBatchWake}
             onBulkScript={(ids) => setBulkScriptIds(ids)}
+            onBatchLock={onBatchLock}
             onBatchRestart={onBatchRestart}
             onBatchShutdown={onBatchShutdown}
             onBulkAddToGroup={

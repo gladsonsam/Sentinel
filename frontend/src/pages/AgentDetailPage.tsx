@@ -4,6 +4,9 @@ import SegmentedControl from "@cloudscape-design/components/segmented-control";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Tabs from "@cloudscape-design/components/tabs";
 import BreadcrumbGroup from "@cloudscape-design/components/breadcrumb-group";
+import Modal from "@cloudscape-design/components/modal";
+import Box from "@cloudscape-design/components/box";
+import Button from "@cloudscape-design/components/button";
 import {
   AGENT_DATA_SUBTABS,
   AGENT_LIVE_SUBTABS,
@@ -71,18 +74,20 @@ export function AgentDetailPage({
   const { resolvedInfo, setResolvedInfo } = useResolvedAgentInfo(agent.id, agentInfo);
   const inferredIdleSeconds = useAgentInferredIdle(agent.id, liveStatus?.activity);
   const { sessions, loading, loadActivityData } = useAgentActivitySessions(agent.id, activeTab);
+  const [pendingAction, setPendingAction] = useState<AgentAction | null>(null);
+  const [confirmAction, setConfirmAction] = useState<AgentAction | null>(null);
 
   // Merge prop-based highlightTimestamp (from URL ?at=) with local state
   const effectiveHighlightTimestamp = timelineHighlight ?? highlightTimestamp;
 
   const runAgentAction = useCallback(
     (action: AgentAction) => {
-      if (!agent.online) {
-        onNotifyWarning("Agent offline", `Cannot run "${action}" while ${agent.name} is offline.`);
-        return;
-      }
-
       if (action === "wake-lan") {
+        if (agent.online) {
+          onNotifyInfo("Agent already online", `${agent.name} is connected — Wake on LAN is usually only needed while offline.`);
+          return;
+        }
+        setPendingAction("wake-lan");
         void api
           .wakeAgent(agent.id)
           .then((r) =>
@@ -91,37 +96,47 @@ export function AgentDetailPage({
               `Magic packet sent to ${r.mac} (${r.broadcast}:${r.port}). WoL must be enabled on the PC; the server must reach the subnet broadcast.`,
             ),
           )
-          .catch((e) => onNotifyError("Wake on LAN failed", String(e)));
+          .catch((e) => onNotifyError("Wake on LAN failed", String(e)))
+          .finally(() => setPendingAction(null));
+        return;
+      }
+
+      if (!agent.online) {
+        onNotifyWarning("Agent offline", `Cannot run "${action}" while ${agent.name} is offline.`);
         return;
       }
 
       if (action === "request-info") {
+        setPendingAction("request-info");
         sendWsMessage({
           type: "control",
           agent_id: agent.id,
           cmd: { type: "RequestInfo" },
         });
         onNotifyInfo("Requested system info", `Asked ${agent.name} to send fresh specs.`);
+        setTimeout(() => setPendingAction((prev) => (prev === "request-info" ? null : prev)), 800);
+        return;
+      }
+
+      if (action === "lock-host") {
+        setPendingAction("lock-host");
+        sendWsMessage({
+          type: "control",
+          agent_id: agent.id,
+          cmd: { type: "LockHost" },
+        });
+        onNotifyWarning("Lock sent", `Sent lock command to ${agent.name}.`);
+        setTimeout(() => setPendingAction((prev) => (prev === "lock-host" ? null : prev)), 800);
         return;
       }
 
       if (action === "restart-host") {
-        sendWsMessage({
-          type: "control",
-          agent_id: agent.id,
-          cmd: { type: "RestartHost" },
-        });
-        onNotifyWarning("Restart sent", `Sent restart command to ${agent.name}.`);
+        setConfirmAction("restart-host");
         return;
       }
 
       if (action === "shutdown-host") {
-        sendWsMessage({
-          type: "control",
-          agent_id: agent.id,
-          cmd: { type: "ShutdownHost" },
-        });
-        onNotifyWarning("Shutdown sent", `Sent shutdown command to ${agent.name}.`);
+        setConfirmAction("shutdown-host");
         return;
       }
 
@@ -129,6 +144,41 @@ export function AgentDetailPage({
     },
     [agent.id, agent.name, agent.online, sendWsMessage, onNotifyInfo, onNotifyWarning, onNotifyError]
   );
+
+  const confirmAndRun = useCallback(() => {
+    const action = confirmAction;
+    if (!action) return;
+    setConfirmAction(null);
+
+    if (!agent.online) {
+      onNotifyWarning("Agent offline", `Cannot run "${action}" while ${agent.name} is offline.`);
+      return;
+    }
+
+    if (action === "restart-host") {
+      setPendingAction("restart-host");
+      sendWsMessage({
+        type: "control",
+        agent_id: agent.id,
+        cmd: { type: "RestartHost" },
+      });
+      onNotifyWarning("Restart sent", `Sent restart command to ${agent.name}.`);
+      setTimeout(() => setPendingAction((prev) => (prev === "restart-host" ? null : prev)), 800);
+      return;
+    }
+
+    if (action === "shutdown-host") {
+      setPendingAction("shutdown-host");
+      sendWsMessage({
+        type: "control",
+        agent_id: agent.id,
+        cmd: { type: "ShutdownHost" },
+      });
+      onNotifyWarning("Shutdown sent", `Sent shutdown command to ${agent.name}.`);
+      setTimeout(() => setPendingAction((prev) => (prev === "shutdown-host" ? null : prev)), 800);
+      return;
+    }
+  }, [agent.id, agent.name, agent.online, confirmAction, onNotifyWarning, sendWsMessage]);
 
   const renderTabContent = (tab: TabKey) => (
     <AgentDetailTabContent
@@ -244,7 +294,38 @@ export function AgentDetailPage({
           inferredIdleSeconds={inferredIdleSeconds}
           onOpenHelp={onOpenHelp}
           onRunAction={runAgentAction}
+          pendingAction={pendingAction}
         />
+
+        <Modal
+          visible={confirmAction === "restart-host" || confirmAction === "shutdown-host"}
+          onDismiss={() => setConfirmAction(null)}
+          header={confirmAction === "restart-host" ? "Confirm restart" : "Confirm shutdown"}
+          footer={
+            <Box float="right">
+              <SpaceBetween direction="horizontal" size="xs">
+                <Button variant="link" onClick={() => setConfirmAction(null)}>
+                  Cancel
+                </Button>
+                <Button
+                  variant="primary"
+                  loading={pendingAction === "restart-host" || pendingAction === "shutdown-host"}
+                  onClick={confirmAndRun}
+                >
+                  {confirmAction === "restart-host" ? "Restart" : "Shutdown"}
+                </Button>
+              </SpaceBetween>
+            </Box>
+          }
+        >
+          <SpaceBetween size="s">
+            <Box>
+              {confirmAction === "restart-host"
+                ? `Restart "${agent.name}" now? Any unsaved work may be lost.`
+                : `Shutdown "${agent.name}" now? You may need Wake on LAN to bring it back.`}
+            </Box>
+          </SpaceBetween>
+        </Modal>
 
         <GeneralConfig
           agent={agent}

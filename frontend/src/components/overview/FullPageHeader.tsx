@@ -7,6 +7,7 @@ import type { ButtonDropdownProps } from "@cloudscape-design/components/button-d
 const BULK_ACTION_BASE: ButtonDropdownProps.ItemOrGroup[] = [
   { id: "wake", text: "Wake selected" },
   { id: "script", text: "Run script on selected" },
+  { id: "lock", text: "Lock selected" },
   { id: "restart", text: "Restart selected" },
   { id: "shutdown", text: "Shutdown selected" },
 ];
@@ -17,6 +18,7 @@ interface FullPageHeaderProps {
   onRefresh: () => void;
   onWakeSelected: () => void;
   onBulkScript: () => void;
+  onLockSelected: () => void;
   onRestartSelected: () => void;
   onShutdownSelected: () => void;
   /** Admin: permanently forget agents from the server. */
@@ -33,6 +35,7 @@ export function FullPageHeader({
   onRefresh,
   onWakeSelected,
   onBulkScript,
+  onLockSelected,
   onRestartSelected,
   onShutdownSelected,
   onDeleteSelected,
@@ -57,6 +60,9 @@ export function FullPageHeader({
         break;
       case "script":
         onBulkScript();
+        break;
+      case "lock":
+        onLockSelected();
         break;
       case "restart":
         onRestartSelected();

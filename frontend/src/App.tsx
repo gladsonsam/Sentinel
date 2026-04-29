@@ -142,7 +142,7 @@ function OverviewRoute({
   currentUser: DashboardSessionUser | null;
   checkAuth: () => void;
   runBatchWake: (ids: string[]) => Promise<void>;
-  runBatchAction: (agentIds: string[], cmdType: "RestartHost" | "ShutdownHost") => void;
+  runBatchAction: (agentIds: string[], cmdType: "RestartHost" | "ShutdownHost" | "LockHost") => void;
   handleLogout: () => Promise<void>;
   openSettings: () => void;
   openLogs: () => void;
@@ -163,6 +163,9 @@ function OverviewRoute({
         onOpenScreen={onOpenScreen}
         onRefresh={checkAuth}
         onBatchWake={(ids) => void runBatchWake(ids)}
+        onBatchLock={(agentIds) => {
+          runBatchAction(agentIds, "LockHost");
+        }}
         onBatchRestart={(agentIds) => {
           runBatchAction(agentIds, "RestartHost");
         }}
@@ -787,7 +790,7 @@ export function App() {
   );
 
   const runBatchAction = useCallback(
-    (agentIds: string[], cmdType: "RestartHost" | "ShutdownHost") => {
+    (agentIds: string[], cmdType: "RestartHost" | "ShutdownHost" | "LockHost") => {
       const onlineIds = agentIds.filter((id) => agents[id]?.online);
       const offlineCount = agentIds.length - onlineIds.length;
 
@@ -804,7 +807,8 @@ export function App() {
         });
       }
 
-      const actionLabel = cmdType === "RestartHost" ? "restart" : "shutdown";
+      const actionLabel =
+        cmdType === "RestartHost" ? "restart" : cmdType === "ShutdownHost" ? "shutdown" : "lock";
       if (offlineCount > 0) {
         warning(
           `Sent ${actionLabel} to ${onlineIds.length} agent(s)`,

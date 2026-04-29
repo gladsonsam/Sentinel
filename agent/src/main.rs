@@ -41,6 +41,7 @@
 //! | Mouse move       | `Text` (JSON) | `"MouseMove"`         |
 //! | Mouse click      | `Text` (JSON) | `"MouseClick"`        |
 //! | Request info     | `Text` (JSON) | `"RequestInfo"`       |
+//! | Lock host        | `Text` (JSON) | `"LockHost"`          |
 //! | Restart host     | `Text` (JSON) | `"RestartHost"`       |
 //! | Shutdown host    | `Text` (JSON) | `"ShutdownHost"`      |
 //! | Collect software | `Text` (JSON) | `"CollectSoftware"`   |
@@ -1218,6 +1219,32 @@ fn handle_server_command(args: ServerCommandArgs<'_>) {
                 let _ = tx.send(Message::Text(payload)).await;
             });
             info!("Received RequestInfo command; pushed fresh system info.");
+        }
+        "LockHost" => {
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
+                match std::process::Command::new("rundll32.exe")
+                    .creation_flags(CREATE_NO_WINDOW)
+                    .args(["user32.dll,LockWorkStation"])
+                    .status()
+                {
+                    Ok(status) if status.success() => {
+                        info!("Received LockHost command; workstation locked.");
+                    }
+                    Ok(status) => {
+                        warn!("LockHost command failed with status: {status}");
+                    }
+                    Err(e) => {
+                        warn!("Failed to execute LockHost command: {e}");
+                    }
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                warn!("LockHost command received on non-Windows build; ignored.");
+            }
         }
         "RestartHost" => {
             #[cfg(target_os = "windows")]

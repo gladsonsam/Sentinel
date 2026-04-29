@@ -13,6 +13,7 @@ interface Props {
   onOpenScreen: (agentId: string) => void;
   onRefresh: () => void;
   onBatchWake: (agentIds: string[]) => void;
+  onBatchLock: (agentIds: string[]) => void;
   onBatchRestart: (agentIds: string[]) => void;
   onBatchShutdown: (agentIds: string[]) => void;
   onLogout: () => void;
@@ -39,6 +40,7 @@ export function AuthenticatedOverview({
   onOpenScreen,
   onRefresh,
   onBatchWake,
+  onBatchLock,
   onBatchRestart,
   onBatchShutdown,
   onLogout,
@@ -66,6 +68,7 @@ export function AuthenticatedOverview({
           onOpenScreen={onOpenScreen}
           onRefresh={onRefresh}
           onBatchWake={onBatchWake}
+          onBatchLock={onBatchLock}
           onBatchRestart={onBatchRestart}
           onBatchShutdown={onBatchShutdown}
           adminBulkGroupAssignment={currentUser?.role === "admin"}

@@ -28,6 +28,7 @@ interface AgentCardProps {
   onRefresh: () => void;
   onBatchWake: (agentIds: string[]) => void;
   onBulkScript: (agentIds: string[]) => void;
+  onBatchLock: (agentIds: string[]) => void;
   onBatchRestart: (agentIds: string[]) => void;
   onBatchShutdown: (agentIds: string[]) => void;
   /** Admin: opens group picker to add all selected agents to a group. */
@@ -48,6 +49,7 @@ export function AgentCard({
   onRefresh,
   onBatchWake,
   onBulkScript,
+  onBatchLock,
   onBatchRestart,
   onBatchShutdown,
   onBulkAddToGroup,
@@ -206,6 +208,7 @@ export function AgentCard({
               onRefresh={onRefresh}
               onWakeSelected={() => onBatchWake(selectedItems.map((item) => item.id))}
               onBulkScript={() => onBulkScript(selectedItems.map((item) => item.id))}
+              onLockSelected={() => onBatchLock(selectedItems.map((item) => item.id))}
               onRestartSelected={() => onBatchRestart(selectedItems.map((item) => item.id))}
               onShutdownSelected={() => onBatchShutdown(selectedItems.map((item) => item.id))}
               onDeleteSelected={

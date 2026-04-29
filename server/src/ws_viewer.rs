@@ -285,7 +285,7 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>, user: &AuthUser) {
             let data_ok = dv.as_str().is_some() || dv.is_null();
             path_ok && chunks_ok && data_ok
         }
-        "RequestInfo" | "RestartHost" | "ShutdownHost" | "CollectSoftware" => true,
+        "RequestInfo" | "RestartHost" | "ShutdownHost" | "LockHost" | "CollectSoftware" => true,
         _ => false,
     };
 
