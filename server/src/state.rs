@@ -27,6 +27,9 @@ pub type AgentCmdSender = mpsc::Sender<AgentControl>;
 /// Online agent entry (keyed by agent id in [`AppState::agents`]).
 #[derive(Debug, Clone)]
 pub struct AgentConn {
+    /// Unique identifier for this specific WebSocket session.
+    /// Used to prevent stale-disconnect cleanup from a previous connection.
+    pub conn_id: Uuid,
     pub connected_at: DateTime<Utc>,
 }
 
