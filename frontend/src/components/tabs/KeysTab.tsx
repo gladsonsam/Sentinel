@@ -8,7 +8,7 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import Toggle from "@cloudscape-design/components/toggle";
 import Button from "@cloudscape-design/components/button";
 import { useCollection } from "@cloudscape-design/collection-hooks";
-import { apiUrl } from "../../lib/api";
+import { api } from "../../lib/api";
 import { fmtDateTime } from "../../lib/utils";
 import { prettyAppLabel } from "../../lib/app-names";
 import { AppIcon } from "../common/AppIcon";
@@ -34,24 +34,17 @@ export function KeysTab({ agentId }: KeysTabProps) {
   const fetchKeystrokes = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await fetch(apiUrl(`/agents/${agentId}/keys?limit=500`), {
-        credentials: "include",
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const rows = Array.isArray(data?.rows) ? data.rows : Array.isArray(data) ? data : [];
-        setItems(
-          rows.map((row: Record<string, unknown>) => ({
-            id: Number(row.id ?? 0),
-            exe_name: String(row.exe_name ?? row.app ?? "—"),
-            app_display: String(row.app_display ?? row.exe_name ?? row.app ?? "—"),
-            window_title: String(row.window_title ?? row.title ?? "—"),
-            keys: String(row.keys ?? row.text ?? ""),
-            timestamp: String(row.timestamp ?? row.updated_at ?? row.started_at ?? ""),
-          }))
-        );
-      }
+      const { rows } = await api.keys(agentId, { limit: 500 });
+      setItems(
+        rows.map((row) => ({
+          id: 0,
+          exe_name: row.app ?? "—",
+          app_display: row.app ?? "—",
+          window_title: row.window_title ?? "—",
+          keys: row.text ?? "",
+          timestamp: row.updated_at || row.started_at || "",
+        })),
+      );
     } catch (err) {
       console.error("Failed to fetch keystrokes:", err);
     } finally {

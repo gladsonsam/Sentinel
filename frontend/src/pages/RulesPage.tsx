@@ -1906,7 +1906,7 @@ export function RulesPage() {
 
   useEffect(() => {
     void api.agentGroupsList().then((d) => setGroups(d.groups ?? [])).catch(() => { });
-    void api.agents().then((d) => setAgents(d.agents ?? [])).catch(() => { });
+    void api.agentsOverview().then((d) => setAgents(d.agents ?? [])).catch(() => { });
   }, []);
 
   return (

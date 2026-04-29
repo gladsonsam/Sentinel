@@ -21,7 +21,7 @@ pub fn internal_error(err: anyhow::Error) -> Response {
     let expose = std::env::var("EXPOSE_INTERNAL_ERRORS")
         .ok()
         .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-        .unwrap_or(true);
+        .unwrap_or(false);
     if expose {
         tracing::error!(error = %err, "internal error");
         (

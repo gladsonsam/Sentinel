@@ -299,7 +299,7 @@ export function NotificationsAdminPage({ mode }: { mode: "groups" | "alerts" }) 
     setError(null);
     try {
       if (mode === "groups") {
-        const [g, a] = await Promise.all([api.agentGroupsList(), api.agents()]);
+        const [g, a] = await Promise.all([api.agentGroupsList(), api.agentsOverview()]);
         setGroups(g.groups);
         setRules(null);
         setAgentsList(a.agents);
@@ -307,7 +307,7 @@ export function NotificationsAdminPage({ mode }: { mode: "groups" | "alerts" }) 
         const [g, r, a] = await Promise.all([
           api.agentGroupsList(),
           api.alertRulesList(),
-          api.agents(),
+          api.agentsOverview(),
         ]);
         setGroups(g.groups);
         setRules(r.rules);

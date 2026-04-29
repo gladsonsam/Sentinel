@@ -7,7 +7,7 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import Alert from "@cloudscape-design/components/alert";
 import Box from "@cloudscape-design/components/box";
 import { AuthLayout } from "../layouts/AuthLayout";
-import { apiUrl, setDashboardCsrfToken } from "../lib/api";
+import { api, apiUrl, isApiError } from "../lib/api";
 
 interface LoginPageProps {
   onLoginSuccess: () => void;
@@ -21,12 +21,12 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetch(apiUrl("/auth/config"), { credentials: "include" })
-      .then((r) => (r.ok ? r.json() : null))
+    api
+      .authConfig()
       .then((data) => {
-        if (data && typeof data.oidc_enabled === "boolean") setOidcEnabled(data.oidc_enabled);
+        if (typeof data.oidc_enabled === "boolean") setOidcEnabled(data.oidc_enabled);
       })
-      .catch(() => {});
+      .catch(() => { /* ignore */ });
   }, []);
 
   const handleSubmit = async () => {
@@ -43,39 +43,22 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
     setError(null);
 
     try {
-      const response = await fetch(apiUrl("/login"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ username, password }),
-      });
-
-      if (response.ok) {
-        const okBody = (await response.json().catch(() => ({}))) as {
-          csrf_token?: string;
-        };
-        if (typeof okBody.csrf_token === "string" && okBody.csrf_token.length > 0) {
-          setDashboardCsrfToken(okBody.csrf_token);
-        }
+      await api.login(username, password);
         onLoginSuccess();
-      } else {
-        const data = (await response.json().catch(() => ({}))) as {
+    } catch (err) {
+      if (isApiError(err)) {
+        const payload = (err.payload ?? {}) as {
           error?: string;
           attempts_remaining?: number;
           max_attempts_per_window?: number;
           retry_after_secs?: number;
         };
-        const base = data.error ?? "Invalid password";
-        if (response.status === 429 && typeof data.retry_after_secs === "number") {
-          setError(
-            `${base} Retry in about ${Math.ceil(data.retry_after_secs)}s.`
-          );
-        } else if (
-          response.status === 401 &&
-          typeof data.attempts_remaining === "number"
-        ) {
-          const n = data.attempts_remaining;
-          const max = data.max_attempts_per_window;
+        const base = payload.error ?? err.message ?? "Login failed";
+        if (err.status === 429 && typeof payload.retry_after_secs === "number") {
+          setError(`${base} Retry in about ${Math.ceil(payload.retry_after_secs)}s.`);
+        } else if (err.status === 401 && typeof payload.attempts_remaining === "number") {
+          const n = payload.attempts_remaining;
+          const max = payload.max_attempts_per_window;
           const suffix = ` ${n} attempt${n === 1 ? "" : "s"} remaining before lockout${
             typeof max === "number" ? ` (limit: ${max} wrong passwords / 15 min)` : ""
           }.`;
@@ -83,9 +66,9 @@ export function LoginPage({ onLoginSuccess }: LoginPageProps) {
         } else {
           setError(base);
         }
+      } else {
+        setError("Failed to connect to server. Please try again.");
       }
-    } catch (err) {
-      setError("Failed to connect to server. Please try again.");
       console.error("Login error:", err);
     } finally {
       setLoading(false);

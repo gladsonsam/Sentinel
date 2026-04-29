@@ -19,9 +19,15 @@ import type {
   AgentGroup,
   AgentGroupMembership,
   AlertRule,
+  AlertRuleRow,
   AppBlockRule,
   AppBlockEvent,
   InternetBlockRule,
+  ScheduledScript,
+  ScheduledScriptScope,
+  ScheduledScriptSchedule,
+  ScheduledScriptEvent,
+  AgentSessionEvent,
 } from "./types";
 import { buildApiUrl } from "./serverSettings";
 import { publishServerVersion, type SettingsVersionPayload } from "./serverVersionStore";
@@ -29,6 +35,31 @@ import { publishServerVersion, type SettingsVersionPayload } from "./serverVersi
 interface PageParams {
   limit?: number;
   offset?: number;
+}
+
+export class ApiError extends Error {
+  status: number;
+  payload?: unknown;
+
+  constructor(message: string, status: number, payload?: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.payload = payload;
+  }
+}
+
+export function isApiError(e: unknown): e is ApiError {
+  return e instanceof ApiError;
+}
+
+/** `?limit=&offset=` query suffix for list endpoints (omit empty). */
+function limitOffsetQuery(params?: { limit?: number; offset?: number }): string {
+  const q = new URLSearchParams();
+  if (params?.limit != null) q.set("limit", String(params.limit));
+  if (params?.offset != null) q.set("offset", String(params.offset));
+  const qs = q.toString();
+  return qs ? `?${qs}` : "";
 }
 
 /** Paths are relative to `apiPrefix` (e.g. `/agents`, `/settings/retention`), not including `/api` twice. */
@@ -78,77 +109,65 @@ export function notifyMjpegViewerLeft(agentId: string, session: string): void {
 }
 
 async function get<T>(path: string): Promise<T> {
-  const res = await fetch(apiUrl(path), { credentials: "include" });
+  return requestJson<T>(path, { method: "GET" }, { includePathInHttpError: true });
+}
+
+async function requestJson<T>(
+  path: string,
+  init: RequestInit,
+  opts?: { includePathInHttpError?: boolean; allowStatuses?: number[] },
+): Promise<T> {
+  const res = await fetch(apiUrl(path), { ...init, credentials: "include" });
   const ct = res.headers.get("Content-Type") ?? "";
-  if (!res.ok) {
+
+  // Prefer structured errors when possible.
+  const allowed = opts?.allowStatuses?.includes(res.status) ?? false;
+  if (!res.ok && !allowed) {
     if (ct.includes("application/json")) {
-      const errBody = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new Error(errBody.error ?? `HTTP ${res.status} – ${path}`);
+      const body = (await res.json().catch(() => ({}))) as { error?: string };
+      const suffix = opts?.includePathInHttpError ? ` – ${path}` : "";
+      throw new ApiError(body.error ?? `HTTP ${res.status}${suffix}`, res.status, body);
     }
     const text = await res.text().catch(() => "");
-    throw new Error(text.trim() || `HTTP ${res.status} – ${path}`);
+    const suffix = opts?.includePathInHttpError ? ` – ${path}` : "";
+    throw new ApiError(text.trim() || `HTTP ${res.status}${suffix}`, res.status);
   }
+
   if (!ct.includes("application/json")) {
     const text = await res.text().catch(() => "");
-    throw new Error(
-      `Expected JSON from ${path}; got ${ct || "unknown type"}: ${text.slice(0, 200)}`,
-    );
+    throw new Error(`Expected JSON from ${path}; got ${ct || "unknown type"}: ${text.slice(0, 200)}`);
   }
   return res.json() as Promise<T>;
 }
 
 async function putJson<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(apiUrl(path), {
+  return requestJson<T>(path, {
     method: "PUT",
     headers: { "Content-Type": "application/json", ...csrfHeaders() },
     body: JSON.stringify(body),
-    credentials: "include",
   });
-  if (!res.ok) {
-    const errBody = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(errBody.error ?? `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<T>;
 }
 
 async function postEmpty<T>(path: string): Promise<T> {
-  const res = await fetch(apiUrl(path), {
+  return requestJson<T>(path, {
     method: "POST",
     headers: { ...csrfHeaders() },
-    credentials: "include",
   });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<T>;
 }
 
 async function postJsonRes<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(apiUrl(path), {
+  return requestJson<T>(path, {
     method: "POST",
     headers: { "Content-Type": "application/json", ...csrfHeaders() },
     body: JSON.stringify(body),
-    credentials: "include",
   });
-  const data = (await res.json().catch(() => ({}))) as T & { error?: string };
-  if (!res.ok) {
-    throw new Error(data.error ?? `HTTP ${res.status}`);
-  }
-  return data as T;
 }
 
 async function delJson<T>(path: string): Promise<T> {
-  const res = await fetch(apiUrl(path), {
+  return requestJson<T>(path, {
     method: "DELETE",
     headers: { ...csrfHeaders() },
-    credentials: "include",
   });
-  if (!res.ok) {
-    const errBody = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(errBody.error ?? `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<T>;
 }
 
 export const api = {
@@ -159,24 +178,26 @@ export const api = {
     authenticated: boolean;
     password_required: boolean;
   }> => {
-    const res = await fetch(apiUrl("/auth/status"), { credentials: "include" });
-    if (!res.ok && res.status !== 401) throw new Error(`HTTP ${res.status}`);
-    return res.json();
+    return requestJson(
+      "/auth/status",
+      { method: "GET" },
+      { allowStatuses: [401] },
+    );
   },
+
+  authConfig: (): Promise<{ oidc_enabled: boolean }> =>
+    get("/auth/config"),
 
   /** Submit credentials; throws with the server error message on failure. */
   login: async (username: string, password: string): Promise<void> => {
-    const res = await fetch(apiUrl("/login"), {
+    const data = await requestJson<{ csrf_token?: string }>(
+      "/login",
+      {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
-      credentials: "include",
-    });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string };
-      throw new Error(body.error ?? "Login failed");
-    }
-    const data = (await res.json().catch(() => ({}))) as { csrf_token?: string };
+      },
+    );
     if (typeof data.csrf_token === "string" && data.csrf_token.length > 0) {
       setDashboardCsrfToken(data.csrf_token);
     }
@@ -184,7 +205,9 @@ export const api = {
 
   /** Clear the current session cookie. */
   logout: async (): Promise<void> => {
-    await fetch(apiUrl("/logout"), { method: "POST", credentials: "include" });
+    await requestJson("/logout", { method: "POST" }).catch(() => {
+      /* ignore */
+    });
     setDashboardCsrfToken(null);
   },
 
@@ -192,9 +215,7 @@ export const api = {
 
   // ── Dashboard data ────────────────────────────────────────────────────────
 
-  agents: (): Promise<{ agents: Agent[] }> => get("/agents"),
-
-  /** Overview list with live `online` + session timestamps (preferred for dashboard refresh). */
+  /** Agent directory with live `online` + session timestamps (use for all dashboard lists). */
   agentsOverview: (): Promise<{ agents: Agent[] }> => get("/agents/overview"),
 
   // ── Agent UI metadata ─────────────────────────────────────────────────────
@@ -285,20 +306,16 @@ export const api = {
     if (opts?.broadcast) p.set("broadcast", opts.broadcast);
     if (opts?.port != null) p.set("port", String(opts.port));
     const qs = p.toString();
-    const res = await fetch(apiUrl(`/agents/${id}/wake${qs ? `?${qs}` : ""}`), {
-      method: "POST",
-      headers: { ...csrfHeaders() },
-      credentials: "include",
-    });
-    const body = (await res.json().catch(() => ({}))) as {
-      error?: string;
+    const body = await requestJson<{
       ok?: boolean;
       mac?: string;
       broadcast?: string;
       port?: number;
       retry_after_secs?: number;
-    };
-    if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
+    }>(`/agents/${id}/wake${qs ? `?${qs}` : ""}`, {
+      method: "POST",
+      headers: { ...csrfHeaders() },
+    });
     return {
       ok: body.ok ?? true,
       mac: body.mac ?? "",
@@ -638,6 +655,16 @@ export const api = {
       return { sources };
     }),
 
+  // ── Audit log ─────────────────────────────────────────────────────────────
+
+  audit: (params?: { limit?: number; agent_id?: string; status?: string }): Promise<{ rows: Record<string, unknown>[] }> => {
+    const q = new URLSearchParams();
+    q.set("limit", String(params?.limit ?? 500));
+    if (params?.agent_id) q.set("agent_id", params.agent_id);
+    if (params?.status) q.set("status", params.status);
+    return get(`/audit?${q.toString()}`);
+  },
+
   agentLogTail: (
     id: string,
     params?: { kind?: string; maxKb?: number },
@@ -801,7 +828,7 @@ export const api = {
 
   // ── Scheduled Scripts ───────────────────────────────────────────────────────
 
-  scheduledScriptsList: (): Promise<{ scripts: import("./types").ScheduledScript[] }> =>
+  scheduledScriptsList: (): Promise<{ scripts: ScheduledScript[] }> =>
     get("/scheduled-scripts"),
 
   scheduledScriptsCreate: (body: {
@@ -809,8 +836,8 @@ export const api = {
     shell: string;
     script: string;
     timeout_secs?: number;
-    scopes: import("./types").ScheduledScriptScope[];
-    schedules: import("./types").ScheduledScriptSchedule[];
+    scopes: ScheduledScriptScope[];
+    schedules: ScheduledScriptSchedule[];
   }): Promise<{ id: number }> => postJsonRes("/scheduled-scripts", body),
 
   scheduledScriptsUpdate: (
@@ -821,8 +848,8 @@ export const api = {
       shell?: string;
       script?: string;
       timeout_secs?: number;
-      scopes?: import("./types").ScheduledScriptScope[];
-      schedules?: import("./types").ScheduledScriptSchedule[];
+      scopes?: ScheduledScriptScope[];
+      schedules?: ScheduledScriptSchedule[];
     },
   ): Promise<{ ok: boolean }> => putJson(`/scheduled-scripts/${id}`, body),
 
@@ -834,31 +861,19 @@ export const api = {
 
   scheduledScriptEventsAll: (
     params?: { limit?: number },
-  ): Promise<{ rows: import("./types").ScheduledScriptEvent[] }> => {
-    const q = new URLSearchParams();
-    if (params?.limit != null) q.set("limit", String(params.limit));
-    const qs = q.toString();
-    return get(`/scheduled-script-events${qs ? `?${qs}` : ""}`);
-  },
+  ): Promise<{ rows: ScheduledScriptEvent[] }> =>
+    get(`/scheduled-script-events${limitOffsetQuery(params)}`),
 
   scheduledScriptEventsForScript: (
     scriptId: number,
     params?: { limit?: number },
-  ): Promise<{ rows: import("./types").ScheduledScriptEvent[] }> => {
-    const q = new URLSearchParams();
-    if (params?.limit != null) q.set("limit", String(params.limit));
-    const qs = q.toString();
-    return get(`/scheduled-scripts/${scriptId}/events${qs ? `?${qs}` : ""}`);
-  },
+  ): Promise<{ rows: ScheduledScriptEvent[] }> =>
+    get(`/scheduled-scripts/${scriptId}/events${limitOffsetQuery(params)}`),
 
   agentSessionsAll: (
     params?: { limit?: number },
-  ): Promise<{ rows: import("./types").AgentSessionEvent[] }> => {
-    const q = new URLSearchParams();
-    if (params?.limit != null) q.set("limit", String(params.limit));
-    const qs = q.toString();
-    return get(`/agent-sessions${qs ? `?${qs}` : ""}`);
-  },
+  ): Promise<{ rows: AgentSessionEvent[] }> =>
+    get(`/agent-sessions${limitOffsetQuery(params)}`),
 
   agentKnownExes: (agentId: string): Promise<{ exes: string[] }> =>
     get(`/agents/${agentId}/known-exes`),
@@ -869,37 +884,22 @@ export const api = {
   appBlockEventsForAgent: (
     agentId: string,
     params?: { limit?: number; offset?: number },
-  ): Promise<{ rows: AppBlockEvent[] }> => {
-    const q = new URLSearchParams();
-    if (params?.limit != null) q.set("limit", String(params.limit));
-    if (params?.offset != null) q.set("offset", String(params.offset));
-    const qs = q.toString();
-    return get(`/agents/${agentId}/app-block-events${qs ? `?${qs}` : ""}`);
-  },
+  ): Promise<{ rows: AppBlockEvent[] }> =>
+    get(`/agents/${agentId}/app-block-events${limitOffsetQuery(params)}`),
 
   appBlockEventsForRule: (
     ruleId: number,
     params?: { limit?: number; offset?: number },
-  ): Promise<{ rows: AppBlockEvent[] }> => {
-    const q = new URLSearchParams();
-    if (params?.limit != null) q.set("limit", String(params.limit));
-    if (params?.offset != null) q.set("offset", String(params.offset));
-    const qs = q.toString();
-    return get(`/app-block-rules/${ruleId}/events${qs ? `?${qs}` : ""}`);
-  },
+  ): Promise<{ rows: AppBlockEvent[] }> =>
+    get(`/app-block-rules/${ruleId}/events${limitOffsetQuery(params)}`),
 
   appBlockEventsAll: (
     params?: { limit?: number; offset?: number },
-  ): Promise<{ rows: AppBlockEvent[] }> => {
-    const q = new URLSearchParams();
-    if (params?.limit != null) q.set("limit", String(params.limit));
-    if (params?.offset != null) q.set("offset", String(params.offset));
-    const qs = q.toString();
-    return get(`/app-block-events${qs ? `?${qs}` : ""}`);
-  },
+  ): Promise<{ rows: AppBlockEvent[] }> =>
+    get(`/app-block-events${limitOffsetQuery(params)}`),
 
   agentEffectiveRules: (agentId: string): Promise<{
-    alert_rules: import("./types").AlertRuleRow[];
+    alert_rules: AlertRuleRow[];
     app_block_rules: AppBlockRule[];
     internet_blocked: boolean;
   }> => get(`/agents/${agentId}/effective-rules`),

@@ -8,7 +8,7 @@ import Button from "@cloudscape-design/components/button";
 import ButtonDropdown from "@cloudscape-design/components/button-dropdown";
 import Link from "@cloudscape-design/components/link";
 import { useCollection } from "@cloudscape-design/collection-hooks";
-import { api, apiUrl } from "../../lib/api";
+import { api } from "../../lib/api";
 import { fmtDateTime } from "../../lib/utils";
 
 interface URLEvent {
@@ -16,7 +16,6 @@ interface URLEvent {
   url: string;
   browser: string;
   timestamp: string;
-  category_key?: string | null;
   category?: string | null;
 }
 
@@ -73,56 +72,37 @@ export function UrlsTab({ agentId }: UrlsTabProps) {
   const fetchUrls = useCallback(async () => {
     try {
       setLoading(true);
-      const response = await fetch(apiUrl(`/agents/${agentId}/urls?limit=500`), {
-        credentials: "include",
-      });
+      const [urls, top, cats] = await Promise.all([
+        api.urls(agentId, { limit: 500 }),
+        api.topUrls(agentId, { limit: 20 }),
+        api.agentUrlCategoryStats(agentId, { limit: 12 }),
+      ]);
 
-      if (response.ok) {
-        const data = await response.json();
-        const rows = Array.isArray(data?.rows) ? data.rows : Array.isArray(data) ? data : [];
-        setItems(
-          rows.map((row: Record<string, unknown>) => ({
-            id: Number(row.id ?? 0),
-            url: String(row.url ?? ""),
-            browser: String(row.browser ?? "—"),
-            timestamp: String(row.timestamp ?? row.ts ?? ""),
-            category_key: (row.category_key ?? null) as string | null,
-            category: (row.category ?? null) as string | null,
-          }))
-        );
-      }
+      setItems(
+        urls.rows.map((row) => ({
+          id: row.id ?? 0,
+          url: row.url ?? "",
+          browser: row.browser ?? "—",
+          timestamp: row.ts ?? "",
+          category: row.category ?? null,
+        })),
+      );
 
-      const topRes = await fetch(apiUrl(`/agents/${agentId}/top-urls?limit=20`), {
-        credentials: "include",
-      });
-      if (topRes.ok) {
-        const topData = await topRes.json();
-        const topRows = Array.isArray(topData?.rows) ? topData.rows : [];
-        setTopItems(
-          topRows.map((row: Record<string, unknown>) => ({
-            url: String(row.url ?? ""),
-            visit_count: Number(row.visit_count ?? 0),
-            last_ts: String(row.last_ts ?? ""),
-          }))
-        );
-      }
+      setTopItems(
+        top.rows.map((row) => ({
+          url: row.url ?? "",
+          visit_count: row.visit_count ?? 0,
+          last_ts: row.last_ts ?? "",
+        })),
+      );
 
-      const catRes = await fetch(apiUrl(`/agents/${agentId}/url-category-stats?limit=12`), {
-        credentials: "include",
-      });
-      if (catRes.ok) {
-        const catData = await catRes.json();
-        const catRows = Array.isArray(catData?.rows) ? catData.rows : [];
-        setCategoryStats(
-          catRows.map((row: Record<string, unknown>) => ({
-            category: String(row.category ?? ""),
-            visit_count: Number(row.visit_count ?? 0),
-            last_ts: String(row.last_ts ?? ""),
-          }))
-        );
-      } else {
-        setCategoryStats([]);
-      }
+      setCategoryStats(
+        (cats.rows ?? []).map((row) => ({
+          category: row.category ?? "",
+          visit_count: row.visit_count ?? 0,
+          last_ts: row.last_ts ?? "",
+        })),
+      );
     } catch (err) {
       console.error("Failed to fetch URLs:", err);
     } finally {

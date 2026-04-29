@@ -16,7 +16,7 @@ import {
 } from "../../lib/cards-config";
 import { FullPageHeader } from "./FullPageHeader";
 import { TableEmptyState, TableNoMatchState } from "../common/CollectionStates";
-import { apiUrl } from "../../lib/api";
+import { api } from "../../lib/api";
 
 interface AgentCardProps {
   agents: Record<string, Agent>;
@@ -81,33 +81,33 @@ export function AgentCard({
       // Do this for offline agents too so cards stay aligned.
       const hasLiveWindow = Boolean(liveStatus[id]?.window);
       if (!hasLiveWindow && fallbackLastWindow[id] == null) {
-        fetch(apiUrl(`/agents/${id}/windows?limit=1`), { credentials: "include" })
-          .then((r) => (r.ok ? r.json() : null))
-          .then((data) => {
-            if (cancelled || !data) return;
-            const row = Array.isArray(data?.rows) ? data.rows[0] : Array.isArray(data) ? data[0] : null;
-            const title = row?.window_title ?? row?.title ?? null;
+        api
+          .windows(id, { limit: 1, offset: 0 })
+          .then(({ rows }) => {
+            if (cancelled) return;
+            const title = rows[0]?.title;
             if (typeof title === "string" && title.trim() !== "") {
               setFallbackLastWindow((prev) => (prev[id] ? prev : { ...prev, [id]: title }));
             }
           })
-          .catch(() => {});
+          .catch(() => { /* ignore */ });
       }
 
       // Seed uptime from stored agent info if we haven't received an agent_info WS event yet.
       const hasLiveUptime = agentInfo[id]?.uptime_secs != null;
       if (agent.online && !hasLiveUptime && fallbackUptime[id] == null) {
-        fetch(apiUrl(`/agents/${id}/info`), { credentials: "include" })
-          .then((r) => (r.ok ? r.json() : null))
-          .then((data) => {
-            if (cancelled || !data) return;
-            const info = (data?.info ?? data) as AgentInfo | null;
+        api
+          .agentInfo(id)
+          .then(({ info }) => {
+            if (cancelled) return;
             const secs = info?.uptime_secs;
             if (typeof secs === "number" && secs >= 0) {
-              setFallbackUptime((prev) => (prev[id] ? prev : { ...prev, [id]: { secs, receivedAtMs: Date.now() } }));
+              setFallbackUptime((prev) =>
+                prev[id] ? prev : { ...prev, [id]: { secs, receivedAtMs: Date.now() } },
+              );
             }
           })
-          .catch(() => {});
+          .catch(() => { /* ignore */ });
       }
     }
 

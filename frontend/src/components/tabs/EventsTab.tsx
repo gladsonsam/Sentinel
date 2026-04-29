@@ -80,10 +80,9 @@ function AlertEventsTable({
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(apiUrl(`/agents/${agentId}/alert-rule-events?limit=500`), {
-        credentials: "include",
-      });
-      const data = res.ok ? await res.json() : { rows: [] };
+      const data = await api.agentAlertRuleEvents(agentId, { limit: 500, offset: 0 }).catch(() => ({
+        rows: [],
+      }));
       setItems(
         (data.rows ?? []).map((r: Record<string, unknown>) => ({
           id: Number(r.id ?? 0),

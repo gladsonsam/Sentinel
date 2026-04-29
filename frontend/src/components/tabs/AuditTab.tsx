@@ -8,7 +8,7 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import Table from "@cloudscape-design/components/table";
 import TextFilter from "@cloudscape-design/components/text-filter";
 import { useCollection } from "@cloudscape-design/collection-hooks";
-import { apiUrl } from "../../lib/api";
+import { api } from "../../lib/api";
 import { fmtDateTime } from "../../lib/utils";
 import { AuditStatusBadge } from "../common/AuditStatusBadge";
 
@@ -57,16 +57,11 @@ export function AuditTab({
   const fetchAudit = useCallback(async () => {
     try {
       setLoading(true);
-      const params = new URLSearchParams();
-      params.set("limit", "500");
-      if (agentId) params.set("agent_id", agentId);
-      if (statusFilter.value !== "all") params.set("status", statusFilter.value!);
-      const response = await fetch(apiUrl(`/audit?${params.toString()}`), {
-        credentials: "include",
+      const data = await api.audit({
+        limit: 500,
+        agent_id: agentId,
+        status: statusFilter.value !== "all" ? statusFilter.value : undefined,
       });
-      if (!response.ok) return;
-
-      const data = await response.json();
       const list = Array.isArray(data?.rows) ? data.rows : [];
       setRows(
         list.map((r: Record<string, unknown>) => ({

@@ -8,7 +8,7 @@ import Spinner from "@cloudscape-design/components/spinner";
 import KeyValuePairs from "@cloudscape-design/components/key-value-pairs";
 import ExpandableSection from "@cloudscape-design/components/expandable-section";
 import ProgressBar from "@cloudscape-design/components/progress-bar";
-import { apiUrl } from "../../lib/api";
+import { api } from "../../lib/api";
 import type { AgentInfo } from "../../lib/types";
 import { copyToClipboard } from "../../lib/utils";
 
@@ -103,18 +103,9 @@ export function SpecsTab({ agentId, cachedInfo, agentOnline = true }: SpecsTabPr
     const fetchInfo = async () => {
       try {
         setLoading(true);
-        const response = await fetch(apiUrl(`/agents/${agentId}/info`), {
-          credentials: "include",
-        });
-        
-        if (response.ok) {
-          const data = await response.json();
-          const next = (data?.info ?? data ?? null) as AgentInfo | null;
-          setInfo(next);
-          setReceivedAtMs(Date.now());
-        } else {
-          setError("Failed to load system information");
-        }
+        const { info: next } = await api.agentInfo(agentId);
+        setInfo(next ?? null);
+        setReceivedAtMs(Date.now());
       } catch (err) {
         setError("Error fetching system information");
         console.error(err);

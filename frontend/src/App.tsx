@@ -14,7 +14,7 @@ import { useWebSocket } from "./hooks/useWebSocket";
 import { useAgents } from "./hooks/useAgents";
 import { useTheme } from "./hooks/useTheme";
 import { useNotifications } from "./hooks/useNotifications";
-import { api, apiUrl, setDashboardCsrfToken } from "./lib/api";
+import { api, setDashboardCsrfToken } from "./lib/api";
 import type {
   Agent,
   AgentInfo,
@@ -471,31 +471,21 @@ export function App() {
 
   const checkAuth = useCallback(async () => {
     try {
-      const response = await fetch(apiUrl("/auth/status"), {
-        credentials: "include",
-      });
-      if (response.ok) {
-        fetch(apiUrl("/me"), { credentials: "include" })
-          .then((r) => (r.ok ? r.json() : null))
-          .then((data) => {
-            setMe(data);
-            if (data && typeof data.csrf_token === "string" && data.csrf_token.length > 0) {
-              setDashboardCsrfToken(data.csrf_token);
-            } else {
-              setDashboardCsrfToken(null);
-            }
-            setAuthenticated(true);
-          })
-          .catch(() => {
-            setMe(null);
-            setDashboardCsrfToken(null);
-            setAuthenticated(false);
-          });
-      } else {
+      const st = await api.authStatus();
+      if (!st?.authenticated) {
         setMe(null);
         setDashboardCsrfToken(null);
         setAuthenticated(false);
+        return;
       }
+      const data = await api.me().catch(() => null);
+      setMe(data);
+      if (data && typeof data.csrf_token === "string" && data.csrf_token.length > 0) {
+        setDashboardCsrfToken(data.csrf_token);
+      } else {
+        setDashboardCsrfToken(null);
+      }
+      setAuthenticated(true);
     } catch {
       setAuthenticated(false);
       setMe(null);
@@ -734,10 +724,7 @@ export function App() {
 
   const handleLogout = async () => {
     try {
-      await fetch(apiUrl("/logout"), {
-        method: "POST",
-        credentials: "include",
-      });
+      await api.logout();
     } catch (err) {
       console.error("Logout error:", err);
     }

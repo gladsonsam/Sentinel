@@ -1,0 +1,112 @@
+import type { TabKey, DashboardRole, Agent, AgentInfo } from "../../lib/types";
+import type { Session } from "../../lib/session-aggregator";
+import { SpecsTab } from "../tabs/SpecsTab";
+import { ScreenTab } from "../tabs/ScreenTab";
+import { KeysTab } from "../tabs/KeysTab";
+import { WindowsTab } from "../tabs/WindowsTab";
+import { UrlsTab } from "../tabs/UrlsTab";
+import { EventsTab } from "../tabs/EventsTab";
+import { FilesTab } from "../tabs/FilesTab";
+import { AgentLogsTab } from "../tabs/AgentLogsTab";
+import { AnalyticsTab } from "../tabs/AnalyticsTab";
+import { SoftwareTab } from "../tabs/SoftwareTab";
+import { ScriptsTab } from "../tabs/ScriptsTab";
+import { AgentSettingsTab } from "../AgentSettingsTab";
+import { ControlTab } from "../tabs/ControlTab";
+import { ActivityTimeline } from "../timeline/ActivityTimeline";
+
+export interface AgentDetailTabContentProps {
+  tab: TabKey;
+  agent: Agent;
+  dashboardRole: DashboardRole | null;
+  sendWsMessage: (msg: unknown) => void;
+  onNotifyInfo: (header: string, content?: string) => void;
+  onNotifyError: (header: string, content?: string) => void;
+  isAdmin: boolean;
+  onOpenAgentGroups?: () => void;
+  resolvedInfo: AgentInfo | null;
+  sessions: Session[];
+  activityLoading: boolean;
+  onRefreshActivity: () => void;
+  highlightTimestamp: string | null;
+  onViewTimelineFromAlerts: (timestamp: string) => void;
+}
+
+export function AgentDetailTabContent({
+  tab,
+  agent,
+  dashboardRole,
+  sendWsMessage,
+  onNotifyInfo,
+  onNotifyError,
+  isAdmin,
+  onOpenAgentGroups,
+  resolvedInfo,
+  sessions,
+  activityLoading,
+  onRefreshActivity,
+  highlightTimestamp,
+  onViewTimelineFromAlerts,
+}: AgentDetailTabContentProps) {
+  switch (tab) {
+    case "live":
+      return (
+        <ScreenTab agentId={agent.id} sendWsMessage={sendWsMessage} dashboardRole={dashboardRole} />
+      );
+    case "activity":
+      return (
+        <ActivityTimeline
+          sessions={sessions}
+          loading={activityLoading}
+          onRefresh={onRefreshActivity}
+          highlightTimestamp={highlightTimestamp}
+        />
+      );
+    case "specs":
+      return <SpecsTab agentId={agent.id} cachedInfo={resolvedInfo} agentOnline={agent.online} />;
+    case "software":
+      return (
+        <SoftwareTab agentId={agent.id} onNotifyInfo={onNotifyInfo} onNotifyError={onNotifyError} />
+      );
+    case "scripts":
+      return <ScriptsTab agentId={agent.id} dashboardRole={dashboardRole} />;
+    case "keys":
+      return <KeysTab agentId={agent.id} />;
+    case "windows":
+      return <WindowsTab agentId={agent.id} />;
+    case "urls":
+      return <UrlsTab agentId={agent.id} />;
+    case "analytics":
+      return <AnalyticsTab agentId={agent.id} />;
+    case "alerts":
+      return (
+        <EventsTab agentId={agent.id} onViewTimeline={onViewTimelineFromAlerts} />
+      );
+    case "files":
+      return <FilesTab agentId={agent.id} sendWsMessage={sendWsMessage} />;
+    case "logs":
+      return <AgentLogsTab agentId={agent.id} />;
+    case "control":
+      return (
+        <ControlTab
+          agentId={agent.id}
+          agentName={agent.name}
+          agentOnline={agent.online}
+          isAdmin={isAdmin}
+        />
+      );
+    case "settings":
+      return (
+        <AgentSettingsTab
+          agentId={agent.id}
+          agentName={agent.name}
+          agentOnline={agent.online}
+          agentVersion={resolvedInfo?.agent_version ?? null}
+          isAdmin={isAdmin}
+          onOpenAgentGroups={onOpenAgentGroups}
+        />
+      );
+    default:
+      return null;
+  }
+}

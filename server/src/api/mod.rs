@@ -14,7 +14,6 @@ mod auto_update;
 mod groups_and_rules;
 mod helpers;
 mod local_ui;
-mod network_policy;
 mod pagination;
 mod retention;
 mod settings;
