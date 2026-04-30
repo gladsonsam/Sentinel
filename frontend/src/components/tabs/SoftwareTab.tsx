@@ -107,6 +107,8 @@ export function SoftwareTab({ agentId, onNotifyInfo, onNotifyError }: SoftwareTa
     }
   };
 
+  const canRefresh = !loading || collecting;
+
   const filteredRows = useMemo(() => {
     const q = filteringText.trim().toLowerCase();
     if (!q) return rows;
@@ -150,14 +152,19 @@ export function SoftwareTab({ agentId, onNotifyInfo, onNotifyError }: SoftwareTa
         variant="h2"
         description="Installed programs from the agent’s Windows registry (Uninstall keys). Refreshed daily while online, or on demand below."
         actions={
-          <Button
-            variant="primary"
-            loading={collecting}
-            disabled={loading && !collecting}
-            onClick={() => void onCollect()}
-          >
-            Refresh
-          </Button>
+          canRefresh ? (
+            <Button
+              variant="primary"
+              loading={collecting}
+              onClick={() => void onCollect()}
+            >
+              Refresh
+            </Button>
+          ) : (
+            <Box fontSize="body-s" color="text-body-secondary">
+              Loading…
+            </Box>
+          )
         }
       >
         Installed software

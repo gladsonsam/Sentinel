@@ -18,6 +18,7 @@ use std::sync::Arc;
 use axum::extract::ws::WebSocket;
 use axum::{
     extract::{ws::Message, Query, State, WebSocketUpgrade},
+    http::HeaderMap,
     http::StatusCode,
     response::IntoResponse,
 };
@@ -55,9 +56,23 @@ pub struct AgentQuery {
 pub async fn handler(
     ws: WebSocketUpgrade,
     Query(params): Query<AgentQuery>,
+    headers: HeaderMap,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    let provided = params.secret.as_deref().unwrap_or("").trim();
+    // Backward compatible auth sources:
+    // - legacy: `?secret=...`
+    // - preferred: `Authorization: Bearer ...`
+    let provided = params.secret.as_deref().unwrap_or("").trim().to_string();
+    let provided = if !provided.is_empty() {
+        provided
+    } else {
+        headers
+            .get(axum::http::header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.strip_prefix("Bearer "))
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default()
+    };
     let name = params
         .name
         .unwrap_or_else(|| "unknown".into())
@@ -66,7 +81,7 @@ pub async fn handler(
         .take(MAX_AGENT_NAME_CHARS)
         .collect::<String>();
 
-    if !agent_ws_authorized(&state, &name, provided).await {
+    if !agent_ws_authorized(&state, &name, provided.as_str()).await {
         // Do NOT log the secret itself; only log whether it was provided.
         warn!(
             agent_name = %name,

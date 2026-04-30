@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Header from "@cloudscape-design/components/header";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import ButtonDropdown from "@cloudscape-design/components/button-dropdown";
@@ -16,9 +16,21 @@ export type AgentAction =
   | "request-info"
   | "wake-lan";
 
+type PageHeaderMenuAction =
+  | AgentAction
+  | "help"
+  | "copy-agent-id"
+  | "copy-agent-name"
+  | "copy-hostname";
+
 interface PageHeaderProps {
   agent: Agent;
   liveStatus?: AgentLiveStatus;
+  infoHostname?: string | null;
+  /** Epoch ms when the user clicked "Refresh info". */
+  infoRequestedAtMs?: number | null;
+  /** Last `agent_info.ts` (unix seconds) we’ve seen for this agent. */
+  infoUpdatedTsSecs?: number | null;
   /**
    * If provided, show an "Idle / Away" indicator even when we haven't seen a live AFK WS event.
    * This is derived from stored telemetry (e.g. last activity_log row).
@@ -32,6 +44,9 @@ interface PageHeaderProps {
 export function PageHeader({
   agent,
   liveStatus,
+  infoHostname,
+  infoRequestedAtMs,
+  infoUpdatedTsSecs,
   inferredIdleSeconds,
   onOpenHelp,
   onRunAction,
@@ -48,11 +63,6 @@ export function PageHeader({
     const t = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(t);
   }, [agent.online, liveStatus?.activity, liveStatus?.idleSinceMs, inferredIdleSeconds]);
-
-  const handleItemClick: ButtonDropdownProps["onItemClick"] = ({ detail }) => {
-    const id = detail.id as AgentAction;
-    onRunAction(id);
-  };
 
   const isAfk = agent.online && liveStatus?.activity === "afk";
   /** Live "active" from WS must win over a stale activity_log–based inference. */
@@ -82,30 +92,44 @@ export function PageHeader({
   const canShutdown = agent.online;
   const canRequestInfo = agent.online;
 
-  const actionItems: ButtonDropdownProps.Item[] = [
-    // Only show Wake when it's actually useful (offline). Avoid a disabled/grey button.
-    ...(!agent.online
-      ? ([
-          { id: "wake-lan", text: "Wake on LAN" } satisfies ButtonDropdownProps.Item,
-        ] as ButtonDropdownProps.Item[])
-      : []),
-    ...(canLock
-      ? ([
-          { id: "lock-host", text: "Lock computer" } satisfies ButtonDropdownProps.Item,
-        ] as ButtonDropdownProps.Item[])
-      : []),
-    ...(canRestart
-      ? ([
-          { id: "restart-host", text: "Restart computer" } satisfies ButtonDropdownProps.Item,
-        ] as ButtonDropdownProps.Item[])
-      : []),
-    ...(canShutdown
-      ? ([
-          { id: "shutdown-host", text: "Shutdown computer" } satisfies ButtonDropdownProps.Item,
-        ] as ButtonDropdownProps.Item[])
-      : []),
-    { id: "help", text: "Open help" },
-  ];
+  const showRequested =
+    infoRequestedAtMs != null && nowMs - infoRequestedAtMs < 15_000;
+
+  const infoUpdatedLine = useMemo(() => {
+    if (!infoUpdatedTsSecs) return null;
+    const updatedMs = infoUpdatedTsSecs * 1000;
+    const ageSec = Math.max(0, Math.floor((nowMs - updatedMs) / 1000));
+    if (ageSec < 10) return "Updated just now";
+    if (ageSec < 60) return `Updated ${ageSec}s ago`;
+    const m = Math.floor(ageSec / 60);
+    return `Updated ${m}m ago`;
+  }, [infoUpdatedTsSecs, nowMs]);
+
+  const actionItems: ButtonDropdownProps.ItemOrGroup[] = useMemo(() => {
+    const canCopy = typeof navigator !== "undefined" && Boolean(navigator.clipboard?.writeText);
+    const copyItems: ButtonDropdownProps.Item[] = [
+      ...(canCopy ? ([{ id: "copy-agent-id", text: "Copy agent ID" }] as const) : []),
+      ...(canCopy ? ([{ id: "copy-agent-name", text: "Copy agent name" }] as const) : []),
+      ...(canCopy && infoHostname ? ([{ id: "copy-hostname", text: "Copy hostname" }] as const) : []),
+    ];
+
+    const powerItems: ButtonDropdownProps.Item[] = [
+      ...(!agent.online ? [{ id: "wake-lan", text: "Wake on LAN" } as const] : []),
+      ...(canLock ? [{ id: "lock-host", text: "Lock computer" } as const] : []),
+    ];
+
+    const dangerItems: ButtonDropdownProps.Item[] = [
+      ...(canRestart ? [{ id: "restart-host", text: "Restart computer" } as const] : []),
+      ...(canShutdown ? [{ id: "shutdown-host", text: "Shutdown computer" } as const] : []),
+    ];
+
+    const out: ButtonDropdownProps.ItemOrGroup[] = [];
+    if (copyItems.length) out.push({ text: "Copy", items: copyItems });
+    if (powerItems.length) out.push({ text: "Actions", items: powerItems });
+    if (dangerItems.length) out.push({ text: "Danger zone", items: dangerItems });
+    out.push({ id: "help", text: "Open help" });
+    return out;
+  }, [agent.online, canLock, canRestart, canShutdown, infoHostname]);
 
   return (
     <Header
@@ -114,6 +138,11 @@ export function PageHeader({
         <SpaceBetween size="xs">
           {idleLine}
           <div>{connectedText}</div>
+          {showRequested ? (
+            <StatusIndicator type="in-progress">Requested fresh info…</StatusIndicator>
+          ) : infoUpdatedLine ? (
+            <StatusIndicator type="success">{infoUpdatedLine}</StatusIndicator>
+          ) : null}
         </SpaceBetween>
       }
       actions={
@@ -130,12 +159,26 @@ export function PageHeader({
           <ButtonDropdown
             items={actionItems}
             onItemClick={(e) => {
-              const id = String(e.detail.id);
+              const id = String(e.detail.id) as PageHeaderMenuAction;
               if (id === "help") {
                 onOpenHelp();
                 return;
               }
-              handleItemClick(e);
+
+              if (id === "copy-agent-id") {
+                void navigator.clipboard?.writeText(agent.id).catch(() => {});
+                return;
+              }
+              if (id === "copy-agent-name") {
+                void navigator.clipboard?.writeText(agent.name).catch(() => {});
+                return;
+              }
+              if (id === "copy-hostname") {
+                void navigator.clipboard?.writeText(String(infoHostname ?? "")).catch(() => {});
+                return;
+              }
+
+              onRunAction(id);
             }}
             variant="normal"
           />

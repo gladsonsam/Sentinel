@@ -4,17 +4,13 @@ import Button from "@cloudscape-design/components/button";
 import ButtonDropdown from "@cloudscape-design/components/button-dropdown";
 import type { ButtonDropdownProps } from "@cloudscape-design/components/button-dropdown";
 
-const BULK_ACTION_BASE: ButtonDropdownProps.ItemOrGroup[] = [
-  { id: "wake", text: "Wake selected" },
-  { id: "script", text: "Run script on selected" },
-  { id: "lock", text: "Lock selected" },
-  { id: "restart", text: "Restart selected" },
-  { id: "shutdown", text: "Shutdown selected" },
-];
-
 interface FullPageHeaderProps {
   totalAgents: number;
   selectedCount: number;
+  selectedHasOnline?: boolean;
+  selectedHasOffline?: boolean;
+  selectedOnlineCount?: number;
+  selectedOfflineCount?: number;
   onRefresh: () => void;
   onWakeSelected: () => void;
   onBulkScript: () => void;
@@ -32,6 +28,10 @@ interface FullPageHeaderProps {
 export function FullPageHeader({
   totalAgents,
   selectedCount,
+  selectedHasOnline = true,
+  selectedHasOffline = true,
+  selectedOnlineCount = 0,
+  selectedOfflineCount = 0,
   onRefresh,
   onWakeSelected,
   onBulkScript,
@@ -42,16 +42,20 @@ export function FullPageHeader({
   onBulkAddToGroup,
   onAddAgent,
 }: FullPageHeaderProps) {
-  const bulkItems: ButtonDropdownProps.ItemOrGroup[] =
-    [
-      ...BULK_ACTION_BASE,
-      ...(onBulkAddToGroup != null ? [{ id: "add_group", text: "Add selected to group" }] : []),
-      ...(onDeleteSelected != null
-        ? [
-            { id: "delete", text: "Delete selected (forget)" },
-          ]
-        : []),
-    ];
+  const bulkItems: ButtonDropdownProps.ItemOrGroup[] = [
+    ...(selectedHasOffline ? [{ id: "wake", text: `Wake offline (${selectedOfflineCount})` }] : []),
+    // Only show online-required actions when they can succeed on at least one selection.
+    ...(selectedHasOnline
+      ? ([
+          { id: "script", text: `Run script (${selectedOnlineCount})` },
+          { id: "lock", text: `Lock (${selectedOnlineCount})` },
+          { id: "restart", text: `Restart (${selectedOnlineCount})` },
+          { id: "shutdown", text: `Shutdown (${selectedOnlineCount})` },
+        ] as ButtonDropdownProps.ItemOrGroup[])
+      : []),
+    ...(onBulkAddToGroup != null ? [{ id: "add_group", text: "Add selected to group" }] : []),
+    ...(onDeleteSelected != null ? [{ id: "delete", text: "Delete selected (forget)" }] : []),
+  ];
 
   const onBulkActionClick: ButtonDropdownProps["onItemClick"] = ({ detail }) => {
     switch (detail.id) {

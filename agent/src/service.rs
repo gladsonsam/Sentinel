@@ -9,7 +9,7 @@ use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::LUID;
 use windows::Win32::Foundation::{CloseHandle, LocalFree, HANDLE, HLOCAL};
 use windows::Win32::Security::Authorization::{
-    ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
 };
 use windows::Win32::Security::{
     AdjustTokenPrivileges, DuplicateTokenEx, LookupPrivilegeValueW, SecurityImpersonation,
@@ -17,7 +17,7 @@ use windows::Win32::Security::{
     TOKEN_ADJUST_DEFAULT, TOKEN_ADJUST_PRIVILEGES, TOKEN_ADJUST_SESSIONID, TOKEN_ASSIGN_PRIMARY,
     TOKEN_DUPLICATE, TOKEN_PRIVILEGES, TOKEN_QUERY, SECURITY_ATTRIBUTES,
 };
-use windows::core::w;
+use windows::Win32::Security::{GetTokenInformation, TokenUser};
 use windows::Win32::System::Environment::{CreateEnvironmentBlock, DestroyEnvironmentBlock};
 use windows::Win32::System::RemoteDesktop::{WTSGetActiveConsoleSessionId, WTSQueryUserToken};
 use windows::Win32::System::Threading::{
@@ -116,9 +116,17 @@ fn create_sentinel_service_pipe_server(
     use tokio::net::windows::named_pipe::ServerOptions;
 
     let mut p_sd = PSECURITY_DESCRIPTOR(std::ptr::null_mut());
+    let user_sid = active_console_user_sid_string();
+    let sddl = if let Some(ref sid) = user_sid {
+        // SYSTEM + Administrators full control; active console user read/write.
+        format!("D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;{sid})")
+    } else {
+        warn!("Service pipe: could not resolve active console user SID; restricting pipe to admins only.");
+        "D:(A;;GA;;;SY)(A;;GA;;;BA)".to_string()
+    };
     unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            w!("D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)"),
+            PCWSTR(to_wide_z(&sddl).as_ptr()),
             SDDL_REVISION_1,
             &mut p_sd,
             None,
@@ -155,9 +163,16 @@ fn create_agent_ipc_pipe_server(
     use tokio::net::windows::named_pipe::ServerOptions;
 
     let mut p_sd = PSECURITY_DESCRIPTOR(std::ptr::null_mut());
+    let user_sid = active_console_user_sid_string();
+    let sddl = if let Some(ref sid) = user_sid {
+        format!("D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;{sid})")
+    } else {
+        warn!("Agent IPC pipe: could not resolve active console user SID; restricting pipe to admins only.");
+        "D:(A;;GA;;;SY)(A;;GA;;;BA)".to_string()
+    };
     unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
-            w!("D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)"),
+            PCWSTR(to_wide_z(&sddl).as_ptr()),
             SDDL_REVISION_1,
             &mut p_sd,
             None,
@@ -185,6 +200,70 @@ fn create_agent_ipc_pipe_server(
     }
 
     server
+}
+
+fn active_console_user_sid_string() -> Option<String> {
+    use std::ffi::c_void;
+
+    let session = unsafe { WTSGetActiveConsoleSessionId() };
+    if session == u32::MAX {
+        return None;
+    }
+
+    let mut token = HANDLE::default();
+    unsafe { WTSQueryUserToken(session, &mut token) }.ok()?;
+
+    // Query TokenUser to get the SID.
+    let mut needed: u32 = 0;
+    unsafe {
+        let _ = GetTokenInformation(
+            token,
+            TokenUser,
+            None,
+            0,
+            &mut needed as *mut u32,
+        );
+    }
+    if needed == 0 {
+        let _ = unsafe { CloseHandle(token) };
+        return None;
+    }
+
+    // Allocate and fetch.
+    let mut buf = vec![0u8; needed as usize];
+    let ok = unsafe {
+        GetTokenInformation(
+            token,
+            TokenUser,
+            Some(buf.as_mut_ptr() as *mut c_void),
+            needed,
+            &mut needed as *mut u32,
+        )
+        .is_ok()
+    };
+    let _ = unsafe { CloseHandle(token) };
+    if !ok {
+        return None;
+    }
+
+    // SAFETY: buffer contains TOKEN_USER.
+    let tu = unsafe { &*(buf.as_ptr() as *const windows::Win32::Security::TOKEN_USER) };
+    let mut sid_str: PWSTR = PWSTR::null();
+    let sid_ok = unsafe { ConvertSidToStringSidW(tu.User.Sid, &mut sid_str).is_ok() };
+    if !sid_ok || sid_str.is_null() {
+        return None;
+    }
+    // Convert wide string to Rust String.
+    let mut len = 0usize;
+    unsafe {
+        while *sid_str.0.add(len) != 0 {
+            len += 1;
+        }
+        let slice = std::slice::from_raw_parts(sid_str.0, len);
+        let s = String::from_utf16_lossy(slice);
+        let _ = LocalFree(Some(HLOCAL(sid_str.0 as *mut _)));
+        Some(s)
+    }
 }
 
 fn ensure_agent_ipc_pipe_server() -> tokio::net::windows::named_pipe::NamedPipeServer {
@@ -454,6 +533,31 @@ fn run_service() -> windows_service::Result<()> {
                                     Ok(Ok(())) => serde_json::json!({"ok": true}).to_string(),
                                     Ok(Err(e)) => serde_json::json!({"ok": false, "error": format!("{e:#}")}).to_string(),
                                     Err(e) => serde_json::json!({"ok": false, "error": format!("spawn_blocking: {e}")}).to_string(),
+                                }
+                            } else if action == "clear_log_file" {
+                                let kind = v.get("kind").and_then(|x| x.as_str()).unwrap_or("").trim().to_string();
+                                if kind.is_empty() {
+                                    serde_json::json!({"ok": false, "error": "clear_log_file requires kind"}).to_string()
+                                } else {
+                                    fn resolve(kind: &str) -> Result<std::path::PathBuf, String> {
+                                        match kind {
+                                            // Keep this allowlisted; do not accept arbitrary paths.
+                                            "local_agent" => Ok(crate::config::program_data_sentinel_dir().join("agent.log")),
+                                            "user_agent" => Ok(crate::config::program_data_sentinel_dir().join("user-agent.log")),
+                                            "service" => Ok(crate::config::program_data_sentinel_dir().join("service.log")),
+                                            _ => Err(format!("unknown log source: {kind}")),
+                                        }
+                                    }
+                                    match resolve(&kind) {
+                                        Err(e) => serde_json::json!({"ok": false, "error": e}).to_string(),
+                                        Ok(path) => {
+                                            // Truncate from the SYSTEM service so ownership/ACL doesn't block the user UI.
+                                            match std::fs::OpenOptions::new().write(true).truncate(true).open(&path) {
+                                                Ok(_) => serde_json::json!({"ok": true}).to_string(),
+                                                Err(e) => serde_json::json!({"ok": false, "error": format!("Could not clear log: {e}")}).to_string(),
+                                            }
+                                        }
+                                    }
                                 }
                             } else {
                                 serde_json::json!({

@@ -618,6 +618,7 @@ export function SettingsPage({
                     variant="h3"
                     actions={
                       <SpaceBetween direction="horizontal" size="xs">
+                      {enrollTokens.some((t) => (t.uses_remaining ?? 0) > 0) ? (
                         <Button
                           onClick={() => {
                             if (!confirm("Revoke all enrollment codes? Any unused codes will become unusable.")) return;
@@ -631,10 +632,11 @@ export function SettingsPage({
                               )
                               .finally(() => setEnrollTokensLoading(false));
                           }}
-                          disabled={enrollTokensLoading || enrollTokens.every((t) => (t.uses_remaining ?? 0) <= 0)}
+                          disabled={enrollTokensLoading}
                         >
                           Revoke all
                         </Button>
+                      ) : null}
                         <Button onClick={() => void loadEnrollmentTokens()} loading={enrollTokensLoading}>
                           Refresh
                         </Button>
@@ -858,20 +860,27 @@ export function SettingsPage({
                 <Button iconName="refresh" onClick={() => void refreshUrlCategorization()} loading={urlCatLoading}>
                   Refresh
                 </Button>
-                <Button onClick={() => setUrlOverridesOpen(true)} disabled={!(urlCatStatus?.settings.enabled ?? false)}>
-                  Manage overrides
-                </Button>
+                {urlCatStatus?.settings.enabled ? (
+                  <Button onClick={() => setUrlOverridesOpen(true)}>
+                    Manage overrides
+                  </Button>
+                ) : null}
                 <Button onClick={() => setCustomCatsOpen(true)}>
                   Custom categories
                 </Button>
-                <Button
-                  variant="primary"
-                  onClick={() => void urlCatUpdateNow()}
-                  loading={urlCatLoading}
-                  disabled={!(urlCatStatus?.settings.enabled ?? false)}
-                >
-                  Download/update now
-                </Button>
+                {urlCatStatus?.settings.enabled ? (
+                  <Button
+                    variant="primary"
+                    onClick={() => void urlCatUpdateNow()}
+                    loading={urlCatLoading}
+                  >
+                    Download/update now
+                  </Button>
+                ) : (
+                  <Box color="text-body-secondary" padding={{ top: "xs" }} fontSize="body-s">
+                    Enable URL categorization to download lists and manage overrides.
+                  </Box>
+                )}
               </SpaceBetween>
               <Box variant="small">
                 Data source: UT1 Blacklists (<Box variant="code">olbat/ut1-blacklists</Box>) licensed under Creative Commons

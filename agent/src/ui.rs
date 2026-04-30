@@ -532,14 +532,32 @@ fn read_log_file_tail(kind: String, max_kb: Option<u32>) -> Result<String, Strin
 /// Because the logger opens the file with `O_APPEND`, the next write will
 /// automatically seek to position 0 (the new EOF), so no null-byte gap appears.
 #[tauri::command]
-fn clear_log_file(kind: String) -> Result<(), String> {
+async fn clear_log_file(kind: String) -> Result<(), String> {
     let path = resolve_log_kind(kind.trim())?;
-    std::fs::OpenOptions::new()
+    let res = std::fs::OpenOptions::new()
         .write(true)
         .truncate(true)
         .open(&path)
-        .map(|_| ())
-        .map_err(|e| format!("Could not clear log: {e}"))
+        .map(|_| ());
+
+    match res {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            // If a log is owned by the LocalSystem service (e.g. `service.log`), the
+            // user-session settings UI may not have permission to truncate it.
+            // Fall back to asking the service over the existing updater pipe.
+            #[cfg(target_os = "windows")]
+            {
+                if e.kind() == std::io::ErrorKind::PermissionDenied {
+                    crate::updater_client::clear_log_file_via_service(kind.trim())
+                        .await
+                        .map_err(|e| format!("Could not clear log (via service): {e:#}"))?;
+                    return Ok(());
+                }
+            }
+            Err(format!("Could not clear log: {e}"))
+        }
+    }
 }
 
 /// Open the log file's parent folder in the OS file manager.

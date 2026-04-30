@@ -112,9 +112,19 @@ async fn main() -> anyhow::Result<()> {
     info!("Database ready.");
 
     // ── Dashboard users bootstrap ────────────────────────────────────────────
-    let allow_insecure_dashboard_open = read_env_or_file("ALLOW_INSECURE_DASHBOARD_OPEN")
+    let allow_insecure_dashboard_open_env = read_env_or_file("ALLOW_INSECURE_DASHBOARD_OPEN")
         .map(|v| parse_bool(&v))
         .unwrap_or(false);
+    let allow_insecure_dashboard_open = if cfg!(debug_assertions) {
+        allow_insecure_dashboard_open_env
+    } else {
+        if allow_insecure_dashboard_open_env {
+            tracing::warn!(
+                "Ignoring ALLOW_INSECURE_DASHBOARD_OPEN in release builds (insecure)."
+            );
+        }
+        false
+    };
 
     let admin_username = read_env_or_file("ADMIN_USERNAME")
         .filter(|s| !s.trim().is_empty())
@@ -522,7 +532,9 @@ fn cors_layer_from_env() -> CorsLayer {
     let raw = std::env::var("CORS_ORIGINS").unwrap_or_default();
     let raw = raw.trim();
     if raw.is_empty() {
-        return CorsLayer::permissive();
+        // Default: do not emit CORS headers. Browser cross-origin requests will be blocked.
+        // Production deployments should set CORS_ORIGINS explicitly.
+        return CorsLayer::new();
     }
 
     let origins: Vec<HeaderValue> = raw
@@ -533,7 +545,8 @@ fn cors_layer_from_env() -> CorsLayer {
         .collect();
 
     if origins.is_empty() {
-        return CorsLayer::permissive();
+        tracing::warn!("CORS_ORIGINS was set but no valid origins were parsed; CORS is disabled.");
+        return CorsLayer::new();
     }
 
     CorsLayer::new()

@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import ContentLayout from "@cloudscape-design/components/content-layout";
 import SegmentedControl from "@cloudscape-design/components/segmented-control";
 import SpaceBetween from "@cloudscape-design/components/space-between";
@@ -76,6 +76,17 @@ export function AgentDetailPage({
   const { sessions, loading, loadActivityData } = useAgentActivitySessions(agent.id, activeTab);
   const [pendingAction, setPendingAction] = useState<AgentAction | null>(null);
   const [confirmAction, setConfirmAction] = useState<AgentAction | null>(null);
+  const [infoRequestedAtMs, setInfoRequestedAtMs] = useState<number | null>(null);
+  const [infoUpdatedTsSecs, setInfoUpdatedTsSecs] = useState<number | null>(
+    typeof resolvedInfo?.ts === "number" ? resolvedInfo.ts : null,
+  );
+
+  useEffect(() => {
+    const ts = resolvedInfo?.ts;
+    if (typeof ts === "number" && Number.isFinite(ts)) {
+      setInfoUpdatedTsSecs(ts);
+    }
+  }, [resolvedInfo?.ts]);
 
   // Merge prop-based highlightTimestamp (from URL ?at=) with local state
   const effectiveHighlightTimestamp = timelineHighlight ?? highlightTimestamp;
@@ -108,12 +119,13 @@ export function AgentDetailPage({
 
       if (action === "request-info") {
         setPendingAction("request-info");
+        setInfoRequestedAtMs(Date.now());
         sendWsMessage({
           type: "control",
           agent_id: agent.id,
           cmd: { type: "RequestInfo" },
         });
-        onNotifyInfo("Requested system info", `Asked ${agent.name} to send fresh specs.`);
+        // Keep this quiet; the page header shows inline "Requested…" feedback.
         setTimeout(() => setPendingAction((prev) => (prev === "request-info" ? null : prev)), 800);
         return;
       }
@@ -292,6 +304,9 @@ export function AgentDetailPage({
           agent={agent}
           liveStatus={liveStatus}
           inferredIdleSeconds={inferredIdleSeconds}
+          infoHostname={resolvedInfo?.hostname ?? null}
+          infoRequestedAtMs={infoRequestedAtMs}
+          infoUpdatedTsSecs={infoUpdatedTsSecs}
           onOpenHelp={onOpenHelp}
           onRunAction={runAgentAction}
           pendingAction={pendingAction}

@@ -5,6 +5,7 @@ use std::time::Duration;
 use futures_util::{SinkExt, StreamExt};
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::time::{interval, MissedTickBehavior};
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message;
 use tracing::{info, warn};
 
@@ -26,8 +27,10 @@ fn reconnect_backoff_delay(attempt: u32) -> Duration {
     Duration::from_millis(capped.saturating_add(jitter_ms))
 }
 
-/// Build the full WebSocket URL, appending `?name=<agent_name>` and (optionally)
-/// `&secret=<agent_password>` for server-side agent authentication.
+/// Build the full WebSocket URL, appending `?name=<agent_name>`.
+///
+/// Agent authentication is sent in the WebSocket handshake `Authorization` header
+/// (not in the query string) to avoid leaking secrets via proxy/access logs.
 pub fn build_ws_url(cfg: &Config) -> String {
     let base = cfg.server_url.trim_end_matches('/');
     let mut url = base.to_string();
@@ -60,22 +63,19 @@ pub fn build_ws_url(cfg: &Config) -> String {
         utf8_percent_encode(v, SAFE).to_string()
     }
 
-    let mut first_param = !url.contains('?');
+    let first_param = !url.contains('?');
     if !cfg.agent_name.is_empty() {
         url.push(if first_param { '?' } else { '&' });
-        first_param = false;
         url.push_str("name=");
         url.push_str(&enc(cfg.agent_name.trim()));
-    }
-    if !cfg.agent_password.is_empty() {
-        url.push(if first_param { '?' } else { '&' });
-        url.push_str("secret=");
-        url.push_str(&enc(cfg.agent_password.trim()));
     }
     url
 }
 
 /// Redact `secret=...` query parameter so agent secrets don't leak via logs.
+///
+/// (Kept for backward compatibility with older URLs/logs; current versions do not
+/// place secrets in the query string.)
 pub fn redact_secret_from_ws_url(url: &str) -> String {
     let Some(secret_start) = url.find("secret=") else {
         return url.to_string();
@@ -180,7 +180,30 @@ pub async fn run_ws_client(
         set_status(&status, AgentStatus::Connecting);
         info!("WS connecting to {ws_url_for_log} …");
 
-        match tokio_tungstenite::connect_async(&ws_url).await {
+        let mut req = match ws_url.as_str().into_client_request() {
+            Ok(r) => r,
+            Err(e) => {
+                set_status(&status, AgentStatus::Error(format!("WS invalid URL: {e:#}")));
+                warn!("WS invalid URL: {ws_url_for_log} ({e:#})");
+                attempt = attempt.saturating_add(1);
+                let delay = reconnect_backoff_delay(attempt.max(1));
+                tokio::select! {
+                    _ = stop_rx.changed() => {},
+                    _ = tokio::time::sleep(delay) => {},
+                }
+                continue;
+            }
+        };
+
+        if !cfg.agent_password.trim().is_empty() {
+            // Prefer header-based auth so secrets don't end up in URLs/logs.
+            let v = format!("Bearer {}", cfg.agent_password.trim());
+            if let Ok(hv) = tokio_tungstenite::tungstenite::http::HeaderValue::from_str(&v) {
+                req.headers_mut().insert("authorization", hv);
+            }
+        }
+
+        match tokio_tungstenite::connect_async(req).await {
             Ok((ws_stream, resp)) => {
                 attempt = 0;
                 set_status(&status, AgentStatus::Connected);

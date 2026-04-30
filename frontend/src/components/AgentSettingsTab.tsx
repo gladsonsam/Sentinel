@@ -841,15 +841,16 @@ export function AgentSettingsTab({
               </Alert>
             )}
 
-            <Button
-              variant={isOutOfDate ? "primary" : "normal"}
-              disabled={!agentOnline || updNow}
-              loading={updNow}
-              onClick={triggerUpdateNow}
-            >
-              Update now
-            </Button>
-            {!agentOnline && (
+            {agentOnline ? (
+              <Button
+                variant={isOutOfDate ? "primary" : "normal"}
+                disabled={updNow}
+                loading={updNow}
+                onClick={triggerUpdateNow}
+              >
+                Update now
+              </Button>
+            ) : (
               <Box fontSize="body-s" color="text-body-secondary">
                 Agent is offline. Connect the agent to trigger updates.
               </Box>

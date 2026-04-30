@@ -279,6 +279,39 @@ pub async fn set_network_policy_via_service(
     Ok(())
 }
 
+/// Ask the LocalSystem service to truncate one of its log files (e.g. `service.log`).
+///
+/// This is needed because some logs are written/owned by the service and a normal
+/// user-session process may get "Access is denied" when trying to truncate them.
+pub async fn clear_log_file_via_service(kind: &str) -> Result<()> {
+    let kind = kind.trim();
+    if kind.is_empty() {
+        anyhow::bail!("missing log kind");
+    }
+    let mut client = connect_pipe().await?;
+    let req = pipe_request_line(serde_json::json!({
+        "action": "clear_log_file",
+        "kind": kind,
+    }));
+    client.write_all(req.as_bytes()).await?;
+    client.flush().await?;
+
+    let buf = read_updater_pipe_reply_line(&mut client).await?;
+    if buf.is_empty() {
+        anyhow::bail!("empty reply from service");
+    }
+    let v: serde_json::Value =
+        serde_json::from_slice(&buf).map_err(|e| anyhow::anyhow!("invalid JSON from service: {e}"))?;
+    if v.get("ok").and_then(|x| x.as_bool()) != Some(true) {
+        let err = v
+            .get("error")
+            .and_then(|x| x.as_str())
+            .unwrap_or("service returned ok=false");
+        anyhow::bail!("{err}");
+    }
+    Ok(())
+}
+
 /// Helper used by the agent when it knows it's going to be replaced.
 pub fn exit_for_update() -> ! {
     warn!("Exiting agent for update install.");

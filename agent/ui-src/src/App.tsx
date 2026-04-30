@@ -166,6 +166,7 @@ function PasswordGate({ onUnlock }: { onUnlock: () => void }) {
                   type="password"
                   placeholder="Password"
                   autoComplete="current-password"
+                  autoFocus
                 />
               </FormField>
               <Button variant="primary" disabled={checking || !pw} loading={checking} formAction="submit">
@@ -213,6 +214,7 @@ function SettingsPanel() {
   const [adoptMsg, setAdoptMsg] = useState<{ text: string; ok: boolean } | null>(null);
   const [discovered, setDiscovered] = useState<DiscoveredServer[]>([]);
   const [scanning, setScanning] = useState(false);
+  const serverUrlInputRef = useRef<HTMLInputElement | null>(null);
 
   const saveMsgTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -225,7 +227,7 @@ function SettingsPanel() {
   const [logAutoRefresh, setLogAutoRefresh] = useState(true);
   const [logClearing, setLogClearing] = useState(false);
   const [logClearMsg, setLogClearMsg] = useState<string | null>(null);
-  const logViewportRef = useRef<HTMLDivElement | null>(null);
+  const logViewportRef = useRef<HTMLTextAreaElement | null>(null);
   const logStickToBottomRef = useRef(true);
   const logInitialScrollDoneRef = useRef(false);
 
@@ -257,6 +259,12 @@ function SettingsPanel() {
       setLoading(false);
     });
   }, []);
+
+  useEffect(() => {
+    if (nav !== "connection") return;
+    // When opening settings, make it easy to type/paste immediately.
+    setTimeout(() => serverUrlInputRef.current?.focus(), 0);
+  }, [nav]);
 
   useEffect(() => {
     const win = getCurrentWebviewWindow();
@@ -344,7 +352,6 @@ function SettingsPanel() {
   }, [nav, logAutoRefresh, refreshLogs]);
 
   useEffect(() => {
-    if (!logAutoRefresh) return;
     const el = logViewportRef.current;
     if (!el) return;
 
@@ -355,8 +362,8 @@ function SettingsPanel() {
       return;
     }
 
-    // Only keep auto-scrolling if the user is already at bottom.
-    if (logStickToBottomRef.current) {
+    // Only keep auto-scrolling if auto-refresh is enabled AND the user is already at bottom.
+    if (logAutoRefresh && logStickToBottomRef.current) {
       el.scrollTop = el.scrollHeight;
     }
   }, [logText, logAutoRefresh]);
@@ -736,6 +743,7 @@ function SettingsPanel() {
                               onChange={({ detail }) => setConfig((c) => ({ ...c, server_url: detail.value }))}
                               placeholder="wss://host/ws/agent"
                               type="text"
+                              ref={serverUrlInputRef}
                             />
                           </FormField>
                           {discovered.length > 1 ? (
@@ -904,20 +912,22 @@ function SettingsPanel() {
                           </FormField>
                         </Container>
                       </div>
-                      <div
-                        ref={logViewportRef}
-                        className="sentinel-agent-log-viewport"
-                        style={{ flex: 1, minHeight: 0, overflowY: "auto" }}
-                        onScroll={() => {
-                          const el = logViewportRef.current;
-                          if (!el) return;
-                          const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-                          logStickToBottomRef.current = distanceFromBottom <= 8;
-                        }}
-                      >
-                        <pre className="sentinel-agent-log-pre">
-                          {logText || "Loading…"}
-                        </pre>
+                      <div className="sentinel-agent-log-viewport" style={{ flex: 1, minHeight: 0 }}>
+                        <textarea
+                          ref={logViewportRef}
+                          className="sentinel-agent-log-textarea"
+                          aria-label="Agent log output"
+                          value={logText || "Loading…"}
+                          readOnly
+                          spellCheck={false}
+                          wrap="off"
+                          onScroll={() => {
+                            const el = logViewportRef.current;
+                            if (!el) return;
+                            const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+                            logStickToBottomRef.current = distanceFromBottom <= 8;
+                          }}
+                        />
                       </div>
                     </div>
                   )}

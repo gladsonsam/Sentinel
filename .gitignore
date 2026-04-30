@@ -24,6 +24,12 @@ frontend/dist/
 frontend/.vite/
 *.tsbuildinfo
 
+# ── Agent UI (Tauri frontend) ────────────────────────────────────────────────
+agent/ui-src/node_modules/
+agent/ui-src/dist/
+agent/ui-src/.tmp/
+agent/ui-src/dist-ssr/
+
 # ── Server static (built dashboard bundle) ────────────────────────────────────
 server/static/
 

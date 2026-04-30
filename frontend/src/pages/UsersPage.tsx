@@ -560,17 +560,22 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
                                     Created {new Date(u.created_at).toLocaleString()}
                                   </Box>
                                   <div className="sentinel-users-manage-slot">
-                                    <ButtonDropdown
-                                      variant="primary"
-                                      disabled={!canManage}
-                                      items={rowActions()}
-                                      expandToViewport
-                                      onItemClick={({ detail }) => {
-                                        void runUserAction(u, detail.id);
-                                      }}
-                                    >
-                                      Manage
-                                    </ButtonDropdown>
+                                    {canManage ? (
+                                      <ButtonDropdown
+                                        variant="primary"
+                                        items={rowActions()}
+                                        expandToViewport
+                                        onItemClick={({ detail }) => {
+                                          void runUserAction(u, detail.id);
+                                        }}
+                                      >
+                                        Manage
+                                      </ButtonDropdown>
+                                    ) : (
+                                      <Box color="text-body-secondary" fontSize="body-s">
+                                        View only
+                                      </Box>
+                                    )}
                                   </div>
                                 </SpaceBetween>
                               </Box>
@@ -612,17 +617,22 @@ export function UsersPage({ onAccountUpdated }: UsersPageProps) {
                               id: "actions",
                               header: "",
                               cell: (u) => (
-                                <ButtonDropdown
-                                  variant="normal"
-                                  disabled={!canManage}
-                                  items={rowActions()}
-                                  expandToViewport
-                                  onItemClick={({ detail }) => {
-                                    void runUserAction(u, detail.id);
-                                  }}
-                                >
-                                  Manage
-                                </ButtonDropdown>
+                                canManage ? (
+                                  <ButtonDropdown
+                                    variant="normal"
+                                    items={rowActions()}
+                                    expandToViewport
+                                    onItemClick={({ detail }) => {
+                                      void runUserAction(u, detail.id);
+                                    }}
+                                  >
+                                    Manage
+                                  </ButtonDropdown>
+                                ) : (
+                                  <Box color="text-body-secondary" fontSize="body-s">
+                                    —
+                                  </Box>
+                                )
                               ),
                             },
                           ]}

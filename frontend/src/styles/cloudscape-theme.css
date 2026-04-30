@@ -36,6 +36,11 @@
   min-width: 0;
   max-width: 100%;
   box-sizing: border-box;
+  /* `body` uses `overflow: hidden` (see `index.css`), so the dashboard must provide its own
+     scroll container. Without this, long pages (e.g. logs) can become unscrollable. */
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
 }
 
 /* Stacked Flashbar “N notifications” pill: upstream sets word-break: break-word on the
@@ -806,6 +811,41 @@ a.sentinel-account-menu-version__pill:focus-visible {
 .sentinel-agent-card-block-details {
   background: color-mix(in srgb, var(--awsui-color-background-container-content) 88%, var(--sentinel-primary));
   border-color: color-mix(in srgb, var(--awsui-color-border-divider-default) 65%, var(--sentinel-primary));
+  /* Allow responsive layouts inside the block. */
+  container-type: inline-size;
+}
+
+.sentinel-agent-card-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.sentinel-agent-card-detail-col {
+  display: grid;
+  gap: 6px;
+}
+
+/* Only show the app-block column when the card is wide enough (desktop). */
+.sentinel-card-app-block-col {
+  display: none;
+}
+
+@container (min-width: 520px) {
+  .sentinel-agent-card-detail-grid {
+    grid-template-columns: 1.1fr 0.9fr;
+    align-items: start;
+  }
+  .sentinel-card-app-block-col {
+    display: block;
+  }
+  /* Keep the app summary compact so it doesn't grow card height. */
+  .sentinel-card-app-block {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
 }
 
 .sentinel-agent-card-block > [class*="awsui_header"] {
@@ -823,6 +863,22 @@ a.sentinel-account-menu-version__pill:focus-visible {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.sentinel-agent-card-power-btn {
+  border-radius: 10px;
+}
+
+.sentinel-card-app-block-count {
+  font-weight: 600;
+}
+
+.sentinel-card-app-block-examples {
+  color: var(--awsui-color-text-body-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Agent overview: compact cards on phones so ~3 cards fit in the viewport. */
@@ -2205,6 +2261,11 @@ button.sentinel-copyable-inline.sentinel-copyable-inline--flash {
 button.sentinel-overview-actions-pill {
   border-radius: 9999px !important;
   padding-inline: 14px !important;
+}
+
+/* Agents cards: consistent “Power actions” icon button */
+.sentinel-overview-root button[aria-label="Power actions"] {
+  border-radius: 9999px;
 }
 
 /* ── Timeline day separator ── */

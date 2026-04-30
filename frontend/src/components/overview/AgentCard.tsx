@@ -7,6 +7,7 @@ import Pagination from "@cloudscape-design/components/pagination";
 import Modal from "@cloudscape-design/components/modal";
 import Button from "@cloudscape-design/components/button";
 import SpaceBetween from "@cloudscape-design/components/space-between";
+import StatusIndicator from "@cloudscape-design/components/status-indicator";
 import { useCollection } from "@cloudscape-design/collection-hooks";
 import type { Agent, AgentInfo, AgentLiveStatus } from "../../lib/types";
 import {
@@ -17,6 +18,7 @@ import {
 import { FullPageHeader } from "./FullPageHeader";
 import { TableEmptyState, TableNoMatchState } from "../common/CollectionStates";
 import { api } from "../../lib/api";
+import type { AppBlockRule } from "../../lib/types";
 
 interface AgentCardProps {
   agents: Record<string, Agent>;
@@ -59,6 +61,12 @@ export function AgentCard({
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [fallbackLastWindow, setFallbackLastWindow] = useState<Record<string, string>>({});
   const [fallbackUptime, setFallbackUptime] = useState<Record<string, { secs: number; receivedAtMs: number }>>({});
+  const [internetBlockedByAgent, setInternetBlockedByAgent] = useState<
+    Record<string, { blocked: boolean; source: string | null; fetchedAtMs: number }>
+  >({});
+  const [appBlockByAgent, setAppBlockByAgent] = useState<
+    Record<string, { enabledCount: number; examples: string[]; fetchedAtMs: number }>
+  >({});
   const [powerModal, setPowerModal] = useState<null | { agentId: string }>(null);
   const [statusFilter, setStatusFilter] = useState<"all" | "connected" | "disconnected" | "afk">("all");
 
@@ -127,8 +135,21 @@ export function AgentCard({
       fallbackLastWindow: fallbackLastWindow[id],
       fallbackUptimeSecs: fallbackUptime[id]?.secs,
       fallbackUptimeReceivedAtMs: fallbackUptime[id]?.receivedAtMs,
+      internetBlocked: internetBlockedByAgent[id]?.blocked ?? null,
+      internetBlockedSource: internetBlockedByAgent[id]?.source ?? null,
+      appBlockEnabledCount: appBlockByAgent[id]?.enabledCount ?? null,
+      appBlockExamples: appBlockByAgent[id]?.examples ?? null,
     }));
-  }, [agents, liveStatus, agentInfo, agentInfoReceivedAtMs, fallbackLastWindow, fallbackUptime]);
+  }, [
+    agents,
+    liveStatus,
+    agentInfo,
+    agentInfoReceivedAtMs,
+    fallbackLastWindow,
+    fallbackUptime,
+    internetBlockedByAgent,
+    appBlockByAgent,
+  ]);
 
   const cardDefinition = useMemo(
     () =>
@@ -184,7 +205,110 @@ export function AgentCard({
     selection: {},
   });
 
+  // Load internet policy state for currently visible cards (cached, best-effort).
+  useEffect(() => {
+    let cancelled = false;
+    const visibleIds = items.map((i) => i.id);
+    const now = Date.now();
+    const needs = visibleIds.filter((id) => {
+      const prev = internetBlockedByAgent[id];
+      if (!prev) return true;
+      // Refresh periodically so cards stay accurate if rules are edited.
+      return now - prev.fetchedAtMs > 60_000;
+    });
+    if (needs.length === 0) return;
+
+    const run = async () => {
+      // Soft concurrency limit to avoid a thundering herd on first load.
+      const batchSize = 6;
+      for (let i = 0; i < needs.length; i += batchSize) {
+        const batch = needs.slice(i, i + batchSize);
+        const res = await Promise.allSettled(
+          batch.map(async (id) => {
+            const r = await api.agentInternetBlockedGet(id);
+            return { id, blocked: Boolean(r.blocked), source: (r.source ?? null) as string | null };
+          }),
+        );
+        if (cancelled) return;
+        setInternetBlockedByAgent((prev) => {
+          const next = { ...prev };
+          for (const r of res) {
+            if (r.status !== "fulfilled") continue;
+            next[r.value.id] = {
+              blocked: r.value.blocked,
+              source: r.value.source,
+              fetchedAtMs: Date.now(),
+            };
+          }
+          return next;
+        });
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [items, internetBlockedByAgent]);
+
+  // Load app-block rule summary for currently visible cards (cached, best-effort).
+  useEffect(() => {
+    let cancelled = false;
+    const visibleIds = items.map((i) => i.id);
+    const now = Date.now();
+    const needs = visibleIds.filter((id) => {
+      const prev = appBlockByAgent[id];
+      if (!prev) return true;
+      return now - prev.fetchedAtMs > 60_000;
+    });
+    if (needs.length === 0) return;
+
+    const summarize = (rules: AppBlockRule[]) => {
+      const enabled = rules.filter((r) => Boolean(r.enabled));
+      const examples = enabled
+        .map((r) => (r.name || r.exe_pattern || "").trim() || r.exe_pattern)
+        .filter((s) => s && s.length <= 80);
+      return { enabledCount: enabled.length, examples: Array.from(new Set(examples)).slice(0, 6) };
+    };
+
+    const run = async () => {
+      const batchSize = 4;
+      for (let i = 0; i < needs.length; i += batchSize) {
+        const batch = needs.slice(i, i + batchSize);
+        const res = await Promise.allSettled(
+          batch.map(async (id) => {
+            const r = await api.appBlockRulesList(id);
+            return { id, ...summarize(r.rules ?? []) };
+          }),
+        );
+        if (cancelled) return;
+        setAppBlockByAgent((prev) => {
+          const next = { ...prev };
+          for (const r of res) {
+            if (r.status !== "fulfilled") continue;
+            next[r.value.id] = {
+              enabledCount: r.value.enabledCount,
+              examples: r.value.examples,
+              fetchedAtMs: Date.now(),
+            };
+          }
+          return next;
+        });
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [items, appBlockByAgent]);
+
   const selectedItems = collectionProps.selectedItems || [];
+  const selectedOnlineCount = selectedItems.reduce(
+    (acc, i) => acc + (agents[i.id]?.online ? 1 : 0),
+    0,
+  );
+  const selectedOfflineCount = selectedItems.length - selectedOnlineCount;
+  const selectedHasOnline = selectedOnlineCount > 0;
+  const selectedHasOffline = selectedOfflineCount > 0;
   const modalAgent = powerModal?.agentId ? agents[powerModal.agentId] : null;
   const modalOnline = powerModal?.agentId ? Boolean(agents[powerModal.agentId]?.online) : false;
   const modalTitle = modalAgent?.name ?? powerModal?.agentId ?? "";
@@ -205,12 +329,16 @@ export function AgentCard({
             <FullPageHeader
               totalAgents={agentsWithStatus.length}
               selectedCount={selectedItems.length}
+              selectedHasOnline={selectedHasOnline}
+              selectedHasOffline={selectedHasOffline}
+              selectedOnlineCount={selectedOnlineCount}
+              selectedOfflineCount={selectedOfflineCount}
               onRefresh={onRefresh}
-              onWakeSelected={() => onBatchWake(selectedItems.map((item) => item.id))}
+              onWakeSelected={() => onBatchWake(selectedItems.filter((i) => !agents[i.id]?.online).map((i) => i.id))}
               onBulkScript={() => onBulkScript(selectedItems.map((item) => item.id))}
-              onLockSelected={() => onBatchLock(selectedItems.map((item) => item.id))}
-              onRestartSelected={() => onBatchRestart(selectedItems.map((item) => item.id))}
-              onShutdownSelected={() => onBatchShutdown(selectedItems.map((item) => item.id))}
+              onLockSelected={() => onBatchLock(selectedItems.filter((i) => agents[i.id]?.online).map((i) => i.id))}
+              onRestartSelected={() => onBatchRestart(selectedItems.filter((i) => agents[i.id]?.online).map((i) => i.id))}
+              onShutdownSelected={() => onBatchShutdown(selectedItems.filter((i) => agents[i.id]?.online).map((i) => i.id))}
               onDeleteSelected={
                 onDeleteAgents
                   ? () => {
@@ -283,35 +411,79 @@ export function AgentCard({
       <Modal
         visible={Boolean(powerModal)}
         onDismiss={() => setPowerModal(null)}
-        header={modalOnline ? "Confirm shutdown" : "Confirm wake"}
+        header="Power actions"
         footer={
           <Box float="right">
             <SpaceBetween direction="horizontal" size="xs">
               <Button variant="link" onClick={() => setPowerModal(null)}>
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                onClick={() => {
-                  if (!powerModal?.agentId) return;
-                  const id = powerModal.agentId;
-                  setPowerModal(null);
-                  if (agents[id]?.online) onBatchShutdown([id]);
-                  else onBatchWake([id]);
-                }}
-              >
-                {modalOnline ? "Shutdown" : "Wake"}
+                Close
               </Button>
             </SpaceBetween>
           </Box>
         }
       >
-        <SpaceBetween size="s">
-          <Box>
-            {modalOnline
-              ? `Send a shutdown command to "${modalTitle}"?`
-              : `Send a Wake-on-LAN packet to "${modalTitle}"?`}
-          </Box>
+        <SpaceBetween size="m">
+          <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+            <Box variant="h3">{modalTitle || "Agent"}</Box>
+            <StatusIndicator type={modalOnline ? "success" : "stopped"}>
+              {modalOnline ? "Online" : "Offline"}
+            </StatusIndicator>
+          </SpaceBetween>
+
+          {!powerModal?.agentId ? null : modalOnline ? (
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button
+                iconName="lock-private"
+                onClick={() => {
+                  const id = powerModal.agentId;
+                  setPowerModal(null);
+                  onBatchLock([id]);
+                }}
+              >
+                Lock
+              </Button>
+              <Button
+                iconName="redo"
+                onClick={() => {
+                  const id = powerModal.agentId;
+                  setPowerModal(null);
+                  onBatchRestart([id]);
+                }}
+              >
+                Restart
+              </Button>
+              <Button
+                iconName="close"
+                variant="primary"
+                onClick={() => {
+                  const id = powerModal.agentId;
+                  setPowerModal(null);
+                  onBatchShutdown([id]);
+                }}
+              >
+                Shutdown
+              </Button>
+            </SpaceBetween>
+          ) : (
+            <SpaceBetween size="s">
+              <Box color="text-body-secondary">
+                This agent is offline. You can send Wake-on-LAN if it’s configured on the machine and reachable on the LAN.
+              </Box>
+              <div>
+                <Button
+                  iconName="status-stopped"
+                  variant="primary"
+                  onClick={() => {
+                    const id = powerModal.agentId;
+                    setPowerModal(null);
+                    onBatchWake([id]);
+                  }}
+                >
+                  Wake on LAN
+                </Button>
+              </div>
+            </SpaceBetween>
+          )}
         </SpaceBetween>
       </Modal>
     </>

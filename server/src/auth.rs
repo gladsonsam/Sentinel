@@ -103,7 +103,7 @@ pub async fn require_auth(
 ) -> Response {
     // Optional insecure mode: allow requests through when there are no users yet.
     // (Normal deployments should bootstrap an admin user via ADMIN_PASSWORD/UI_PASSWORD.)
-    if state.allow_insecure_dashboard_open {
+    if cfg!(debug_assertions) && state.allow_insecure_dashboard_open {
         if let Ok(n) = db::dashboard_user_count(&state.db).await {
             if n == 0 {
                 return next.run(req).await;
@@ -478,7 +478,7 @@ pub async fn logout(
 
 /// `GET /api/auth/status` — let the SPA check whether it is already authenticated.
 pub async fn status(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Response {
-    if state.allow_insecure_dashboard_open {
+    if cfg!(debug_assertions) && state.allow_insecure_dashboard_open {
         if let Ok(n) = db::dashboard_user_count(&state.db).await {
             if n == 0 {
                 return Json(serde_json::json!({

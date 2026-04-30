@@ -5,6 +5,7 @@ import Box from "@cloudscape-design/components/box";
 import Link from "@cloudscape-design/components/link";
 import SpaceBetween from "@cloudscape-design/components/space-between";
 import Button from "@cloudscape-design/components/button";
+import Badge from "@cloudscape-design/components/badge";
 import { isAgentIconKey, AGENT_ICON_MAP } from "./agentIcons";
 import { MonitorPlay } from "lucide-react";
 
@@ -15,6 +16,10 @@ export interface AgentCardItem extends Agent {
   fallbackLastWindow?: string;
   fallbackUptimeSecs?: number;
   fallbackUptimeReceivedAtMs?: number;
+  internetBlocked?: boolean | null;
+  internetBlockedSource?: string | null;
+  appBlockEnabledCount?: number | null;
+  appBlockExamples?: string[] | null;
 }
 
 /** Overview card title: prefer the server `agents.name` (matches `?name=` casing), not WMI/env hostname. */
@@ -98,6 +103,11 @@ export function createCardDefinitions(
               connected={item.online}
               lastSeen={item.last_seen ? new Date(item.last_seen) : null}
             />
+            {item.internetBlocked ? (
+              <span title={item.internetBlockedSource ? `Blocked by: ${item.internetBlockedSource}` : "Internet blocked"}>
+                <Badge color="red">Internet blocked</Badge>
+              </span>
+            ) : null}
             {item.online && item.liveStatus?.activity === "afk" && (
               <ActivityStatus isAfk idleSeconds={effectiveIdleSeconds(item.liveStatus)} />
             )}
@@ -122,23 +132,44 @@ export function createCardDefinitions(
             <div className="sentinel-agent-card-main">
               <div className="sentinel-agent-card-main-top">
                 <Box className="sentinel-agent-card-block sentinel-agent-card-block-details">
-                  <Box variant="h3">Details</Box>
-                  <SpaceBetween size="xs" className="sentinel-agent-card-detail-stack">
-                    {version ? (
+                  <div className="sentinel-agent-card-detail-grid">
+                    <div className="sentinel-agent-card-detail-col">
+                      {version ? (
+                        <Box>
+                          <Box variant="awsui-key-label">Version</Box>
+                          <Box className="sentinel-agent-version">v{version}</Box>
+                        </Box>
+                      ) : null}
                       <Box>
-                        <Box variant="awsui-key-label">Version</Box>
-                        <Box className="sentinel-agent-version">v{version}</Box>
+                        <Box variant="awsui-key-label">{leftLabel}</Box>
+                        <Box>{leftValue}</Box>
                       </Box>
+                      <Box>
+                        <Box variant="awsui-key-label">Last window</Box>
+                        <Box className="sentinel-last-window">{lastWindow}</Box>
+                      </Box>
+                    </div>
+
+                    {item.appBlockEnabledCount && item.appBlockEnabledCount > 0 ? (
+                      <div className="sentinel-agent-card-detail-col sentinel-card-app-block-col">
+                        <Box className="sentinel-card-app-block">
+                          <Box variant="awsui-key-label">Blocked apps</Box>
+                          <Box>
+                            <span className="sentinel-card-app-block-count">
+                              {item.appBlockEnabledCount} enabled
+                            </span>
+                            {Array.isArray(item.appBlockExamples) && item.appBlockExamples.length > 0 ? (
+                              <span className="sentinel-card-app-block-examples">
+                                {" "}
+                                — {item.appBlockExamples.slice(0, 2).join(", ")}
+                                {item.appBlockExamples.length > 2 ? "…" : ""}
+                              </span>
+                            ) : null}
+                          </Box>
+                        </Box>
+                      </div>
                     ) : null}
-                    <Box>
-                      <Box variant="awsui-key-label">{leftLabel}</Box>
-                      <Box>{leftValue}</Box>
-                    </Box>
-                    <Box>
-                      <Box variant="awsui-key-label">Last window</Box>
-                      <Box className="sentinel-last-window">{lastWindow}</Box>
-                    </Box>
-                  </SpaceBetween>
+                  </div>
                 </Box>
               </div>
 
@@ -149,15 +180,17 @@ export function createCardDefinitions(
                       type="button"
                       className="sentinel-qa-icon"
                       aria-label="Open screen"
+                      title="Open screen"
                       onClick={() => onOpenScreen(item.id)}
                     >
                       <MonitorPlay size={18} />
                     </button>
                   )}
                   <Button
-                    iconName={item.online ? "status-negative" : "refresh"}
-                    ariaLabel={item.online ? "Shutdown" : "Wake"}
+                    iconName="status-stopped"
+                    ariaLabel="Power actions"
                     variant="icon"
+                    nativeButtonAttributes={{ title: "Power actions", className: "sentinel-agent-card-power-btn" }}
                     onClick={() => onPowerAction(item.id)}
                   />
                 </div>

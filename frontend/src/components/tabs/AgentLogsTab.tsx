@@ -26,7 +26,7 @@ export function AgentLogsTab({ agentId }: { agentId: string }) {
   const [refreshing, setRefreshing] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
 
-  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const viewportRef = useRef<HTMLTextAreaElement | null>(null);
   const stickToBottomRef = useRef(true);
   const initialScrollDoneRef = useRef(false);
 
@@ -186,36 +186,46 @@ export function AgentLogsTab({ agentId }: { agentId: string }) {
         </Container>
 
         <div
-          ref={viewportRef}
-          onScroll={() => {
-            const el = viewportRef.current;
-            if (!el) return;
-            const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-            stickToBottomRef.current = distanceFromBottom <= 8;
-          }}
           style={{
             flex: 1,
             minHeight: 0,
-            overflow: "auto",
             border: "1px solid var(--awsui-color-border-divider-default)",
             borderRadius: 6,
             background: "var(--awsui-color-background-container-content)",
-            padding: 12,
+            overflow: "hidden",
           }}
         >
-          <pre
+          <textarea
+            ref={viewportRef}
+            aria-label="Agent log output"
+            value={logText || (loadingSources ? "Loading…" : "No log data yet.")}
+            readOnly
+            spellCheck={false}
+            wrap="off"
+            onScroll={() => {
+              const el = viewportRef.current;
+              if (!el) return;
+              const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+              stickToBottomRef.current = distanceFromBottom <= 8;
+            }}
             style={{
-              margin: 0,
-              whiteSpace: "pre-wrap",
-              wordBreak: "break-word",
+              width: "100%",
+              height: "100%",
+              display: "block",
+              boxSizing: "border-box",
+              border: "none",
+              outline: "none",
+              resize: "none",
+              background: "transparent",
+              padding: 12,
+              whiteSpace: "pre",
+              overflow: "auto",
               fontFamily: 'ui-monospace, "Cascadia Code", Consolas, monospace',
               fontSize: 12,
               lineHeight: 1.45,
               color: "var(--awsui-color-text-body-default)",
             }}
-          >
-            {logText || (loadingSources ? "Loading…" : "No log data yet.")}
-          </pre>
+          />
         </div>
       </div>
     </SpaceBetween>
