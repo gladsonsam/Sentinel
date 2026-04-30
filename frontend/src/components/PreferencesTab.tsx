@@ -196,14 +196,13 @@ export function PreferencesTab({
         <h2 className="text-sm font-semibold text-primary mb-1">
           Default data retention
         </h2>
-        <p className="text-sm text-muted mb-1">
+        <p className="text-sm text-muted mb-2">
           How long to keep keylogs, window history, and URLs for <strong>all</strong>{" "}
           computers by default. Use <strong>0</strong> or leave a box empty for unlimited
           retention (no automatic delete).
         </p>
         <p className="text-xs text-muted mb-4">
-          Different rules for one machine? Select it in the sidebar and open the{" "}
-          <span className="text-primary font-medium">Overrides</span> tab.
+          Per-computer overrides live on each agent’s <span className="text-primary font-medium">Overrides</span> tab.
         </p>
 
           <div className="flex flex-col gap-3 max-w-md">
@@ -285,8 +284,8 @@ export function PreferencesTab({
                 {gSave ? "Saving…" : "Save defaults"}
               </button>
             </div>
-            {gErr && <p className="text-sm text-danger">{gErr}</p>}
-            {gOk && <p className="text-sm text-ok">{gOk}</p>}
+            {gErr ? <p className="text-sm text-danger">{gErr}</p> : null}
+            {!gErr && gOk ? <p className="text-sm text-ok">{gOk}</p> : null}
           </div>
       </div>
 
@@ -294,14 +293,13 @@ export function PreferencesTab({
         <h2 className="text-sm font-semibold text-primary mb-1">
           Agent local settings password
         </h2>
-        <p className="text-sm text-muted mb-1">
+        <p className="text-sm text-muted mb-2">
           Default lock for the <strong>Windows Sentinel agent’s local settings window</strong>{" "}
           (not this dashboard). When an agent connects, the server sends this password hash so
           operators can set or rotate the lock from here instead of on each machine.
         </p>
         <p className="text-xs text-muted mb-4">
-          Per-computer overrides are on each agent’s <span className="text-primary font-medium">Overrides</span>{" "}
-          tab.
+          Per-computer overrides live on each agent’s <span className="text-primary font-medium">Overrides</span> tab.
         </p>
 
           <div className="flex flex-col gap-3 max-w-md">
@@ -356,8 +354,8 @@ export function PreferencesTab({
                 Remove password
               </button>
             </div>
-            {localUiErr && <p className="text-sm text-danger">{localUiErr}</p>}
-            {localUiOk && <p className="text-sm text-ok">{localUiOk}</p>}
+            {localUiErr ? <p className="text-sm text-danger">{localUiErr}</p> : null}
+            {!localUiErr && localUiOk ? <p className="text-sm text-ok">{localUiOk}</p> : null}
           </div>
       </div>
         </div>

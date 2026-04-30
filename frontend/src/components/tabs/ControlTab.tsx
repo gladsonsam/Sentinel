@@ -111,6 +111,8 @@ export function ControlTab({ agentId, agentName, agentOnline, isAdmin }: Control
     return "This device";
   };
 
+  const enabledRuleCount = rules.reduce((acc, r) => acc + (r.enabled ? 1 : 0), 0);
+
   if (!isAdmin) {
     return (
       <Alert type="info" header="Admin access required">
@@ -192,6 +194,13 @@ export function ControlTab({ agentId, agentName, agentOnline, isAdmin }: Control
         }
       >
         <SpaceBetween size="s">
+          {!rulesLoad ? (
+            <Box fontSize="body-s" color="text-body-secondary">
+              {enabledRuleCount === 0
+                ? "No enabled rules."
+                : `${enabledRuleCount} enabled rule${enabledRuleCount === 1 ? "" : "s"}.`}
+            </Box>
+          ) : null}
           {rulesErr && (
             <Alert type="error" dismissible onDismiss={() => setRulesErr(null)}>
               {rulesErr}

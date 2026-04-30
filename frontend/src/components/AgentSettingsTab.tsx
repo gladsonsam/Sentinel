@@ -919,12 +919,11 @@ export function AgentSettingsTab({
               </Toggle>
             </FormField>
 
-            <Button
-              disabled={autoUpdSave || autoUpdOverride === null}
-              onClick={clearAutoUpdateOverride}
-            >
-              Use global default only
-            </Button>
+            {autoUpdOverride !== null ? (
+              <Button disabled={autoUpdSave} onClick={clearAutoUpdateOverride}>
+                Use global default only
+              </Button>
+            ) : null}
           </SpaceBetween>
         </Container>
       )}

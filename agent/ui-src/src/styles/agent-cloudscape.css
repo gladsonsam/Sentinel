@@ -1,6 +1,12 @@
 /* Cloudscape base tokens only — agent does not ship the full server dashboard theme CSS. */
 @import "@cloudscape-design/global-styles/index.css";
 
+/* Match server dashboard typography (Inter). Cloudscape components respect these variables. */
+:root {
+  --awsui-font-family-base: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --awsui-font-family-monospace: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
 /* Agent webview: fill the Tauri window; main content wrapper for AppLayout. */
 html,
 body {
