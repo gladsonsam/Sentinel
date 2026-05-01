@@ -117,12 +117,13 @@ fn create_sentinel_service_pipe_server(
 
     let mut p_sd = PSECURITY_DESCRIPTOR(std::ptr::null_mut());
     let user_sid = active_console_user_sid_string();
+    // Always include AU (Authenticated Users) so the user-session agent can connect
+    // even if WTSQueryUserToken fails. The specific console-user SID is additive.
     let sddl = if let Some(ref sid) = user_sid {
-        // SYSTEM + Administrators full control; active console user read/write.
-        format!("D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;{sid})")
+        format!("D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)(A;;GRGW;;;{sid})")
     } else {
-        warn!("Service pipe: could not resolve active console user SID; restricting pipe to admins only.");
-        "D:(A;;GA;;;SY)(A;;GA;;;BA)".to_string()
+        warn!("Service pipe: could not resolve active console user SID; falling back to Authenticated Users.");
+        "D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)".to_string()
     };
     unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
@@ -164,11 +165,12 @@ fn create_agent_ipc_pipe_server(
 
     let mut p_sd = PSECURITY_DESCRIPTOR(std::ptr::null_mut());
     let user_sid = active_console_user_sid_string();
+    // Always include AU so the user-session companion can connect reliably.
     let sddl = if let Some(ref sid) = user_sid {
-        format!("D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;{sid})")
+        format!("D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)(A;;GRGW;;;{sid})")
     } else {
-        warn!("Agent IPC pipe: could not resolve active console user SID; restricting pipe to admins only.");
-        "D:(A;;GA;;;SY)(A;;GA;;;BA)".to_string()
+        warn!("Agent IPC pipe: could not resolve active console user SID; falling back to Authenticated Users.");
+        "D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GRGW;;;AU)".to_string()
     };
     unsafe {
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
