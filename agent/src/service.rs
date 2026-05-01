@@ -880,9 +880,8 @@ fn launch_msi_detached(msi_path: &std::path::Path) -> Result<()> {
             // Silent install
             "/qn",
             "/norestart",
-            // Force reinstall of all features/resources (important for same-version upgrades and “repair-ish” runs).
-            "REINSTALL=ALL",
-            "REINSTALLMODE=amus",
+            // REINSTALL=* is wrong for MajorUpgrade installs (new ProductCode): MSI can exit 0 without
+            // installing files (REMOVE=ALL, features Request Null).
             // Verbose MSI log
             "/l*v",
         ])
