@@ -73,7 +73,14 @@ export function AgentDetailPage({
   const [timelineHighlight, setTimelineHighlight] = useState<string | null>(null);
   const { resolvedInfo, setResolvedInfo } = useResolvedAgentInfo(agent.id, agentInfo);
   const inferredIdleSeconds = useAgentInferredIdle(agent.id, liveStatus?.activity);
-  const { sessions, loading, loadActivityData } = useAgentActivitySessions(agent.id, activeTab);
+  const {
+    sessions,
+    loading,
+    loadingMore,
+    hasMoreOlder,
+    loadMoreOlderActivity,
+    loadActivityData,
+  } = useAgentActivitySessions(agent.id, activeTab);
   const [pendingAction, setPendingAction] = useState<AgentAction | null>(null);
   const [confirmAction, setConfirmAction] = useState<AgentAction | null>(null);
   const [infoRequestedAtMs, setInfoRequestedAtMs] = useState<number | null>(null);
@@ -205,6 +212,9 @@ export function AgentDetailPage({
       resolvedInfo={resolvedInfo}
       sessions={sessions}
       activityLoading={loading}
+      activityLoadingMore={loadingMore}
+      activityHasMoreOlder={hasMoreOlder}
+      onLoadMoreActivity={loadMoreOlderActivity}
       onRefreshActivity={loadActivityData}
       highlightTimestamp={effectiveHighlightTimestamp ?? null}
       onViewTimelineFromAlerts={(timestamp) => {

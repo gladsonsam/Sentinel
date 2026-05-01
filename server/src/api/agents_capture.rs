@@ -4,6 +4,7 @@ use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 
 use axum::extract::Extension;
 use axum::{
@@ -160,6 +161,10 @@ pub async fn agent_mjpeg(
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         let mut last_seq: u64 = 0;
+        let mut last_emit = Instant::now();
+        // Some reverse proxies / browsers will drop an idle multipart response.
+        // If the agent is paused (or re-sending identical frames), periodically re-send the latest frame.
+        const RESEND_EVERY: Duration = Duration::from_secs(5);
         // Track whether the agent was reachable on the previous tick so we can
         // re-issue start_capture the moment it comes back online (the agent
         // always stops capture when its WebSocket session ends, so it needs a
@@ -189,9 +194,12 @@ pub async fn agent_mjpeg(
 
             // Skip frames we've already sent.
             if f.seq == last_seq {
-                continue;
+                if last_emit.elapsed() < RESEND_EVERY {
+                    continue;
+                }
             }
             last_seq = f.seq;
+            last_emit = Instant::now();
 
             let header = format!(
                 "--{BOUNDARY}\r\n\

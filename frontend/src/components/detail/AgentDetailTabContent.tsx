@@ -27,6 +27,9 @@ export interface AgentDetailTabContentProps {
   resolvedInfo: AgentInfo | null;
   sessions: Session[];
   activityLoading: boolean;
+  activityLoadingMore?: boolean;
+  activityHasMoreOlder?: boolean;
+  onLoadMoreActivity?: () => void;
   onRefreshActivity: () => void;
   highlightTimestamp: string | null;
   onViewTimelineFromAlerts: (timestamp: string) => void;
@@ -44,6 +47,9 @@ export function AgentDetailTabContent({
   resolvedInfo,
   sessions,
   activityLoading,
+  activityLoadingMore = false,
+  activityHasMoreOlder = false,
+  onLoadMoreActivity,
   onRefreshActivity,
   highlightTimestamp,
   onViewTimelineFromAlerts,
@@ -59,6 +65,9 @@ export function AgentDetailTabContent({
           sessions={sessions}
           loading={activityLoading}
           onRefresh={onRefreshActivity}
+          onLoadMore={onLoadMoreActivity}
+          hasMoreOlder={activityHasMoreOlder}
+          loadingMore={activityLoadingMore}
           highlightTimestamp={highlightTimestamp}
         />
       );

@@ -33,6 +33,9 @@ interface ActivityTimelineProps {
   sessions: Session[];
   loading?: boolean;
   onRefresh?: () => void;
+  onLoadMore?: () => void;
+  hasMoreOlder?: boolean;
+  loadingMore?: boolean;
   /** ISO string timestamp — scroll to and highlight the nearest session */
   highlightTimestamp?: string | null;
 }
@@ -557,6 +560,7 @@ function SessionItem({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [userToggled, setUserToggled] = useState(false);
+  const [showAllKeystrokes, setShowAllKeystrokes] = useState(false);
   const isOpen = userToggled ? expanded : forceExpanded || expanded;
 
   const mergedTimeline = useMemo(() => buildMergedActivityTimeline(session), [session]);
@@ -754,14 +758,57 @@ function SessionItem({
               <div className="vtl-section">
                 <p className="vtl-section-label">Keystrokes ({session.keystrokes.length} sessions)</p>
                 <div className="vtl-key-list">
-                  {session.keystrokes.slice(0, 3).map((ks, i) => (
+                  {(showAllKeystrokes ? session.keystrokes : session.keystrokes.slice(0, 3)).map((ks, i) => (
                     <code key={i} className="vtl-key-block">
                       {ks.keys.slice(0, 80)}
                       {ks.keys.length > 80 ? "…" : ""}
                     </code>
                   ))}
-                  {session.keystrokes.length > 3 && (
-                    <p className="vtl-more">…and {session.keystrokes.length - 3} more</p>
+                  {session.keystrokes.length > 3 && !showAllKeystrokes && (
+                    <button
+                      type="button"
+                      className="vtl-more"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setShowAllKeystrokes(true);
+                      }}
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        padding: 0,
+                        cursor: "pointer",
+                        color: "inherit",
+                        textAlign: "left",
+                        font: "inherit",
+                        opacity: 0.75,
+                      }}
+                    >
+                      …and {session.keystrokes.length - 3} more (click to expand)
+                    </button>
+                  )}
+                  {session.keystrokes.length > 3 && showAllKeystrokes && (
+                    <button
+                      type="button"
+                      className="vtl-more"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setShowAllKeystrokes(false);
+                      }}
+                      style={{
+                        background: "transparent",
+                        border: "none",
+                        padding: 0,
+                        cursor: "pointer",
+                        color: "inherit",
+                        textAlign: "left",
+                        font: "inherit",
+                        opacity: 0.75,
+                      }}
+                    >
+                      Show less
+                    </button>
                   )}
                 </div>
               </div>
@@ -826,7 +873,15 @@ function TimelineScreenshotModal({
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function ActivityTimeline({ sessions, loading, onRefresh, highlightTimestamp }: ActivityTimelineProps) {
+export function ActivityTimeline({
+  sessions,
+  loading,
+  onRefresh,
+  onLoadMore,
+  hasMoreOlder = false,
+  loadingMore = false,
+  highlightTimestamp,
+}: ActivityTimelineProps) {
   const [screenshotModalId, setScreenshotModalId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [alertsOnly, setAlertsOnly] = useState(false);
@@ -1101,55 +1156,73 @@ export function ActivityTimeline({ sessions, loading, onRefresh, highlightTimest
               No sessions match your filters. Clear search, date range, or turn off &quot;Alerts only&quot;.
             </Box>
           ) : (
-            <div className="vtl-list">
-              {dayGroups.map((group) => {
-                const expanded = isDayExpanded(group.dayKey);
-                return (
-                  <div key={group.dayKey} id={`vtl-day-${group.dayKey}`} className="vtl-day-block">
-                    <button
-                      type="button"
-                      className="vtl-day-header"
-                      onClick={() => toggleDay(group.dayKey)}
-                      aria-expanded={expanded}
+            <>
+              <div className="vtl-list">
+                {dayGroups.map((group) => {
+                  const expanded = isDayExpanded(group.dayKey);
+                  return (
+                    <div key={group.dayKey} id={`vtl-day-${group.dayKey}`} className="vtl-day-block">
+                      <button
+                        type="button"
+                        className="vtl-day-header"
+                        onClick={() => toggleDay(group.dayKey)}
+                        aria-expanded={expanded}
+                      >
+                        <ChevronRight
+                          size={16}
+                          className={`vtl-day-chevron ${expanded ? "vtl-day-chevron--open" : ""}`}
+                          aria-hidden
+                        />
+                        <Calendar size={15} style={{ opacity: 0.85 }} aria-hidden />
+                        <span className="vtl-day-header-label">{group.label}</span>
+                        <span className="vtl-day-header-cta">
+                          {group.items.length} session{group.items.length === 1 ? "" : "s"}
+                        </span>
+                      </button>
+                      {expanded && (
+                        <div className="vtl-day-body">
+                          {group.items.map(({ session, idx }) => {
+                            const isHighlighted = idx === highlightIndex && highlightTimestamp != null;
+                            return (
+                              <div key={session.id} ref={isHighlighted ? setRef(idx) : undefined}>
+                                <SessionItem
+                                  session={session}
+                                  isLast={idx === filteredSorted.length - 1}
+                                  highlighted={isHighlighted}
+                                  forceExpanded={isHighlighted}
+                                  onOpenScreenshot={setScreenshotModalId}
+                                  onFilterApp={(exe) =>
+                                    setAppFilterExe((prev) =>
+                                      prev?.toLowerCase() === exe.toLowerCase() ? null : exe
+                                    )
+                                  }
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              {onLoadMore && !jumpRangeValue && !alertsOnly && !searchQuery.trim() && !appFilterExe ? (
+                <Box padding={{ vertical: "l" }} textAlign="center">
+                  <SpaceBetween size="xs">
+                    <Button
+                      onClick={onLoadMore}
+                      disabled={!hasMoreOlder || loadingMore || Boolean(loading)}
+                      loading={loadingMore}
                     >
-                      <ChevronRight
-                        size={16}
-                        className={`vtl-day-chevron ${expanded ? "vtl-day-chevron--open" : ""}`}
-                        aria-hidden
-                      />
-                      <Calendar size={15} style={{ opacity: 0.85 }} aria-hidden />
-                      <span className="vtl-day-header-label">{group.label}</span>
-                      <span className="vtl-day-header-cta">
-                        {group.items.length} session{group.items.length === 1 ? "" : "s"}
-                      </span>
-                    </button>
-                    {expanded && (
-                      <div className="vtl-day-body">
-                        {group.items.map(({ session, idx }) => {
-                          const isHighlighted = idx === highlightIndex && highlightTimestamp != null;
-                          return (
-                            <div key={session.id} ref={isHighlighted ? setRef(idx) : undefined}>
-                              <SessionItem
-                                session={session}
-                                isLast={idx === filteredSorted.length - 1}
-                                highlighted={isHighlighted}
-                                forceExpanded={isHighlighted}
-                                onOpenScreenshot={setScreenshotModalId}
-                                onFilterApp={(exe) =>
-                                  setAppFilterExe((prev) =>
-                                    prev?.toLowerCase() === exe.toLowerCase() ? null : exe
-                                  )
-                                }
-                              />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+                      {hasMoreOlder ? "Load older activity" : "No older activity"}
+                    </Button>
+                    <Box color="text-body-secondary" fontSize="body-s">
+                      Loads older history in batches. Apply filters to search within what’s loaded.
+                    </Box>
+                  </SpaceBetween>
+                </Box>
+              ) : null}
+            </>
           )}
         </div>
       </Container>
