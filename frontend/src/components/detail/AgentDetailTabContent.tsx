@@ -62,6 +62,7 @@ export function AgentDetailTabContent({
     case "activity":
       return (
         <ActivityTimeline
+          agentId={agent.id}
           sessions={sessions}
           loading={activityLoading}
           onRefresh={onRefreshActivity}
@@ -92,7 +93,7 @@ export function AgentDetailTabContent({
         <EventsTab agentId={agent.id} onViewTimeline={onViewTimelineFromAlerts} />
       );
     case "files":
-      return <FilesTab agentId={agent.id} sendWsMessage={sendWsMessage} />;
+      return <FilesTab agentId={agent.id} sendWsMessage={sendWsMessage} dashboardRole={dashboardRole} />;
     case "logs":
       return <AgentLogsTab agentId={agent.id} />;
     case "control":

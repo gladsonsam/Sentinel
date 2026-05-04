@@ -89,9 +89,20 @@ function csrfHeaders(): Record<string, string> {
   }
 }
 
+export type MjpegStreamTuning = {
+  jpegQ: number;
+  intervalMs: number;
+};
+
 /** Multipart MJPEG URL; `session` must match {@link notifyMjpegViewerLeft}. */
-export function mjpegStreamUrl(agentId: string, session: string): string {
-  return apiUrl(`/agents/${agentId}/mjpeg?session=${encodeURIComponent(session)}`);
+export function mjpegStreamUrl(agentId: string, session: string, tuning?: MjpegStreamTuning): string {
+  const qs = new URLSearchParams();
+  qs.set("session", session);
+  if (tuning) {
+    qs.set("jpeg_q", String(tuning.jpegQ));
+    qs.set("interval_ms", String(tuning.intervalMs));
+  }
+  return apiUrl(`/agents/${agentId}/mjpeg?${qs.toString()}`);
 }
 
 /** Tell the server this dashboard tab stopped viewing live screen (sends `stop_capture` when last viewer). */

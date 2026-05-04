@@ -20,7 +20,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{auth, db, state::AppState};
-use crate::state::AgentControl;
+use crate::state::{AgentControl, MjpegSession, MjpegViewerPrefs};
 
 use super::helpers::audit_ip;
 
@@ -99,6 +99,12 @@ pub struct MjpegQuery {
     /// Per-tab stream id from the dashboard; required so `POST .../mjpeg/leave` can end the
     /// session even if the browser keeps the multipart request open briefly.
     session: Uuid,
+    /// JPEG encode quality (1–100). Omitted values are clamped to a dashboard-safe default on the server.
+    #[serde(default)]
+    jpeg_q: Option<u8>,
+    /// Minimum time between captured frames on the agent (milliseconds).
+    #[serde(default)]
+    interval_ms: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -106,8 +112,8 @@ pub struct MjpegLeaveBody {
     session: Uuid,
 }
 
-/// `multipart/x-mixed-replace` MJPEG; polls cached frames every 200ms. Viewer refcount
-/// drives `start_capture` / `stop_capture` on the agent (guard dropped when HTTP ends).
+/// `multipart/x-mixed-replace` MJPEG; polls cached frames on a viewer-specific cadence.
+/// Viewer refcount drives `start_capture` / `stop_capture` on the agent (guard dropped when HTTP ends).
 pub async fn agent_mjpeg(
     Path(id): Path<Uuid>,
     Query(q): Query<MjpegQuery>,
@@ -119,6 +125,7 @@ pub async fn agent_mjpeg(
     }
     const BOUNDARY: &str = "mjpegframe";
     let session_id = q.session;
+    let viewer_prefs = clamp_mjpeg_viewer_prefs(&q);
 
     {
         let mut sessions = s.mjpeg_sessions.lock();
@@ -129,21 +136,22 @@ pub async fn agent_mjpeg(
             )
                 .into_response();
         }
-        sessions.insert(session_id, id);
+        sessions.insert(
+            session_id,
+            MjpegSession {
+                agent_id: id,
+                prefs: viewer_prefs,
+            },
+        );
     }
 
-    let first_viewer = {
+    {
         let mut counts = s.capture_viewers.lock();
         let count = counts.entry(id).or_insert(0);
         *count += 1;
-        *count == 1
-    };
-
-    if first_viewer {
-        if let Some(tx) = s.agent_cmds.lock().get(&id) {
-            let _ = tx.try_send(AgentControl::Text(r#"{"type":"start_capture"}"#.to_string()));
-        }
     }
+
+    sync_mjpeg_capture_for_agent(&s, id);
 
     let guard = CaptureGuard {
         agent_id: id,
@@ -152,12 +160,13 @@ pub async fn agent_mjpeg(
     };
 
     let stream_state = s.clone();
+    let poll_ms = u64::from(viewer_prefs.interval_ms).clamp(33, 2000);
     let stream = async_stream::stream! {
         // Moving the guard into the stream keeps it alive until the HTTP
         // connection drops, at which point Drop ends the session (if not already ended).
         let _guard = guard;
 
-        let mut interval = tokio::time::interval(Duration::from_millis(200));
+        let mut interval = tokio::time::interval(Duration::from_millis(poll_ms));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         let mut last_seq: u64 = 0;
@@ -179,9 +188,7 @@ pub async fn agent_mjpeg(
             // Agent just (re)connected while we're still watching — send a
             // fresh start_capture so frames start flowing again.
             if agent_online && !agent_was_online {
-                if let Some(tx) = stream_state.agent_cmds.lock().get(&id) {
-                    let _ = tx.try_send(AgentControl::Text(r#"{"type":"start_capture"}"#.to_string()));
-                }
+                sync_mjpeg_capture_for_agent(&stream_state, id);
             }
             agent_was_online = agent_online;
 
@@ -267,10 +274,10 @@ fn try_end_mjpeg_session(state: &Arc<AppState>, agent_id: Uuid, session_id: Uuid
         let Some(mapped) = sessions.get(&session_id).copied() else {
             return false;
         };
-        if mapped != agent_id {
+        if mapped.agent_id != agent_id {
             tracing::warn!(
                 %session_id,
-                mapped_agent = %mapped,
+                mapped_agent = %mapped.agent_id,
                 expected_agent = %agent_id,
                 "mjpeg session agent mismatch"
             );
@@ -279,14 +286,23 @@ fn try_end_mjpeg_session(state: &Arc<AppState>, agent_id: Uuid, session_id: Uuid
         sessions.remove(&session_id);
     }
 
-    let mut counts = state.capture_viewers.lock();
-    let Some(c) = counts.get_mut(&agent_id) else {
-        return false;
+    let stop = {
+        let mut counts = state.capture_viewers.lock();
+        let Some(c) = counts.get_mut(&agent_id) else {
+            return false;
+        };
+        *c = c.saturating_sub(1);
+        let stop = *c == 0;
+        if stop {
+            counts.remove(&agent_id);
+        }
+        stop
     };
-    *c = c.saturating_sub(1);
-    let stop = *c == 0;
+
     if stop {
-        counts.remove(&agent_id);
+        state.mjpeg_active_capture.lock().remove(&agent_id);
+    } else {
+        sync_mjpeg_capture_for_agent(state, agent_id);
     }
     stop
 }
@@ -305,4 +321,68 @@ impl Drop for CaptureGuard {
             send_stop_capture(&self.state, self.agent_id);
         }
     }
+}
+
+fn clamp_mjpeg_viewer_prefs(q: &MjpegQuery) -> MjpegViewerPrefs {
+    let jpeg_quality = q.jpeg_q.unwrap_or(40).clamp(20, 85);
+    let interval_ms = q.interval_ms.unwrap_or(200).clamp(100, 1000);
+    MjpegViewerPrefs {
+        jpeg_quality,
+        interval_ms,
+    }
+}
+
+fn merge_mjpeg_prefs_for_agent(state: &AppState, agent_id: Uuid) -> Option<MjpegViewerPrefs> {
+    let sessions = state.mjpeg_sessions.lock();
+    let mut merged: Option<MjpegViewerPrefs> = None;
+    for s in sessions.values().copied() {
+        if s.agent_id != agent_id {
+            continue;
+        }
+        merged = Some(match merged {
+            None => s.prefs,
+            Some(m) => MjpegViewerPrefs {
+                jpeg_quality: m.jpeg_quality.max(s.prefs.jpeg_quality),
+                interval_ms: m.interval_ms.min(s.prefs.interval_ms),
+            },
+        });
+    }
+    merged
+}
+
+fn start_capture_payload(prefs: MjpegViewerPrefs) -> String {
+    serde_json::json!({
+        "type": "start_capture",
+        "jpeg_quality": prefs.jpeg_quality,
+        "interval_ms": prefs.interval_ms,
+    })
+    .to_string()
+}
+
+fn sync_mjpeg_capture_for_agent(state: &Arc<AppState>, agent_id: Uuid) {
+    let viewers = state.capture_viewers.lock().get(&agent_id).copied().unwrap_or(0);
+    if viewers == 0 {
+        state.mjpeg_active_capture.lock().remove(&agent_id);
+        return;
+    }
+
+    let Some(merged) = merge_mjpeg_prefs_for_agent(state, agent_id) else {
+        return;
+    };
+
+    let mut active = state.mjpeg_active_capture.lock();
+    if active.get(&agent_id).copied() == Some(merged) {
+        return;
+    }
+
+    let tx = state.agent_cmds.lock().get(&agent_id).cloned();
+    let Some(tx) = tx else {
+        return;
+    };
+
+    if active.contains_key(&agent_id) {
+        let _ = tx.try_send(AgentControl::Text(r#"{"type":"stop_capture"}"#.to_string()));
+    }
+    let _ = tx.try_send(AgentControl::Text(start_capture_payload(merged)));
+    active.insert(agent_id, merged);
 }

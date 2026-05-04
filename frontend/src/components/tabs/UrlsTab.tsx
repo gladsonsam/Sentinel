@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import Table from "@cloudscape-design/components/table";
 import Box from "@cloudscape-design/components/box";
 import Header from "@cloudscape-design/components/header";
@@ -10,6 +11,7 @@ import Link from "@cloudscape-design/components/link";
 import { useCollection } from "@cloudscape-design/collection-hooks";
 import { api } from "../../lib/api";
 import { fmtDateTime } from "../../lib/utils";
+import { applyActivityStateToSearchParams } from "../../lib/activityUrl";
 
 interface URLEvent {
   id: number;
@@ -64,6 +66,7 @@ function topHostnamesFromRows(rows: TopUrlRow[], max: number): string[] {
 }
 
 export function UrlsTab({ agentId }: UrlsTabProps) {
+  const navigate = useNavigate();
   const [items, setItems] = useState<URLEvent[]>([]);
   const [topItems, setTopItems] = useState<TopUrlRow[]>([]);
   const [categoryStats, setCategoryStats] = useState<{ category: string; visit_count: number; last_ts: string }[]>([]);
@@ -111,6 +114,14 @@ export function UrlsTab({ agentId }: UrlsTabProps) {
       setLoading(false);
     }
   }, [agentId]);
+
+  const openInActivity = useCallback(
+    (q: string) => {
+      const qs = applyActivityStateToSearchParams(new URLSearchParams(), { v: 1, q });
+      navigate(`/agents/${agentId}?${qs.toString()}`);
+    },
+    [agentId, navigate],
+  );
 
   useEffect(() => {
     void fetchUrls();
@@ -221,9 +232,16 @@ export function UrlsTab({ agentId }: UrlsTabProps) {
           id: "url",
           header: "URL",
           cell: (item) => (
-            <Link href={normalizeHref(item.url)} external fontSize="body-s">
-              {item.url || "—"}
-            </Link>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
+              <Link href={normalizeHref(item.url)} external fontSize="body-s">
+                {item.url || "—"}
+              </Link>
+              {item.url.trim() ? (
+                <Button variant="inline-link" onClick={() => openInActivity(item.url)}>
+                  Activity
+                </Button>
+              ) : null}
+            </div>
           ),
           sortingField: "url",
         },

@@ -15,6 +15,7 @@ import TextFilter from "@cloudscape-design/components/text-filter";
 import Pagination from "@cloudscape-design/components/pagination";
 import { useCollection } from "@cloudscape-design/collection-hooks";
 import Toggle from "@cloudscape-design/components/toggle";
+import type { DashboardRole } from "../../lib/types";
 
 interface FileItem {
   name: string;
@@ -25,6 +26,7 @@ interface FileItem {
 interface FilesTabProps {
   agentId: string;
   sendWsMessage: (msg: unknown) => void;
+  dashboardRole?: DashboardRole | null;
 }
 
 /** Payload from `window.dispatchEvent(new CustomEvent("sentinel-ws-event", { detail }))`. */
@@ -51,7 +53,16 @@ interface SentinelFileWsDetail {
 /** Raw bytes per upload chunk — must match agent `REMOTE_FILE_CHUNK_BYTES` in `agent/src/main.rs`. */
 const REMOTE_FILE_CHUNK_BYTES = 3 * 1024 * 1024;
 
-export function FilesTab({ agentId, sendWsMessage }: FilesTabProps) {
+export function FilesTab({ agentId, sendWsMessage, dashboardRole = null }: FilesTabProps) {
+  const blockedByRole = dashboardRole === "viewer";
+  if (blockedByRole) {
+    return (
+      <Alert type="info" header="Operator role required">
+        Remote file browsing requires the <strong>operator</strong> or <strong>admin</strong> role.
+      </Alert>
+    );
+  }
+
   const DRIVES_PATH = "__this_pc__";
   // Empty path means "agent default" (usually user's Documents).
   const [currentPath, setCurrentPath] = useState("");

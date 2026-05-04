@@ -1469,15 +1469,59 @@ fn handle_server_command(args: ServerCommandArgs<'_>) {
             }
         }
         "start_capture" => {
-            if capture_stop.is_none() {
-                let stop = Arc::new(AtomicBool::new(false));
-                match capture::start_capture(frame_tx.clone(), stop.clone()) {
-                    Ok(()) => {
-                        *capture_stop = Some(stop);
-                        info!("Screen capture started (viewer connected).");
-                    }
-                    Err(e) => warn!("Failed to start capture: {e}"),
+            let mut jpeg_quality: u8 = val
+                .get("jpeg_quality")
+                .or_else(|| val.get("jpeg_q"))
+                .and_then(|v| v.as_u64())
+                .map(|u| u as u8)
+                .unwrap_or(40)
+                .clamp(1, 100);
+
+            let interval_ms: u64 = if let Some(v) = val.get("interval_ms") {
+                if let Some(ms) = v.as_u64() {
+                    ms
+                } else if let Some(ms) = v.as_f64() {
+                    ms as u64
+                } else {
+                    200
                 }
+            } else if let Some(fps) = val.get("fps").and_then(|v| v.as_f64()) {
+                if fps.is_finite() && fps > 0.0 {
+                    (1000.0 / fps).round() as u64
+                } else {
+                    200
+                }
+            } else {
+                200
+            }
+            .clamp(33, 2000);
+
+            // If the dashboard didn't specify quality, keep the historical default (40),
+            // even if it adjusts interval via fps/interval_ms.
+            if val.get("jpeg_quality").is_none() && val.get("jpeg_q").is_none() {
+                jpeg_quality = 40;
+            }
+
+            let settings = capture::CaptureSettings {
+                jpeg_quality,
+                interval_ms,
+            };
+
+            // Replace any existing capture thread so updated settings apply immediately.
+            if let Some(stop) = capture_stop.take() {
+                stop.store(true, Ordering::Relaxed);
+            }
+
+            let stop = Arc::new(AtomicBool::new(false));
+            match capture::start_capture(frame_tx.clone(), stop.clone(), settings) {
+                Ok(()) => {
+                    *capture_stop = Some(stop);
+                    info!(
+                        "Screen capture started (viewer connected): jpeg_q={}, interval_ms={}",
+                        jpeg_quality, interval_ms
+                    );
+                }
+                Err(e) => warn!("Failed to start capture: {e}"),
             }
         }
         "stop_capture" => {

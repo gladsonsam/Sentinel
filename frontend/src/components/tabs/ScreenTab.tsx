@@ -8,7 +8,8 @@ import Toggle from "@cloudscape-design/components/toggle";
 import FormField from "@cloudscape-design/components/form-field";
 import Modal from "@cloudscape-design/components/modal";
 import Input from "@cloudscape-design/components/input";
-import { mjpegStreamUrl, notifyMjpegViewerLeft } from "../../lib/api";
+import Select from "@cloudscape-design/components/select";
+import { mjpegStreamUrl, notifyMjpegViewerLeft, type MjpegStreamTuning } from "../../lib/api";
 import { StreamStatus } from "../common/StatusIndicator";
 import Alert from "@cloudscape-design/components/alert";
 import type { DashboardRole } from "../../lib/types";
@@ -21,6 +22,89 @@ interface ScreenTabProps {
   streamActive?: boolean;
 }
 
+type StreamPreset = "saver" | "balanced" | "sharp";
+
+const STREAM_PRESET_STORAGE_KEY = "sentinel.dashboard.screenStreamPreset";
+
+const STREAM_PRESET_TUNING: Record<StreamPreset, MjpegStreamTuning> = {
+  saver: { jpegQ: 28, intervalMs: 500 },
+  balanced: { jpegQ: 40, intervalMs: 200 },
+  sharp: { jpegQ: 62, intervalMs: 120 },
+};
+
+const STREAM_PRESET_OPTIONS: Array<{ label: string; description: string; value: StreamPreset }> = [
+  { label: "Bandwidth saver", description: "Lower quality / slower refresh (less CPU + network).", value: "saver" },
+  { label: "Balanced", description: "Default remote viewing profile.", value: "balanced" },
+  { label: "Sharper", description: "Higher quality / faster refresh (more CPU + network).", value: "sharp" },
+];
+
+function loadStreamPreset(): StreamPreset {
+  try {
+    const raw = localStorage.getItem(STREAM_PRESET_STORAGE_KEY);
+    if (raw === "saver" || raw === "balanced" || raw === "sharp") return raw;
+  } catch {
+    /* ignore */
+  }
+  return "balanced";
+}
+
+function saveStreamPreset(preset: StreamPreset) {
+  try {
+    localStorage.setItem(STREAM_PRESET_STORAGE_KEY, preset);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Map pointer position to remote host pixel coordinates (natural image size). */
+function pointerToImageCoords(
+  img: HTMLImageElement,
+  clientX: number,
+  clientY: number,
+): { x: number; y: number } | null {
+  const rect = img.getBoundingClientRect();
+  const nw = img.naturalWidth;
+  const nh = img.naturalHeight;
+  if (nw <= 0 || nh <= 0 || rect.width <= 0 || rect.height <= 0) return null;
+  const x = ((clientX - rect.left) / rect.width) * nw;
+  const y = ((clientY - rect.top) / rect.height) * nh;
+  return { x: Math.floor(x), y: Math.floor(y) };
+}
+
+function requestViewportFullscreen(el: HTMLElement): Promise<void> {
+  const anyEl = el as HTMLElement & {
+    webkitRequestFullscreen?: () => void;
+    mozRequestFullScreen?: () => void;
+  };
+  if (typeof el.requestFullscreen === "function") return el.requestFullscreen();
+  if (typeof anyEl.webkitRequestFullscreen === "function") {
+    anyEl.webkitRequestFullscreen();
+    return Promise.resolve();
+  }
+  if (typeof anyEl.mozRequestFullScreen === "function") {
+    anyEl.mozRequestFullScreen();
+    return Promise.resolve();
+  }
+  return Promise.resolve();
+}
+
+function exitViewportFullscreen(): Promise<void> {
+  const doc = document as Document & {
+    webkitExitFullscreen?: () => void;
+    mozCancelFullScreen?: () => void;
+  };
+  if (typeof document.exitFullscreen === "function") return document.exitFullscreen();
+  if (typeof doc.webkitExitFullscreen === "function") {
+    doc.webkitExitFullscreen();
+    return Promise.resolve();
+  }
+  if (typeof doc.mozCancelFullScreen === "function") {
+    doc.mozCancelFullScreen();
+    return Promise.resolve();
+  }
+  return Promise.resolve();
+}
+
 export function ScreenTab({
   agentId,
   sendWsMessage,
@@ -28,6 +112,9 @@ export function ScreenTab({
   streamActive = true,
 }: ScreenTabProps) {
   const [streaming, setStreaming] = useState(false);
+  const [streamEverLoaded, setStreamEverLoaded] = useState(false);
+  const [streamError, setStreamError] = useState(false);
+  const [lastFrameAtMs, setLastFrameAtMs] = useState<number | null>(null);
   const [remoteControl, setRemoteControl] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
@@ -40,18 +127,66 @@ export function ScreenTab({
 
   /** Per visit to the screen tab; server ties MJPEG GET + explicit leave to this id. */
   const [mjpegStreamSession, setMjpegStreamSession] = useState("");
+  const [streamPreset, setStreamPreset] = useState<StreamPreset>(() => loadStreamPreset());
 
   const blockedByRole = dashboardRole === "viewer";
   const streamEnabled = streamActive && !blockedByRole;
+
+  // If we haven't seen a frame update in a while, treat as stalled.
+  const [isStalled, setIsStalled] = useState(false);
+  useEffect(() => {
+    if (!streamEnabled) {
+      setIsStalled(false);
+      return;
+    }
+    const t = window.setInterval(() => {
+      const last = lastFrameAtMs;
+      if (!last) {
+        setIsStalled(false);
+        return;
+      }
+      setIsStalled(Date.now() - last > 15_000);
+    }, 1000);
+    return () => window.clearInterval(t);
+  }, [streamEnabled, lastFrameAtMs]);
 
   useEffect(() => {
     if (!streamEnabled) return;
     setMjpegStreamSession(crypto.randomUUID());
   }, [agentId, streamEnabled]);
 
+  useEffect(() => {
+    // Reset status when stream toggles or agent changes.
+    setStreaming(false);
+    setStreamEverLoaded(false);
+    setStreamError(false);
+    setLastFrameAtMs(null);
+  }, [agentId, streamEnabled, mjpegStreamSession]);
+
+  const streamTuning = STREAM_PRESET_TUNING[streamPreset];
+
   const streamUrl = useMemo(
-    () => (streamEnabled && mjpegStreamSession ? mjpegStreamUrl(agentId, mjpegStreamSession) : ""),
-    [streamEnabled, agentId, mjpegStreamSession],
+    () =>
+      streamEnabled && mjpegStreamSession
+        ? mjpegStreamUrl(agentId, mjpegStreamSession, streamTuning)
+        : "",
+    [streamEnabled, agentId, mjpegStreamSession, streamTuning],
+  );
+
+  const applyStreamPreset = useCallback(
+    (next: StreamPreset) => {
+      setStreamPreset(next);
+      saveStreamPreset(next);
+
+      if (!streamEnabled) return;
+
+      // Rotate MJPEG session so the GET request picks up new tuning query params immediately.
+      setMjpegStreamSession((prev) => {
+        if (prev) notifyMjpegViewerLeft(agentId, prev);
+        return crypto.randomUUID();
+      });
+    },
+    [agentId, streamEnabled],
   );
 
   useEffect(() => {
@@ -93,31 +228,36 @@ export function ScreenTab({
     };
   }, []);
 
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!remoteControl || !imgRef.current) return;
+  const sendMouseMove = useCallback(
+    (clientX: number, clientY: number) => {
+      const img = imgRef.current;
+      if (!remoteControl || !img) return;
+      const pt = pointerToImageCoords(img, clientX, clientY);
+      if (!pt) return;
+      sendWsMessage({
+        type: "control",
+        agent_id: agentId,
+        cmd: { type: "MouseMove", x: pt.x, y: pt.y },
+      });
+    },
+    [remoteControl, agentId, sendWsMessage],
+  );
 
-    const rect = imgRef.current.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * imgRef.current.naturalWidth;
-    const y = ((e.clientY - rect.top) / rect.height) * imgRef.current.naturalHeight;
-
-    sendWsMessage({
-      type: "control",
-      agent_id: agentId,
-      cmd: { type: "MouseMove", x: Math.floor(x), y: Math.floor(y) },
-    });
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!remoteControl || !e.isPrimary) return;
+    sendMouseMove(e.clientX, e.clientY);
   };
 
   const handleMouseClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!remoteControl || !imgRef.current) return;
     e.preventDefault();
-    const rect = imgRef.current.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * imgRef.current.naturalWidth;
-    const y = ((e.clientY - rect.top) / rect.height) * imgRef.current.naturalHeight;
+    const pt = pointerToImageCoords(imgRef.current, e.clientX, e.clientY);
+    if (!pt) return;
     const button = e.button === 2 ? "right" : "left";
     sendWsMessage({
       type: "control",
       agent_id: agentId,
-      cmd: { type: "MouseClick", x: Math.floor(x), y: Math.floor(y), button },
+      cmd: { type: "MouseClick", x: pt.x, y: pt.y, button },
     });
   };
 
@@ -169,14 +309,13 @@ export function ScreenTab({
   };
 
   const toggleFullscreen = () => {
-    if (!containerRef.current) return;
+    const el = containerRef.current;
+    if (!el) return;
 
     if (!document.fullscreenElement) {
-      containerRef.current.requestFullscreen();
-      setFullscreen(true);
+      void requestViewportFullscreen(el);
     } else {
-      document.exitFullscreen();
-      setFullscreen(false);
+      void exitViewportFullscreen();
     }
   };
 
@@ -196,11 +335,48 @@ export function ScreenTab({
           <Header
             variant="h2"
             actions={
-              <SpaceBetween direction="horizontal" size="s" alignItems="center">
-                <Box padding={{ top: "xs" }}>
-                  <StreamStatus streaming={streaming} />
-                </Box>
-                <Box padding={{ top: "xs" }}>
+              <div className="sentinel-screen-header-actions">
+                <div className="sentinel-screen-header__status">
+                  <StreamStatus
+                    state={
+                      blockedByRole
+                        ? "blocked"
+                        : streaming
+                          ? "streaming"
+                          : streamEnabled
+                            ? streamError
+                              ? "stalled"
+                              : streamEverLoaded
+                                ? isStalled
+                                  ? "stalled"
+                                  : "waiting"
+                                : "starting"
+                            : "waiting"
+                    }
+                  />
+                </div>
+                <div className="sentinel-screen-header__preset">
+                  <FormField label="Stream quality" stretch>
+                    <Select
+                      disabled={blockedByRole || !streamEnabled}
+                      selectedOption={
+                        STREAM_PRESET_OPTIONS.find((o) => o.value === streamPreset) ?? STREAM_PRESET_OPTIONS[1]
+                      }
+                      onChange={({ detail }) => {
+                        const v = detail.selectedOption?.value;
+                        if (v === "saver" || v === "balanced" || v === "sharp") {
+                          applyStreamPreset(v);
+                        }
+                      }}
+                      options={STREAM_PRESET_OPTIONS.map((o) => ({
+                        label: o.label,
+                        value: o.value,
+                        description: o.description,
+                      }))}
+                    />
+                  </FormField>
+                </div>
+                <div className="sentinel-screen-header__toggle">
                   <Toggle
                     checked={remoteControl}
                     disabled={blockedByRole || !streamEnabled}
@@ -208,22 +384,24 @@ export function ScreenTab({
                   >
                     Remote control
                   </Toggle>
-                </Box>
+                </div>
                 <Button
                   iconName="notification"
                   disabled={blockedByRole || !streamEnabled}
+                  ariaLabel="Send notification"
                   onClick={() => setShowNotificationModal(true)}
                 >
-                  Send notification
+                  <span className="sentinel-screen-header__btn-text">Send notification</span>
                 </Button>
                 <Button
                   iconName={fullscreen ? "close" : "expand"}
                   disabled={blockedByRole || !streamEnabled}
+                  ariaLabel={fullscreen ? "Exit fullscreen" : "Enter fullscreen"}
                   onClick={toggleFullscreen}
                 >
-                  {fullscreen ? "Exit" : "Fullscreen"}
+                  <span className="sentinel-screen-header__btn-text">{fullscreen ? "Exit" : "Fullscreen"}</span>
                 </Button>
-              </SpaceBetween>
+              </div>
             }
           >
             Screen Viewer
@@ -254,19 +432,28 @@ export function ScreenTab({
               src={streamEnabled ? streamUrl : ""}
               alt="Agent screen"
               className="sentinel-screen-image"
-              onLoad={() => streamEnabled && setStreaming(true)}
-              onError={() => setStreaming(false)}
+              onLoad={() => {
+                if (!streamEnabled) return;
+                setStreaming(true);
+                setStreamEverLoaded(true);
+                setStreamError(false);
+                setLastFrameAtMs(Date.now());
+              }}
+              onError={() => {
+                setStreaming(false);
+                setStreamError(true);
+              }}
             />
             {remoteControl && streamEnabled && (
               <div
                 className="sentinel-remote-overlay"
-                onMouseMove={handleMouseMove}
+                onPointerMove={handlePointerMove}
                 onClick={handleMouseClick}
                 onContextMenu={handleMouseClick}
                 onKeyDown={handleKeyPress}
                 tabIndex={0}
-                role="button"
-                aria-label="Remote control overlay"
+                role="application"
+                aria-label="Remote control overlay — drag to move the cursor; tap to click"
               />
             )}
           </div>
@@ -275,8 +462,33 @@ export function ScreenTab({
         {!streaming && streamEnabled && (
           <Box textAlign="center" padding="xxl">
             <Box variant="p" color="text-body-secondary">
-              Screen stream not available. Ensure the agent is connected and screen capture is enabled.
+              {streamError
+                ? "Screen stream failed to load. The agent may be offline or the server rejected the stream request."
+                : "Starting screen stream…"}
             </Box>
+            {streamError && (
+              <Box padding={{ top: "s" }}>
+                <Button
+                  onClick={() => {
+                    // Restart MJPEG session to force a new request.
+                    setMjpegStreamSession(crypto.randomUUID());
+                  }}
+                >
+                  Retry
+                </Button>
+              </Box>
+            )}
+          </Box>
+        )}
+        {streaming && streamEnabled && isStalled && (
+          <Box margin={{ top: "m" }}>
+            <Alert type="warning" header="Stream appears stalled">
+              No new frames have been received recently. This can happen if the agent paused capture, the network is unstable,
+              or a proxy dropped the connection.
+              <Box padding={{ top: "s" }}>
+                <Button onClick={() => setMjpegStreamSession(crypto.randomUUID())}>Reconnect</Button>
+              </Box>
+            </Alert>
           </Box>
         )}
       </Container>

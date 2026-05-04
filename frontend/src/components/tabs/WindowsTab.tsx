@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import Table from "@cloudscape-design/components/table";
 import Box from "@cloudscape-design/components/box";
 import Header from "@cloudscape-design/components/header";
@@ -10,6 +11,7 @@ import { api } from "../../lib/api";
 import { fmtDateTime } from "../../lib/utils";
 import { prettyAppLabel } from "../../lib/app-names";
 import { AppIcon } from "../common/AppIcon";
+import { applyActivityStateToSearchParams } from "../../lib/activityUrl";
 
 interface WindowEvent {
   id: number;
@@ -32,6 +34,7 @@ interface WindowsTabProps {
 }
 
 export function WindowsTab({ agentId }: WindowsTabProps) {
+  const navigate = useNavigate();
   const [items, setItems] = useState<WindowEvent[]>([]);
   const [topItems, setTopItems] = useState<TopWindowRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -69,6 +72,14 @@ export function WindowsTab({ agentId }: WindowsTabProps) {
       setLoading(false);
     }
   }, [agentId]);
+
+  const openInActivity = useCallback(
+    (q: string) => {
+      const qs = applyActivityStateToSearchParams(new URLSearchParams(), { v: 1, q });
+      navigate(`/agents/${agentId}?${qs.toString()}`);
+    },
+    [agentId, navigate],
+  );
 
   useEffect(() => {
     void fetchWindows();
@@ -159,7 +170,16 @@ export function WindowsTab({ agentId }: WindowsTabProps) {
         {
           id: "window",
           header: "Window Title",
-          cell: (item) => item.window_title || "—",
+          cell: (item) => (
+            <div style={{ display: "flex", gap: 10, alignItems: "center", justifyContent: "space-between" }}>
+              <span>{item.window_title || "—"}</span>
+              {item.window_title?.trim() ? (
+                <Button variant="inline-link" onClick={() => openInActivity(item.window_title)}>
+                  Activity
+                </Button>
+              ) : null}
+            </div>
+          ),
           sortingField: "window_title",
         },
       ]}

@@ -1,4 +1,5 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Globe,
   Keyboard,
@@ -19,6 +20,7 @@ import Badge from "@cloudscape-design/components/badge";
 import Box from "@cloudscape-design/components/box";
 import Spinner from "@cloudscape-design/components/spinner";
 import Button from "@cloudscape-design/components/button";
+import ButtonDropdown from "@cloudscape-design/components/button-dropdown";
 import Modal from "@cloudscape-design/components/modal";
 import Input from "@cloudscape-design/components/input";
 import Checkbox from "@cloudscape-design/components/checkbox";
@@ -28,8 +30,18 @@ import { Session, type SessionAlertEvent, formatDuration } from "../../lib/sessi
 import { apiUrl } from "../../lib/api";
 import { fmtDateTimePrecise, parseTimestamp } from "../../lib/utils";
 import { AppIcon } from "../common/AppIcon";
+import {
+  applyActivityStateToSearchParams,
+  encodeActivityState,
+  pruneSearchParamsForShare,
+  readActivityStateFromSearchParams,
+  type ActivityUrlStateV1,
+} from "../../lib/activityUrl";
+import { deleteActivityBookmark, listActivityBookmarks, newBookmarkId, upsertActivityBookmark, type ActivityBookmark } from "../../lib/activityBookmarks";
 
 interface ActivityTimelineProps {
+  /** When set, Activity filters can be bookmarked + synced to `?activity=` in the URL. */
+  agentId?: string;
   sessions: Session[];
   loading?: boolean;
   onRefresh?: () => void;
@@ -402,9 +414,13 @@ function buildMergedActivityTimeline(session: Session): MergedActivityRow[] {
 function MergedActivityRowView({
   row,
   onOpenScreenshot,
+  agentId,
+  onActivityDeepLink,
 }: {
   row: MergedActivityRow;
   onOpenScreenshot: (eventId: number) => void;
+  agentId?: string;
+  onActivityDeepLink?: (state: ActivityUrlStateV1) => void;
 }) {
   if (row.kind === "window") {
     const win = row.window;
@@ -413,6 +429,18 @@ function MergedActivityRowView({
         <div className="vtl-merged-head">
           <span className="vtl-merged-time">{fmtDateTimePrecise(win.timestamp)}</span>
           <Badge color="grey">Window</Badge>
+          {agentId && onActivityDeepLink && (win.window_title ?? "").trim() ? (
+            <Button
+              variant="inline-link"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onActivityDeepLink({ v: 1, q: win.window_title });
+              }}
+            >
+              Search
+            </Button>
+          ) : null}
         </div>
         <div className="vtl-merged-body">
           <span className="vtl-merged-window-line">
@@ -433,6 +461,18 @@ function MergedActivityRowView({
           <span title="Window title and URL captured at the same instant">
             <Badge color="blue">Page</Badge>
           </span>
+          {agentId && onActivityDeepLink && u.url.trim() ? (
+            <Button
+              variant="inline-link"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onActivityDeepLink({ v: 1, q: u.url });
+              }}
+            >
+              Search URL
+            </Button>
+          ) : null}
         </div>
         <div className="vtl-merged-body">
           <span className="vtl-merged-window-line">
@@ -456,6 +496,18 @@ function MergedActivityRowView({
         <div className="vtl-merged-head">
           <span className="vtl-merged-time">{fmtDateTimePrecise(u.timestamp)}</span>
           <Badge color="blue">URL</Badge>
+          {agentId && onActivityDeepLink && u.url.trim() ? (
+            <Button
+              variant="inline-link"
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                onActivityDeepLink({ v: 1, q: u.url });
+              }}
+            >
+              Search URL
+            </Button>
+          ) : null}
         </div>
         <div className="vtl-merged-body">
           <a href={u.url} target="_blank" rel="noreferrer" className="vtl-merged-url-row">
@@ -550,6 +602,8 @@ function SessionItem({
   forceExpanded,
   onOpenScreenshot,
   onFilterApp,
+  agentId,
+  onActivityDeepLink,
 }: {
   session: Session;
   isLast: boolean;
@@ -557,6 +611,8 @@ function SessionItem({
   forceExpanded: boolean;
   onOpenScreenshot: (eventId: number) => void;
   onFilterApp: (exeName: string) => void;
+  agentId?: string;
+  onActivityDeepLink?: (state: ActivityUrlStateV1) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [userToggled, setUserToggled] = useState(false);
@@ -748,6 +804,8 @@ function SessionItem({
                       }-${i}`}
                       row={row}
                       onOpenScreenshot={onOpenScreenshot}
+                      agentId={agentId}
+                      onActivityDeepLink={onActivityDeepLink}
                     />
                   ))}
                 </div>
@@ -874,6 +932,7 @@ function TimelineScreenshotModal({
 // ── Main component ────────────────────────────────────────────────────────────
 
 export function ActivityTimeline({
+  agentId,
   sessions,
   loading,
   onRefresh,
@@ -882,6 +941,10 @@ export function ActivityTimeline({
   loadingMore = false,
   highlightTimestamp,
 }: ActivityTimelineProps) {
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlSyncEnabled = Boolean(agentId);
+
   const [screenshotModalId, setScreenshotModalId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [alertsOnly, setAlertsOnly] = useState(false);
@@ -889,6 +952,149 @@ export function ActivityTimeline({
   const [jumpRangeValue, setJumpRangeValue] = useState<DateRangePickerProps.Value | null>(null);
   /** Explicit expand/collapse per day; omitted keys use default (newest day expanded only). */
   const [dayExpanded, setDayExpanded] = useState<Record<string, boolean>>({});
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null);
+  const lastAutoLoadMoreAtMsRef = useRef<number>(0);
+  const lastUrlActivityRawRef = useRef<string | null>(null);
+  const skipActivityUrlPushRef = useRef(false);
+
+  const [bookmarkModalOpen, setBookmarkModalOpen] = useState(false);
+  const [bookmarkName, setBookmarkName] = useState("");
+  const [bookmarks, setBookmarks] = useState<ActivityBookmark[]>([]);
+  const [manageBookmarksOpen, setManageBookmarksOpen] = useState(false);
+
+  const buildActivityStateFromUi = useCallback((): ActivityUrlStateV1 | null => {
+    const q = searchQuery.trim();
+    const app = appFilterExe?.trim() ? appFilterExe.trim() : null;
+    const bounds = resolveDateRangeToDayBounds(jumpRangeValue);
+    const from = bounds?.start ?? null;
+    const to = bounds?.end ?? null;
+    if (!q && !alertsOnly && !app && !from && !to) return null;
+    return {
+      v: 1,
+      q: q || undefined,
+      alerts: alertsOnly ? true : undefined,
+      app,
+      from,
+      to,
+    };
+  }, [searchQuery, alertsOnly, appFilterExe, jumpRangeValue]);
+
+  const applyActivityStateToUi = useCallback((s: ActivityUrlStateV1 | null) => {
+    if (!s) {
+      setSearchQuery("");
+      setAlertsOnly(false);
+      setAppFilterExe(null);
+      setJumpRangeValue(null);
+      return;
+    }
+    setSearchQuery(s.q ?? "");
+    setAlertsOnly(Boolean(s.alerts));
+    setAppFilterExe(s.app ?? null);
+    if (s.from && s.to) {
+      setJumpRangeValue({
+        type: "absolute",
+        startDate: s.from,
+        endDate: s.to,
+      });
+    } else {
+      setJumpRangeValue(null);
+    }
+  }, []);
+
+  // Load bookmarks when agent changes.
+  useEffect(() => {
+    if (!agentId) {
+      setBookmarks([]);
+      return;
+    }
+    setBookmarks(listActivityBookmarks(agentId));
+  }, [agentId]);
+
+  // Apply `?activity=` from the URL into UI state (deep links + bookmarks).
+  useEffect(() => {
+    if (!urlSyncEnabled) return;
+    const raw = searchParams.get("activity");
+    if (raw === lastUrlActivityRawRef.current) return;
+    lastUrlActivityRawRef.current = raw;
+    const decoded = readActivityStateFromSearchParams(searchParams);
+    skipActivityUrlPushRef.current = true;
+    applyActivityStateToUi(decoded);
+  }, [urlSyncEnabled, searchParams, applyActivityStateToUi]);
+
+  // Push UI state into the URL (shareable / bookmarkable), without clobbering unrelated params.
+  useEffect(() => {
+    if (!urlSyncEnabled) return;
+    if (skipActivityUrlPushRef.current) {
+      skipActivityUrlPushRef.current = false;
+      return;
+    }
+    const nextState = buildActivityStateFromUi();
+    const encoded = nextState ? encodeActivityState(nextState) : null;
+    const current = searchParams.get("activity");
+    if (encoded === current) return;
+
+    setSearchParams((prev) => applyActivityStateToSearchParams(prev, nextState), { replace: true });
+    lastUrlActivityRawRef.current = encoded;
+  }, [urlSyncEnabled, buildActivityStateFromUi, setSearchParams, searchParams]);
+
+  const copyActivityLink = useCallback(async () => {
+    if (!agentId) return;
+    const state = buildActivityStateFromUi();
+    const qs = applyActivityStateToSearchParams(new URLSearchParams(), state);
+    qs.set("tab", "activity");
+    const share = pruneSearchParamsForShare(qs);
+    const url = `${window.location.origin}/agents/${agentId}?${share.toString()}`;
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch {
+      // ignore
+    }
+  }, [agentId, buildActivityStateFromUi]);
+
+  const saveBookmark = useCallback(() => {
+    if (!agentId) return;
+    const name = bookmarkName.trim();
+    if (!name) return;
+    const state = buildActivityStateFromUi();
+    if (!state) return;
+    const b: ActivityBookmark = {
+      id: newBookmarkId(),
+      name,
+      created_at: new Date().toISOString(),
+      state,
+    };
+    upsertActivityBookmark(agentId, b);
+    setBookmarks(listActivityBookmarks(agentId));
+    setBookmarkModalOpen(false);
+    setBookmarkName("");
+  }, [agentId, bookmarkName, buildActivityStateFromUi]);
+
+  const openBookmark = useCallback(
+    (b: ActivityBookmark) => {
+      if (!agentId) return;
+      const qs = applyActivityStateToSearchParams(new URLSearchParams(), b.state);
+      navigate(`/agents/${agentId}?${qs.toString()}`);
+    },
+    [agentId, navigate],
+  );
+
+  const removeBookmark = useCallback(
+    (id: string) => {
+      if (!agentId) return;
+      deleteActivityBookmark(agentId, id);
+      setBookmarks(listActivityBookmarks(agentId));
+    },
+    [agentId],
+  );
+
+  const deepLinkToActivity = useCallback(
+    (patch: ActivityUrlStateV1) => {
+      if (!agentId) return;
+      const qs = applyActivityStateToSearchParams(new URLSearchParams(), patch);
+      navigate(`/agents/${agentId}?${qs.toString()}`);
+    },
+    [agentId, navigate],
+  );
 
   const sorted = useMemo(
     () =>
@@ -1036,12 +1242,51 @@ export function ActivityTimeline({
     [sorted],
   );
 
-  const isFiltered = searchQuery.trim().length > 0 || alertsOnly || jumpRangeValue != null;
+  const isFiltered = searchQuery.trim().length > 0 || alertsOnly || jumpRangeValue != null || Boolean(appFilterExe);
+  const canShareActivity = Boolean(agentId) && isFiltered;
+  const canAutoLoadMore =
+    Boolean(onLoadMore) &&
+    hasMoreOlder &&
+    !loadingMore &&
+    !loading &&
+    !alertsOnly &&
+    !jumpRangeValue &&
+    !searchQuery.trim();
+
+  // Infinite scroll: when the sentinel becomes visible, load older history in batches.
+  useEffect(() => {
+    const el = loadMoreSentinelRef.current;
+    if (!el) return;
+    if (!onLoadMore) return;
+
+    const obs = new IntersectionObserver(
+      (entries) => {
+        const hit = entries.some((e) => e.isIntersecting);
+        if (!hit) return;
+        if (!canAutoLoadMore) return;
+        const now = Date.now();
+        // Debounce auto loads to avoid rapid-fire calls while layout shifts.
+        if (now - lastAutoLoadMoreAtMsRef.current < 900) return;
+        lastAutoLoadMoreAtMsRef.current = now;
+        onLoadMore();
+      },
+      { root: null, rootMargin: "900px 0px", threshold: 0.01 },
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, [onLoadMore, canAutoLoadMore]);
   const headerDesc = useMemo(() => {
     const base = isFiltered
       ? `${filteredSorted.length} of ${sorted.length} sessions`
       : `${sorted.length} sessions`;
-    return `${base} tracked${highlightTimestamp ? " · scrolled to alert time" : ""}`;
+    const scopeHint = onLoadMore
+      ? isFiltered
+        ? " · filters search within loaded history"
+        : hasMoreOlder
+          ? " · scroll down to load older"
+          : ""
+      : "";
+    return `${base} tracked${highlightTimestamp ? " · scrolled to alert time" : ""}${scopeHint}`;
   }, [filteredSorted.length, sorted.length, isFiltered, highlightTimestamp]);
 
   if (loading && sessions.length === 0) {
@@ -1091,6 +1336,44 @@ export function ActivityTimeline({
                 {urlCount > 0 && (
                   <Badge color="blue">{urlCount} with URLs</Badge>
                 )}
+                {agentId ? (
+                  <ButtonDropdown
+                    items={[
+                      { id: "copy", text: "Copy link to this view", disabled: !canShareActivity },
+                      { id: "save", text: "Save bookmark…", disabled: !canShareActivity },
+                      { id: "manage", text: "Manage bookmarks…", disabled: bookmarks.length === 0 },
+                      ...bookmarks.map((b) => ({
+                        id: `bm:${b.id}`,
+                        text: b.name,
+                        disabled: false,
+                      })),
+                    ]}
+                    onItemClick={({ detail }) => {
+                      const id = String(detail.id ?? "");
+                      if (id === "copy") {
+                        void copyActivityLink();
+                        return;
+                      }
+                      if (id === "save") {
+                        setBookmarkName("");
+                        setBookmarkModalOpen(true);
+                        return;
+                      }
+                      if (id === "manage") {
+                        setManageBookmarksOpen(true);
+                        return;
+                      }
+                      if (id.startsWith("bm:")) {
+                        const bid = id.slice("bm:".length);
+                        const b = bookmarks.find((x) => x.id === bid);
+                        if (b) openBookmark(b);
+                        return;
+                      }
+                    }}
+                  >
+                    Bookmarks
+                  </ButtonDropdown>
+                ) : null}
               </SpaceBetween>
             }
           >
@@ -1109,6 +1392,9 @@ export function ActivityTimeline({
                   type="search"
                 />
               </div>
+              <Box color="text-body-secondary" fontSize="body-s" padding={{ top: "xxs" }}>
+                Searches within loaded history{hasMoreOlder ? " (scroll down to load older)" : ""}.
+              </Box>
             </FormField>
             <FormField label="Date range">
               <div className="vtl-toolbar-jump">
@@ -1148,6 +1434,24 @@ export function ActivityTimeline({
                   Clear
                 </Button>
               </div>
+            ) : null}
+            {isFiltered ? (
+              <Button
+                variant="link"
+                onClick={() => {
+                  setSearchQuery("");
+                  setAlertsOnly(false);
+                  setAppFilterExe(null);
+                  setJumpRangeValue(null);
+                  if (urlSyncEnabled) {
+                    skipActivityUrlPushRef.current = true;
+                    lastUrlActivityRawRef.current = null;
+                    setSearchParams((prev) => applyActivityStateToSearchParams(prev, null), { replace: true });
+                  }
+                }}
+              >
+                Clear filters
+              </Button>
             ) : null}
           </div>
 
@@ -1196,6 +1500,8 @@ export function ActivityTimeline({
                                       prev?.toLowerCase() === exe.toLowerCase() ? null : exe
                                     )
                                   }
+                                  agentId={agentId}
+                                  onActivityDeepLink={deepLinkToActivity}
                                 />
                               </div>
                             );
@@ -1206,7 +1512,9 @@ export function ActivityTimeline({
                   );
                 })}
               </div>
-              {onLoadMore && !jumpRangeValue && !alertsOnly && !searchQuery.trim() && !appFilterExe ? (
+              {/* Infinite scroll sentinel (always present so observer can attach). */}
+              <div ref={loadMoreSentinelRef} style={{ height: 1 }} />
+              {onLoadMore && !jumpRangeValue && !alertsOnly && !searchQuery.trim() ? (
                 <Box padding={{ vertical: "l" }} textAlign="center">
                   <SpaceBetween size="xs">
                     <Button
@@ -1230,6 +1538,88 @@ export function ActivityTimeline({
         eventId={screenshotModalId}
         onClose={() => setScreenshotModalId(null)}
       />
+
+      <Modal
+        visible={bookmarkModalOpen}
+        onDismiss={() => setBookmarkModalOpen(false)}
+        header="Save activity bookmark"
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button variant="link" onClick={() => setBookmarkModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button variant="primary" disabled={!bookmarkName.trim() || !canShareActivity} onClick={saveBookmark}>
+                Save
+              </Button>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        <SpaceBetween size="m">
+          <Box color="text-body-secondary" fontSize="body-s">
+            Bookmarks are stored in this browser (localStorage) for this device.
+          </Box>
+          <FormField label="Name">
+            <Input value={bookmarkName} onChange={({ detail }) => setBookmarkName(detail.value)} placeholder="e.g. Suspicious browser activity" />
+          </FormField>
+        </SpaceBetween>
+      </Modal>
+
+      <Modal
+        visible={manageBookmarksOpen}
+        onDismiss={() => setManageBookmarksOpen(false)}
+        header="Manage activity bookmarks"
+        footer={
+          <Box float="right">
+            <Button variant="link" onClick={() => setManageBookmarksOpen(false)}>
+              Close
+            </Button>
+          </Box>
+        }
+      >
+        {bookmarks.length === 0 ? (
+          <Box color="text-body-secondary">No bookmarks saved yet.</Box>
+        ) : (
+          <SpaceBetween size="s">
+            {bookmarks.map((b) => (
+              <Box
+                key={b.id}
+                padding="s"
+                nativeAttributes={{
+                  style: {
+                    border: "1px solid var(--awsui-color-border-divider-default)",
+                    borderRadius: 8,
+                  },
+                }}
+              >
+                <SpaceBetween size="xs">
+                  <Box variant="strong">{b.name}</Box>
+                  <SpaceBetween direction="horizontal" size="xs" alignItems="center">
+                    <Button variant="primary" onClick={() => openBookmark(b)}>
+                      Open
+                    </Button>
+                    <Button
+                      variant="normal"
+                      onClick={() => {
+                        const qs = applyActivityStateToSearchParams(new URLSearchParams(), b.state);
+                        const share = pruneSearchParamsForShare(qs);
+                        const url = `${window.location.origin}/agents/${agentId}?${share.toString()}`;
+                        void navigator.clipboard.writeText(url);
+                      }}
+                    >
+                      Copy link
+                    </Button>
+                    <Button variant="inline-link" onClick={() => removeBookmark(b.id)}>
+                      Remove
+                    </Button>
+                  </SpaceBetween>
+                </SpaceBetween>
+              </Box>
+            ))}
+          </SpaceBetween>
+        )}
+      </Modal>
     </>
   );
 }

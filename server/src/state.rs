@@ -50,6 +50,20 @@ pub struct AgentLiveSnapshot {
     pub updated_at: Option<DateTime<Utc>>,
 }
 
+/// Normalised MJPEG viewer tuning (after clamping query params).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MjpegViewerPrefs {
+    pub jpeg_quality: u8,
+    pub interval_ms: u32,
+}
+
+/// Active MJPEG HTTP session (`?session=<uuid>` → agent + tuning).
+#[derive(Clone, Copy, Debug)]
+pub struct MjpegSession {
+    pub agent_id: Uuid,
+    pub prefs: MjpegViewerPrefs,
+}
+
 /// A message fanned-out to every active dashboard viewer.
 #[derive(Clone, Debug)]
 pub enum Broadcast {
@@ -70,9 +84,11 @@ pub struct AppState {
     /// MJPEG viewer refcount per agent; drives `start_capture` / `stop_capture`.
     pub capture_viewers: Mutex<HashMap<Uuid, u32>>,
 
-    /// Active MJPEG HTTP sessions (`?session=<uuid>` → agent id). Used so explicit “leave”
+    /// Active MJPEG HTTP sessions (`?session=<uuid>` → agent + tuning). Used so explicit “leave”
     /// can drop refcount immediately (browser may delay closing the image request).
-    pub mjpeg_sessions: Mutex<HashMap<Uuid, Uuid>>,
+    pub mjpeg_sessions: Mutex<HashMap<Uuid, MjpegSession>>,
+    /// Last `start_capture` parameters applied for an agent (so we can restart capture when merged prefs change).
+    pub mjpeg_active_capture: Mutex<HashMap<Uuid, MjpegViewerPrefs>>,
 
     pub allow_insecure_dashboard_open: bool,
     pub agent_secret: Option<String>,
@@ -162,6 +178,7 @@ impl AppState {
             agent_cmds: Mutex::new(HashMap::new()),
             capture_viewers: Mutex::new(HashMap::new()),
             mjpeg_sessions: Mutex::new(HashMap::new()),
+            mjpeg_active_capture: Mutex::new(HashMap::new()),
             allow_insecure_dashboard_open,
             agent_secret,
             allow_insecure_agent_auth,
