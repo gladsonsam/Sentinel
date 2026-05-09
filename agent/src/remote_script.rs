@@ -1,4 +1,4 @@
-//! Run PowerShell or cmd.exe scripts from server commands (high privilege — gated on server).
+//! Run `PowerShell` or cmd.exe scripts from server commands (high privilege — gated on server).
 
 use std::time::Duration;
 

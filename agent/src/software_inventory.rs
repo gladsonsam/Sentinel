@@ -31,7 +31,7 @@ fn fingerprint_items(items: &[Value]) -> u64 {
 }
 
 /// ASCII-only case folding; avoids per-comparison `to_lowercase()` allocations (MSRV-safe).
-pub(crate) fn cmp_str_ascii_case_insensitive(a: &str, b: &str) -> Ordering {
+pub fn cmp_str_ascii_case_insensitive(a: &str, b: &str) -> Ordering {
     let mut ab = a.bytes().map(|x| x.to_ascii_lowercase());
     let mut bb = b.bytes().map(|x| x.to_ascii_lowercase());
     loop {
@@ -47,14 +47,14 @@ pub(crate) fn cmp_str_ascii_case_insensitive(a: &str, b: &str) -> Ordering {
     }
 }
 
-/// Windows often stores `InstallDate` as REG_SZ `YYYYMMDD` (or `YYYYMMDDHHmmss`). Present as ISO date.
+/// Windows often stores `InstallDate` as `REG_SZ` `YYYYMMDD` (or `YYYYMMDDHHmmss`). Present as ISO date.
 #[cfg(windows)]
 fn normalize_install_date(raw: &str) -> Option<String> {
     let s = raw.trim();
     if s.is_empty() {
         return None;
     }
-    let digits: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+    let digits: String = s.chars().filter(char::is_ascii_digit).collect();
     let slice = if digits.len() >= 14 {
         match digits.get(..8) {
             Some(h) => h,
@@ -112,14 +112,14 @@ fn read_uninstall_key(root: &winreg::RegKey, path: &str, out: &mut Vec<Value>) {
             "version": if version.is_empty() { Value::Null } else { json!(version) },
             "publisher": if publisher.is_empty() { Value::Null } else { json!(publisher) },
             "install_location": if loc.is_empty() { Value::Null } else { json!(loc) },
-            "install_date": date_opt.map(|s| json!(s)).unwrap_or(Value::Null),
+            "install_date": date_opt.map_or(Value::Null, |s| json!(s)),
         }));
     }
 }
 
 #[cfg(windows)]
 pub fn collect_items() -> Vec<Value> {
-    use winreg::enums::*;
+    use winreg::enums::{HKEY_LOCAL_MACHINE, HKEY_CURRENT_USER};
     use winreg::RegKey;
 
     let mut out = Vec::new();

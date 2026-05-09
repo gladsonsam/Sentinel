@@ -1,5 +1,5 @@
 //! Emit `UPDATE _sqlx_migrations ...` statements using the same resolution + SHA-384
-//! logic as SQLx (matches `sqlx::migrate!()` at compile time when run on the same files).
+//! logic as `SQLx` (matches `sqlx::migrate!()` at compile time when run on the same files).
 //!
 //! From repo root: `cargo run --locked -p sentinel-server --bin migration_checksums`
 //! (uses `server/migrations` by default).
@@ -12,8 +12,7 @@ async fn main() -> anyhow::Result<()> {
     let default = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("migrations");
     let path = std::env::args()
         .nth(1)
-        .map(PathBuf::from)
-        .unwrap_or(default);
+        .map_or(default, PathBuf::from);
     let path = path
         .canonicalize()
         .map_err(|e| anyhow::anyhow!("cannot open migrations directory {}: {e}", path.display()))?;

@@ -15,7 +15,7 @@ pub fn spawn(state: Arc<AppState>) {
     tokio::spawn(async move {
         // Sleep until the next minute boundary (use UTC — seconds-within-minute is TZ-independent)
         let seconds = chrono::Utc::now().second();
-        let wait = if seconds == 0 { 60 } else { 60 - seconds as u64 };
+        let wait = if seconds == 0 { 60 } else { 60 - u64::from(seconds) };
         tokio::time::sleep(Duration::from_secs(wait)).await;
 
         let mut interval = tokio::time::interval(Duration::from_secs(60));
@@ -39,11 +39,11 @@ async fn tick(state: &Arc<AppState>) -> anyhow::Result<()> {
     let current_minute_of_day = (now.hour() * 60 + now.minute()) as i32;
 
     // Truncate to the start of the minute (in UTC) for expected_fire_time storage
-    let expected_fire_time = now_utc.with_second(0).unwrap().with_nanosecond(0).unwrap();
+    let expected_fire_time = now_utc.with_second(0).unwrap_or(now_utc).with_nanosecond(0).unwrap_or(now_utc);
 
     // 1. Fetch enabled scheduled scripts with their schedules and scopes
     let records = sqlx::query(
-        r#"
+        r"
         SELECT 
             s.id, s.name, s.shell, s.script, s.timeout_secs,
             COALESCE(json_agg(json_build_object('kind', sc.kind, 'group_id', sc.group_id, 'agent_id', sc.agent_id)) FILTER (WHERE sc.kind IS NOT NULL), '[]') as scopes,
@@ -55,7 +55,7 @@ async fn tick(state: &Arc<AppState>) -> anyhow::Result<()> {
         LEFT JOIN scheduled_script_scopes sc ON sc.script_id = s.id
         WHERE s.enabled = true
         GROUP BY s.id
-        "#
+        "
     )
     .fetch_all(&state.db)
     .await?;
@@ -100,7 +100,7 @@ async fn tick(state: &Arc<AppState>) -> anyhow::Result<()> {
             continue;
         }
 
-        let connected_agents = state.agents.lock().keys().cloned().collect::<std::collections::HashSet<_>>();
+        let connected_agents = state.agents.lock().keys().copied().collect::<std::collections::HashSet<_>>();
         
         for agent_id in target_agents {
             let is_online = connected_agents.contains(&agent_id);

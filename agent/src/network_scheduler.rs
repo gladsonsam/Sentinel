@@ -7,7 +7,7 @@ use tracing::{info, warn};
 
 use crate::config::Config;
 
-pub(crate) async fn apply_network_policy(blocked: bool, hostname: String, port: u16) {
+pub async fn apply_network_policy(blocked: bool, hostname: String, port: u16) {
     #[cfg(target_os = "windows")]
     {
         match crate::updater_client::set_network_policy_via_service(blocked, &hostname, port).await {
@@ -40,7 +40,7 @@ pub(crate) async fn apply_network_policy(blocked: bool, hostname: String, port: 
     }
 }
 
-pub(crate) async fn run_internet_curfew_scheduler(shared_cfg: Arc<Mutex<Config>>) {
+pub async fn run_internet_curfew_scheduler(shared_cfg: Arc<Mutex<Config>>) {
     use crate::schedule as sched;
 
     let mut last_applied: Option<bool> = None;
@@ -50,7 +50,7 @@ pub(crate) async fn run_internet_curfew_scheduler(shared_cfg: Arc<Mutex<Config>>
         interval.tick().await;
 
         let (hostname, port, desired, current, has_rules) = {
-            let c = shared_cfg.lock().unwrap();
+            let c = shared_cfg.lock().unwrap_or_else(|e| e.into_inner());
             let (h, p) = crate::network_policy::parse_server_host_port(&c.server_url)
                 .unwrap_or_else(|| (String::new(), 443));
             let has_rules = !c.internet_block_rules.is_empty();

@@ -30,7 +30,7 @@ static FILE_UPLOAD_SESSION: Mutex<Option<FileUploadSession>> = Mutex::new(None);
 const REMOTE_FILE_CHUNK_BYTES: usize = 3 * 1024 * 1024;
 
 
-pub(crate) struct ServerCommandArgs<'a> {
+pub struct ServerCommandArgs<'a> {
     pub(crate) text: &'a str,
     pub(crate) frame_tx: &'a mpsc::Sender<Vec<u8>>,
     pub(crate) capture_stop: &'a mut Option<Arc<AtomicBool>>,
@@ -41,7 +41,7 @@ pub(crate) struct ServerCommandArgs<'a> {
     pub(crate) shared_rules: &'a crate::app_block::SharedRules,
 }
 
-pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
+pub fn handle_server_command(args: ServerCommandArgs<'_>) {
     let ServerCommandArgs {
         text,
         frame_tx,
@@ -61,7 +61,7 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
     match val["type"].as_str().unwrap_or("") {
         "RequestInfo" => {
             let payload = crate::system_info::collect_agent_info().to_string();
-            let tx = out_tx.clone();
+            let tx = out_tx;
             tokio::spawn(async move {
                 let _ = tx.send(Message::Text(payload)).await;
             });
@@ -180,7 +180,7 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
         "set_network_policy" => {
             let blocked = val["blocked"].as_bool().unwrap_or(false);
             let (hostname, port, was_blocked) = {
-                let c = shared_cfg.lock().unwrap();
+                let c = shared_cfg.lock().unwrap_or_else(|e| e.into_inner());
                 let (h, p) = crate::network_policy::parse_server_host_port(&c.server_url)
                     .unwrap_or_else(|| (String::new(), 443));
                 (h, p, c.internet_blocked)
@@ -188,7 +188,7 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
             // Only act when state actually changes (or re-apply on reconnect when already blocked).
             let needs_action = blocked || was_blocked;
             if needs_action {
-                let h = hostname.clone();
+                let h = hostname;
                 tokio::spawn(async move {
                     crate::network_scheduler::apply_network_policy(blocked, h, port).await;
                 });
@@ -215,16 +215,16 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
                 .filter_map(|v| serde_json::from_value(v.clone()).ok())
                 .collect();
             let (hostname, port, desired, current) = {
-                let mut c = shared_cfg.lock().unwrap();
+                let mut c = shared_cfg.lock().unwrap_or_else(|e| e.into_inner());
                 c.internet_block_rules = rules;
                 let (h, p) = crate::network_policy::parse_server_host_port(&c.server_url)
                     .unwrap_or_else(|| (String::new(), 443));
-                let desired_now = if !c.internet_block_rules.is_empty() {
+                let desired_now = if c.internet_block_rules.is_empty() {
+                    c.internet_blocked
+                } else {
                     c.internet_block_rules
                         .iter()
                         .any(|r| crate::schedule::is_active_now_local(&r.schedules))
-                } else {
-                    c.internet_blocked
                 };
                 let cur = c.internet_blocked;
                 if desired_now != cur {
@@ -256,11 +256,11 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
                 .filter_map(|v| serde_json::from_value(v.clone()).ok())
                 .collect();
             {
-                let mut lock = shared_rules.lock().unwrap();
+                let mut lock = shared_rules.lock().unwrap_or_else(|e| e.into_inner());
                 *lock = rules.clone();
             }
             if let Ok(mut c) = shared_cfg.lock() {
-                c.app_block_rules = rules.iter().map(|r| r.to_stored()).collect();
+                c.app_block_rules = rules.iter().map(super::app_block::BlockRule::to_stored).collect();
                 match crate::config::save_config(&c) {
                     Ok(()) => {
                         info!("App block rules updated from server ({} rules).", rules.len());
@@ -272,7 +272,7 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
         "update_now" => {
             #[cfg(target_os = "windows")]
             {
-                let tx = out_tx.clone();
+                let tx = out_tx;
                 tokio::spawn(async move {
                     match crate::updater_client::update_via_service().await {
                         Ok(UpdateViaServiceOutcome::InstallStarted) => {
@@ -345,7 +345,7 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
             if request_id.is_empty() {
                 return;
             }
-            let out = out_tx.clone();
+            let out = out_tx;
             tokio::spawn(async move {
                 let sources: Vec<serde_json::Value> = crate::log_sources::list_log_sources()
                     .into_iter()
@@ -382,12 +382,11 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
             }
             let max_kb = val["max_kb"]
                 .as_u64()
-                .map(|u| u as u32)
-                .unwrap_or(MAX_KB_DEFAULT)
+                .map_or(MAX_KB_DEFAULT, |u| u as u32)
                 .min(MAX_KB_LIMIT);
             let max_bytes = (max_kb as usize).saturating_mul(1024);
 
-            let out = out_tx.clone();
+            let out = out_tx;
             tokio::spawn(async move {
                 let path = match crate::log_sources::resolve_log_kind(kind.as_str()) {
                     Ok(p) => p,
@@ -455,7 +454,7 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
             if name.contains('\\') || name.contains('/') {
                 return;
             }
-            let out = out_tx.clone();
+            let out = out_tx;
             tokio::spawn(async move {
                 let full = if base.ends_with('\\') {
                     format!("{base}{name}")
@@ -502,7 +501,7 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
             if src.is_empty() || dst.is_empty() {
                 return;
             }
-            let out = out_tx.clone();
+            let out = out_tx;
             tokio::spawn(async move {
                 // Ensure parent dir exists for a move/rename.
                 if let Some(parent) = std::path::Path::new(&dst).parent() {
@@ -543,7 +542,7 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
                 return;
             }
             let recursive = val["recursive"].as_bool().unwrap_or(false);
-            let out = out_tx.clone();
+            let out = out_tx;
             tokio::spawn(async move {
                 let meta = tokio::fs::metadata(&path).await;
                 let res = match meta {
@@ -597,7 +596,7 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
             if src.is_empty() || dst.is_empty() {
                 return;
             }
-            let out = out_tx.clone();
+            let out = out_tx;
             tokio::spawn(async move {
                 // Only support file copy for now (directories require recursive copy).
                 let meta = tokio::fs::metadata(&src).await;
@@ -658,7 +657,7 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
             } else {
                 path_in.chars().take(MAX_DIR_PATH_CHARS).collect::<String>()
             };
-            let out = out_tx.clone();
+            let out = out_tx;
             tokio::spawn(async move {
                 let mut items = Vec::new();
                 if is_drives {
@@ -692,8 +691,8 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
                         }
                         let name = entry.file_name().to_string_lossy().to_string();
                         let meta = entry.metadata().await.ok();
-                        let is_dir = meta.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-                        let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+                        let is_dir = meta.as_ref().is_some_and(std::fs::Metadata::is_dir);
+                        let size = meta.as_ref().map_or(0, std::fs::Metadata::len);
                         items.push(serde_json::json!({
                             "name": name,
                             "is_dir": is_dir,
@@ -704,12 +703,12 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
                 items.sort_by(|a, b| {
                     let a_dir = a["is_dir"].as_bool().unwrap_or(false);
                     let b_dir = b["is_dir"].as_bool().unwrap_or(false);
-                    if a_dir != b_dir {
-                        b_dir.cmp(&a_dir)
-                    } else {
+                    if a_dir == b_dir {
                         let na = a["name"].as_str().unwrap_or("");
                         let nb = b["name"].as_str().unwrap_or("");
                         crate::software_inventory::cmp_str_ascii_case_insensitive(na, nb)
+                    } else {
+                        b_dir.cmp(&a_dir)
                     }
                 });
                 let payload = serde_json::json!({
@@ -722,7 +721,7 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
             });
         }
         "CollectSoftware" => {
-            let out = out_tx.clone();
+            let out = out_tx;
             tokio::spawn(async move {
                 crate::software_inventory::send_inventory(out).await;
             });
@@ -741,7 +740,7 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
                 return;
             }
             let timeout_secs = val["timeout_secs"].as_u64().unwrap_or(120).clamp(5, 300);
-            let out = out_tx.clone();
+            let out = out_tx;
             tokio::spawn(async move {
                 let r = crate::remote_script::run(&shell, &script, timeout_secs).await;
                 let payload = serde_json::json!({
@@ -766,7 +765,7 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
                 .chars()
                 .take(MAX_FILE_PATH_CHARS)
                 .collect::<String>();
-            let out = out_tx.clone();
+            let out = out_tx;
             tokio::spawn(async move {
                 use base64::{engine::general_purpose, Engine as _};
                 use tokio::io::AsyncReadExt;
@@ -897,7 +896,7 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
                     path,
                     false,
                     "invalid upload parameters".to_string(),
-                    out_tx.clone(),
+                    out_tx,
                 );
                 return;
             }
@@ -905,19 +904,19 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
             let decoded = match general_purpose::STANDARD.decode(data_b64) {
                 Ok(b) => b,
                 Err(e) => {
-                    let mut g = FILE_UPLOAD_SESSION.lock().unwrap();
+                    let mut g = FILE_UPLOAD_SESSION.lock().unwrap_or_else(|e| e.into_inner());
                     *g = None;
                     push_result(
                         path,
                         false,
                         format!("base64 decode: {e}"),
-                        out_tx.clone(),
+                        out_tx,
                     );
                     return;
                 }
             };
 
-            let mut g = FILE_UPLOAD_SESSION.lock().unwrap();
+            let mut g = FILE_UPLOAD_SESSION.lock().unwrap_or_else(|e| e.into_inner());
             if chunk_index == 0 {
                 *g = Some(FileUploadSession {
                     path: path.clone(),
@@ -926,18 +925,15 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
                     bytes_written: 0,
                 });
             }
-            let session = match g.as_mut() {
-                Some(s) => s,
-                None => {
-                    drop(g);
-                    push_result(
-                        path,
-                        false,
-                        "missing upload session; send chunk 0 first".to_string(),
-                        out_tx.clone(),
-                    );
-                    return;
-                }
+            let session = if let Some(s) = g.as_mut() { s } else {
+                drop(g);
+                push_result(
+                    path,
+                    false,
+                    "missing upload session; send chunk 0 first".to_string(),
+                    out_tx,
+                );
+                return;
             };
             if session.path != path
                 || session.next_expected_chunk != chunk_index
@@ -949,7 +945,7 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
                     path,
                     false,
                     "upload chunk out of sequence or path mismatch".to_string(),
-                    out_tx.clone(),
+                    out_tx,
                 );
                 return;
             }
@@ -976,7 +972,7 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
             if let Err(e) = write_res {
                 *g = None;
                 drop(g);
-                push_result(path, false, e.to_string(), out_tx.clone());
+                push_result(path, false, e.to_string(), out_tx);
                 return;
             }
 
@@ -989,7 +985,7 @@ pub(crate) fn handle_server_command(args: ServerCommandArgs<'_>) {
             drop(g);
 
             if done {
-                push_result(path, true, String::new(), out_tx.clone());
+                push_result(path, true, String::new(), out_tx);
             }
         }
         _ => {

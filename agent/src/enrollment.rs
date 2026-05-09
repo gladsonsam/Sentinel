@@ -26,16 +26,14 @@ struct EnrollJson {
 
 #[cfg(target_os = "windows")]
 fn enroll_json_path() -> PathBuf {
-    std::env::var_os("ProgramData")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+    std::env::var_os("ProgramData").map_or_else(|| PathBuf::from(r"C:\ProgramData"), PathBuf::from)
         .join("Sentinel")
         .join("enroll.json")
 }
 
 /// `wss://host/p...` → `https://host/api/agent/enroll` (path on WSS host is ignored for enroll).
 #[cfg(target_os = "windows")]
-pub(crate) fn wss_to_enroll_post_url(wss: &str) -> Option<String> {
+pub fn wss_to_enroll_post_url(wss: &str) -> Option<String> {
     let rest = wss.trim().strip_prefix("wss://")?;
     let authority = rest.split('/').next().unwrap_or(rest);
     if authority.is_empty() {

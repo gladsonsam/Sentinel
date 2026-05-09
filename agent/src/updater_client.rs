@@ -83,7 +83,7 @@ enum LocalDownloadResult {
     Ready(PathBuf),
 }
 
-/// 1–2: fetch manifest, download MSI to ProgramData staging, verify signature.
+/// 1–2: fetch manifest, download MSI to `ProgramData` staging, verify signature.
 async fn download_update_msi_to_staging() -> Result<LocalDownloadResult> {
     let latest = crate::updater_manifest::fetch_latest_info().await?;
     let current = env!("CARGO_PKG_VERSION");
@@ -206,7 +206,7 @@ fn parse_pipe_reply(buf: &[u8]) -> Result<UpdateViaServiceOutcome> {
     }
     let v: serde_json::Value =
         serde_json::from_slice(buf).map_err(|e| anyhow::anyhow!("invalid updater JSON: {e}"))?;
-    if v.get("ok").and_then(|x| x.as_bool()) != Some(true) {
+    if v.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
         if let Some(e) = v.get("error").and_then(|x| x.as_str()) {
             anyhow::bail!("updater service error: {e}");
         }
@@ -233,7 +233,7 @@ async fn pipe_call_install_msi(msi_path: &Path) -> Result<UpdateViaServiceOutcom
     parse_pipe_reply(&buf)
 }
 
-/// Download + verify under `%ProgramData%\\Sentinel\\updates`, then ask the LocalSystem service
+/// Download + verify under `%ProgramData%\\Sentinel\\updates`, then ask the `LocalSystem` service
 /// to run `msiexec` via the updater named pipe.
 pub async fn update_via_service() -> Result<UpdateViaServiceOutcome> {
     let o = match download_update_msi_to_staging().await? {
@@ -247,7 +247,7 @@ pub async fn update_via_service() -> Result<UpdateViaServiceOutcome> {
     Ok(o)
 }
 
-/// Ask the LocalSystem service to apply or remove the Windows Firewall internet block.
+/// Ask the `LocalSystem` service to apply or remove the Windows Firewall internet block.
 ///
 /// The service runs as SYSTEM so `netsh advfirewall` succeeds without UAC prompts.
 /// Falls back gracefully when the service pipe is unavailable.
@@ -269,7 +269,7 @@ pub async fn set_network_policy_via_service(
     let buf = read_updater_pipe_reply_line(&mut client).await?;
     let v: serde_json::Value =
         serde_json::from_slice(&buf).map_err(|e| anyhow::anyhow!("invalid JSON from service: {e}"))?;
-    if v.get("ok").and_then(|x| x.as_bool()) != Some(true) {
+    if v.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
         let err = v
             .get("error")
             .and_then(|x| x.as_str())
@@ -279,7 +279,7 @@ pub async fn set_network_policy_via_service(
     Ok(())
 }
 
-/// Ask the LocalSystem service to truncate one of its log files (e.g. `service.log`).
+/// Ask the `LocalSystem` service to truncate one of its log files (e.g. `service.log`).
 ///
 /// This is needed because some logs are written/owned by the service and a normal
 /// user-session process may get "Access is denied" when trying to truncate them.
@@ -302,7 +302,7 @@ pub async fn clear_log_file_via_service(kind: &str) -> Result<()> {
     }
     let v: serde_json::Value =
         serde_json::from_slice(&buf).map_err(|e| anyhow::anyhow!("invalid JSON from service: {e}"))?;
-    if v.get("ok").and_then(|x| x.as_bool()) != Some(true) {
+    if v.get("ok").and_then(serde_json::Value::as_bool) != Some(true) {
         let err = v
             .get("error")
             .and_then(|x| x.as_str())

@@ -62,10 +62,10 @@ unsafe fn query_string_from_version_block(version_block: &[u8], sub_block: &str)
     let mut out_len: u32 = 0;
 
     let ok = VerQueryValueW(
-        version_block.as_ptr() as *const c_void,
+        version_block.as_ptr().cast::<c_void>(),
         PCWSTR(sub_block_w.as_ptr()),
-        &mut lp_buffer,
-        &mut out_len,
+        &raw mut lp_buffer,
+        &raw mut out_len,
     )
     .as_bool();
 
@@ -101,10 +101,10 @@ unsafe fn query_translations(version_block: &[u8]) -> Option<Vec<(u16, u16)>> {
     let mut out_len: u32 = 0;
 
     let ok = VerQueryValueW(
-        version_block.as_ptr() as *const c_void,
+        version_block.as_ptr().cast::<c_void>(),
         PCWSTR(query_w.as_ptr()),
-        &mut lp_buffer,
-        &mut out_len,
+        &raw mut lp_buffer,
+        &raw mut out_len,
     )
     .as_bool();
 
@@ -147,7 +147,7 @@ fn app_display_from_full_path_uncached(full_path: &str) -> String {
             PCWSTR(file_path_w.as_ptr()),
             Some(0),
             size,
-            buf.as_mut_ptr() as *mut c_void,
+            buf.as_mut_ptr().cast::<c_void>(),
         )
         .is_ok();
 
@@ -165,8 +165,7 @@ fn app_display_from_full_path_uncached(full_path: &str) -> String {
         // actual component/app name users expect.
         for (lang, codepage) in translations {
             let desc_q = format!(
-                r"\StringFileInfo\{:04x}{:04x}\FileDescription",
-                lang, codepage
+                r"\StringFileInfo\{lang:04x}{codepage:04x}\FileDescription"
             );
             if let Some(v) = query_string_from_version_block(&buf, &desc_q) {
                 let v = normalize_display_name(v);
@@ -175,7 +174,7 @@ fn app_display_from_full_path_uncached(full_path: &str) -> String {
                 }
             }
 
-            let product_q = format!(r"\StringFileInfo\{:04x}{:04x}\ProductName", lang, codepage);
+            let product_q = format!(r"\StringFileInfo\{lang:04x}{codepage:04x}\ProductName");
             if let Some(v) = query_string_from_version_block(&buf, &product_q) {
                 let v = normalize_display_name(v);
                 if !v.is_empty() {
@@ -184,8 +183,7 @@ fn app_display_from_full_path_uncached(full_path: &str) -> String {
             }
 
             let orig_q = format!(
-                r"\StringFileInfo\{:04x}{:04x}\OriginalFilename",
-                lang, codepage
+                r"\StringFileInfo\{lang:04x}{codepage:04x}\OriginalFilename"
             );
             if let Some(v) = query_string_from_version_block(&buf, &orig_q) {
                 let v = normalize_display_name(v);

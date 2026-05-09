@@ -11,7 +11,7 @@ const CREATE_NO_WINDOW: u32 = 0x08000000;
 fn format_mac(bytes: &[u8]) -> String {
     bytes
         .iter()
-        .map(|b| format!("{:02X}", b))
+        .map(|b| format!("{b:02X}"))
         .collect::<Vec<_>>()
         .join(":")
 }
@@ -126,11 +126,11 @@ pub fn collect_agent_info() -> serde_json::Value {
             list.into_iter()
                 .map(|a| {
                     let ips: Vec<String> =
-                        a.ip_addresses().iter().map(|ip| ip.to_string()).collect();
+                        a.ip_addresses().iter().map(std::string::ToString::to_string).collect();
                     let gateways: Vec<String> =
-                        a.gateways().iter().map(|ip| ip.to_string()).collect();
+                        a.gateways().iter().map(std::string::ToString::to_string).collect();
                     let dns: Vec<String> =
-                        a.dns_servers().iter().map(|ip| ip.to_string()).collect();
+                        a.dns_servers().iter().map(std::string::ToString::to_string).collect();
                     let mac = a.physical_address().map(format_mac).unwrap_or_default();
 
                     json!({

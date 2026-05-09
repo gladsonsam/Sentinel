@@ -129,7 +129,7 @@ fn read_window_title(hwnd: HWND) -> String {
 fn read_process_name(hwnd: HWND) -> (String, String, String) {
     // ── 1. PID ───────────────────────────────────────────────────────────
     let mut pid: u32 = 0;
-    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+    unsafe { GetWindowThreadProcessId(hwnd, Some(&raw mut pid)) };
     if pid == 0 {
         return (String::new(), String::new(), String::new());
     }
@@ -148,7 +148,7 @@ fn read_process_name(hwnd: HWND) -> (String, String, String) {
             handle,
             PROCESS_NAME_FORMAT(0), // Win32 path format (not NT native)
             PWSTR(buf.as_mut_ptr()),
-            &mut size,
+            &raw mut size,
         )
     };
     // Always close the handle, regardless of success.

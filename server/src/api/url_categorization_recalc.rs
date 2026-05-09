@@ -22,7 +22,7 @@ pub struct RecalcQuery {
     limit: i64,
 }
 
-fn default_limit() -> i64 { 50_000 }
+const fn default_limit() -> i64 { 50_000 }
 
 /// Re-enqueue uncategorized URL visits for categorization (global).
 pub async fn recalc_url_visits(

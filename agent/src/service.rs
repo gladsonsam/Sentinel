@@ -44,12 +44,12 @@ static SERVICE_LOG_GUARD: Mutex<Option<tracing_appender::non_blocking::WorkerGua
     Mutex::new(None);
 
 pub fn set_service_log_guard(guard: tracing_appender::non_blocking::WorkerGuard) {
-    let mut slot = SERVICE_LOG_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let mut slot = SERVICE_LOG_GUARD.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     *slot = Some(guard);
 }
 
 fn flush_service_logs_before_exit() {
-    let mut slot = SERVICE_LOG_GUARD.lock().unwrap_or_else(|e| e.into_inner());
+    let mut slot = SERVICE_LOG_GUARD.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     slot.take();
 }
 
@@ -107,7 +107,7 @@ fn service_job_mutex() -> &'static tokio::sync::Mutex<()> {
     M.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
-/// Default named-pipe DACL only allows the creator (LocalSystem). The user-session agent
+/// Default named-pipe DACL only allows the creator (`LocalSystem`). The user-session agent
 /// connects without elevation — grant authenticated users read/write so pipe calls work.
 fn create_sentinel_service_pipe_server(
 ) -> std::io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
@@ -129,7 +129,7 @@ fn create_sentinel_service_pipe_server(
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
             PCWSTR(to_wide_z(&sddl).as_ptr()),
             SDDL_REVISION_1,
-            &mut p_sd,
+            &raw mut p_sd,
             None,
         )
         .map_err(|e| io::Error::other(format!("service pipe SDDL: {e}")))?;
@@ -144,7 +144,7 @@ fn create_sentinel_service_pipe_server(
     let server = unsafe {
         ServerOptions::new().create_with_security_attributes_raw(
             SERVICE_PIPE_NAME,
-            &mut sa as *mut SECURITY_ATTRIBUTES as *mut c_void,
+            (&raw mut sa).cast::<c_void>(),
         )
     };
 
@@ -176,7 +176,7 @@ fn create_agent_ipc_pipe_server(
         ConvertStringSecurityDescriptorToSecurityDescriptorW(
             PCWSTR(to_wide_z(&sddl).as_ptr()),
             SDDL_REVISION_1,
-            &mut p_sd,
+            &raw mut p_sd,
             None,
         )
         .map_err(|e| io::Error::other(format!("agent ipc pipe SDDL: {e}")))?;
@@ -191,7 +191,7 @@ fn create_agent_ipc_pipe_server(
     let server = unsafe {
         ServerOptions::new().create_with_security_attributes_raw(
             AGENT_IPC_PIPE_NAME,
-            &mut sa as *mut SECURITY_ATTRIBUTES as *mut c_void,
+            (&raw mut sa).cast::<c_void>(),
         )
     };
 
@@ -213,7 +213,7 @@ fn active_console_user_sid_string() -> Option<String> {
     }
 
     let mut token = HANDLE::default();
-    unsafe { WTSQueryUserToken(session, &mut token) }.ok()?;
+    unsafe { WTSQueryUserToken(session, &raw mut token) }.ok()?;
 
     // Query TokenUser to get the SID.
     let mut needed: u32 = 0;
@@ -223,7 +223,7 @@ fn active_console_user_sid_string() -> Option<String> {
             TokenUser,
             None,
             0,
-            &mut needed as *mut u32,
+            &raw mut needed,
         );
     }
     if needed == 0 {
@@ -237,9 +237,9 @@ fn active_console_user_sid_string() -> Option<String> {
         GetTokenInformation(
             token,
             TokenUser,
-            Some(buf.as_mut_ptr() as *mut c_void),
+            Some(buf.as_mut_ptr().cast::<c_void>()),
             needed,
-            &mut needed as *mut u32,
+            &raw mut needed,
         )
         .is_ok()
     };
@@ -249,9 +249,9 @@ fn active_console_user_sid_string() -> Option<String> {
     }
 
     // SAFETY: buffer contains TOKEN_USER.
-    let tu = unsafe { &*(buf.as_ptr() as *const windows::Win32::Security::TOKEN_USER) };
+    let tu = unsafe { &*buf.as_ptr().cast::<windows::Win32::Security::TOKEN_USER>() };
     let mut sid_str: PWSTR = PWSTR::null();
-    let sid_ok = unsafe { ConvertSidToStringSidW(tu.User.Sid, &mut sid_str).is_ok() };
+    let sid_ok = unsafe { ConvertSidToStringSidW(tu.User.Sid, &raw mut sid_str).is_ok() };
     if !sid_ok || sid_str.is_null() {
         return None;
     }
@@ -263,7 +263,7 @@ fn active_console_user_sid_string() -> Option<String> {
         }
         let slice = std::slice::from_raw_parts(sid_str.0, len);
         let s = String::from_utf16_lossy(slice);
-        let _ = LocalFree(Some(HLOCAL(sid_str.0 as *mut _)));
+        let _ = LocalFree(Some(HLOCAL(sid_str.0.cast())));
         Some(s)
     }
 }
@@ -408,7 +408,7 @@ fn run_service() -> windows_service::Result<()> {
             }
 
             tokio::select! {
-                _ = tokio::time::sleep(Duration::from_millis(250)) => {}
+                () = tokio::time::sleep(Duration::from_millis(250)) => {}
                 res = updater_server.connect() => {
                     if let Err(e) = res {
                         warn!("Named pipe connect failed: {e}");
@@ -521,9 +521,9 @@ fn run_service() -> windows_service::Result<()> {
                                 }
                             } else if action == "set_network_policy" {
                                 // Run netsh from the SYSTEM service so no elevation prompt is needed.
-                                let blocked = v.get("blocked").and_then(|x| x.as_bool()).unwrap_or(false);
+                                let blocked = v.get("blocked").and_then(serde_json::Value::as_bool).unwrap_or(false);
                                 let hostname = v.get("server_hostname").and_then(|x| x.as_str()).unwrap_or("").to_string();
-                                let port = v.get("server_port").and_then(|x| x.as_u64()).unwrap_or(443) as u16;
+                                let port = v.get("server_port").and_then(serde_json::Value::as_u64).unwrap_or(443) as u16;
                                 let result = tokio::task::spawn_blocking(move || {
                                     if blocked {
                                         crate::network_policy::apply_block(&hostname, port)
@@ -693,7 +693,7 @@ fn run_service() -> windows_service::Result<()> {
 
 fn launch_user_agent_in_session(session_id: u32) -> Result<()> {
     let mut impersonation_token = HANDLE::default();
-    unsafe { WTSQueryUserToken(session_id, &mut impersonation_token) }
+    unsafe { WTSQueryUserToken(session_id, &raw mut impersonation_token) }
         .ok()
         .context("WTSQueryUserToken failed")?;
 
@@ -711,7 +711,7 @@ fn launch_user_agent_in_session(session_id: u32) -> Result<()> {
             None,
             SecurityImpersonation,
             TokenPrimary,
-            &mut primary_token,
+            &raw mut primary_token,
         )
     }
     .ok()
@@ -732,7 +732,7 @@ fn launch_user_agent_in_session(session_id: u32) -> Result<()> {
 
     let startup = STARTUPINFOW {
         cb: std::mem::size_of::<STARTUPINFOW>() as u32,
-        lpDesktop: PWSTR(desktop_w.as_ptr() as *mut _),
+        lpDesktop: PWSTR(desktop_w.as_ptr().cast_mut()),
         ..Default::default()
     };
 
@@ -740,7 +740,7 @@ fn launch_user_agent_in_session(session_id: u32) -> Result<()> {
     // Agent config and MSI staging live under ProgramData, not AppData.
     // When launched from LocalSystem, we must build an environment block for the target user.
     let mut env_block: *mut core::ffi::c_void = std::ptr::null_mut();
-    unsafe { CreateEnvironmentBlock(&mut env_block, Some(primary_token), false) }
+    unsafe { CreateEnvironmentBlock(&raw mut env_block, Some(primary_token), false) }
         .ok()
         .context("CreateEnvironmentBlock failed")?;
 
@@ -756,8 +756,8 @@ fn launch_user_agent_in_session(session_id: u32) -> Result<()> {
             creation_flags,
             Some(env_block),
             PCWSTR::null(),
-            &startup,
-            &mut proc_info,
+            &raw const startup,
+            &raw mut proc_info,
         )
     };
 
@@ -779,7 +779,7 @@ fn launch_user_agent_in_session(session_id: u32) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn to_wide_z(s: &str) -> Vec<u16> {
+pub fn to_wide_z(s: &str) -> Vec<u16> {
     OsStr::new(s)
         .encode_wide()
         .chain(std::iter::once(0))
@@ -893,9 +893,7 @@ fn launch_msi_detached(msi_path: &std::path::Path) -> Result<()> {
 }
 
 fn program_data_path(filename: &str) -> std::path::PathBuf {
-    let base = std::env::var_os("ProgramData")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from(r"C:\ProgramData"));
+    let base = std::env::var_os("ProgramData").map_or_else(|| std::path::PathBuf::from(r"C:\ProgramData"), std::path::PathBuf::from);
     base.join("Sentinel").join(filename)
 }
 
@@ -905,7 +903,7 @@ fn enable_privileges(names: &[&str]) -> Result<()> {
         OpenProcessToken(
             GetCurrentProcess(),
             TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
-            &mut token,
+            &raw mut token,
         )
     }
     .ok()
@@ -914,7 +912,7 @@ fn enable_privileges(names: &[&str]) -> Result<()> {
     for &name in names {
         let mut luid = LUID::default();
         let name_w = to_wide_z(name);
-        unsafe { LookupPrivilegeValueW(PCWSTR::null(), PCWSTR(name_w.as_ptr()), &mut luid) }
+        unsafe { LookupPrivilegeValueW(PCWSTR::null(), PCWSTR(name_w.as_ptr()), &raw mut luid) }
             .ok()
             .with_context(|| format!("LookupPrivilegeValueW failed for {name}"))?;
 
@@ -926,7 +924,7 @@ fn enable_privileges(names: &[&str]) -> Result<()> {
             }],
         };
 
-        unsafe { AdjustTokenPrivileges(token, false, Some(&tp), 0, None, None) }
+        unsafe { AdjustTokenPrivileges(token, false, Some(&raw const tp), 0, None, None) }
             .ok()
             .with_context(|| format!("AdjustTokenPrivileges failed for {name}"))?;
     }

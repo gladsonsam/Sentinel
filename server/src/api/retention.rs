@@ -19,7 +19,7 @@ use super::helpers::{audit_ip, err500};
 // ─── Retention (telemetry auto-prune) ─────────────────────────────────────────
 
 #[derive(Deserialize)]
-pub(crate) struct RetentionBody {
+pub struct RetentionBody {
     keylog_days: Option<i32>,
     window_days: Option<i32>,
     url_days: Option<i32>,

@@ -1,4 +1,4 @@
-﻿//! Agent Tokio runtime: IPC/WebSocket session, telemetry, and screen fan-in.
+//! Agent Tokio runtime: IPC/WebSocket session, telemetry, and screen fan-in.
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -59,7 +59,7 @@ const RECONNECT_BACKOFF_BASE_MS: u64 = 750;
 const RECONNECT_BACKOFF_MAX_MS: u64 = 30_000;
 
 /// Bounded capacity for the JPEG frame channel.
-pub(crate) const FRAME_CHANNEL_CAP: usize = 4;
+pub const FRAME_CHANNEL_CAP: usize = 4;
 
 /// Bounded capacity for the outbound WebSocket message channel.
 const OUTBOUND_CHANNEL_CAP: usize = 16;
@@ -80,16 +80,16 @@ fn reconnect_backoff_delay(attempt: u32) -> Duration {
     let exp = 1u64.checked_shl(pow).unwrap_or(u64::MAX);
     let base = RECONNECT_BACKOFF_BASE_MS.saturating_mul(exp);
     let capped = base.min(RECONNECT_BACKOFF_MAX_MS);
-    let jitter_ms = std::time::SystemTime::now()
+    let jitter_ms = u64::from(std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .subsec_millis() as u64
+        .subsec_millis())
         % 500; // 0..499ms
     Duration::from_millis(capped.saturating_add(jitter_ms))
 }
 
 
-pub(crate) async fn run_agent_loop(
+pub async fn run_agent_loop(
     mut config_rx: tokio::sync::watch::Receiver<Option<Config>>,
     config_tx: tokio::sync::watch::Sender<Option<Config>>,
     shared_cfg: Arc<Mutex<Config>>,
@@ -101,7 +101,7 @@ pub(crate) async fn run_agent_loop(
     // Load persisted app block rules from config so enforcement starts immediately.
     let shared_rules = crate::app_block::new_shared_rules();
     {
-        let cfg = shared_cfg.lock().unwrap();
+        let cfg = shared_cfg.lock().unwrap_or_else(|e| e.into_inner());
         let persisted: Vec<crate::app_block::BlockRule> = cfg
             .app_block_rules
             .iter()
@@ -109,7 +109,7 @@ pub(crate) async fn run_agent_loop(
             .collect();
         if !persisted.is_empty() {
             info!("Loaded {} persisted app block rule(s).", persisted.len());
-            *shared_rules.lock().unwrap() = persisted;
+            *shared_rules.lock().unwrap_or_else(|e| e.into_inner()) = persisted;
         }
     }
     let kill_report_tx = crate::app_block::new_kill_report_tx();
@@ -127,7 +127,7 @@ pub(crate) async fn run_agent_loop(
         });
     }
     #[cfg(target_os = "windows")]
-    if let Ok(true) = crate::enrollment::try_consume_pending_enrollment().await {
+    if matches!(crate::enrollment::try_consume_pending_enrollment().await, Ok(true)) {
         let new_cfg = crate::config::load_config();
         if let Ok(mut g) = shared_cfg.lock() {
             *g = new_cfg.clone();
@@ -270,7 +270,7 @@ pub(crate) async fn run_agent_loop(
 
                         // Detach the kill-report sink so the enforcer doesn't
                         // accumulate events while disconnected.
-                        *kill_report_tx.lock().unwrap() = None;
+                        *kill_report_tx.lock().unwrap_or_else(|e| e.into_inner()) = None;
 
                         set_status(&status, AgentStatus::Disconnected);
                         // Any successful connect resets backoff.
@@ -287,7 +287,7 @@ pub(crate) async fn run_agent_loop(
                 let delay = reconnect_backoff_delay(reconnect_attempt.max(1));
                 info!("Reconnecting in {}ms â€¦", delay.as_millis());
                 tokio::select! {
-                    _ = tokio::time::sleep(delay) => {}
+                    () = tokio::time::sleep(delay) => {}
                     _ = config_rx.changed() => {
                         reconnect_attempt = 0;
                         info!("Config changed â€“ applying new settings immediately.");
@@ -328,7 +328,7 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
 
     // Register this session as the kill-event sink so the enforcer can report kills.
     let (kill_ev_tx, mut kill_ev_rx) = tokio::sync::mpsc::unbounded_channel::<crate::app_block::KillEvent>();
-    *kill_report_tx.lock().unwrap() = Some(kill_ev_tx);
+    *kill_report_tx.lock().unwrap_or_else(|e| e.into_inner()) = Some(kill_ev_tx);
     // NOTE: `out_tx` writes to the Session 0 service over IPC; the service owns the real WebSocket.
     let mut pending_events: Vec<serde_json::Value> = Vec::new();
     let mut flush_ticker = interval(Duration::from_millis(250));
@@ -339,10 +339,11 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
             return Ok(());
         }
         if pending.len() == 1 {
-            let one = pending.pop().unwrap();
-            let s = one.to_string();
-            if out_tx.send(Message::Text(s)).await.is_err() {
-                return Err(anyhow::anyhow!("Outbound channel closed; writer task exited unexpectedly."));
+            if let Some(one) = pending.pop() {
+                let s = one.to_string();
+                if out_tx.send(Message::Text(s)).await.is_err() {
+                    return Err(anyhow::anyhow!("Outbound channel closed; writer task exited unexpectedly."));
+                }
             }
             return Ok(());
         }
@@ -491,7 +492,7 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
             }
 
             // â”€â”€ Branch 3: active browser URL â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-            _ = &mut url_sleep => {
+            () = &mut url_sleep => {
                 url_sleep.as_mut().reset(Instant::now() + Duration::from_secs(if is_afk { URL_POLL_AFK_INTERVAL_SECS } else { URL_POLL_INTERVAL_SECS }));
                 let now_ts_u64 = crate::unix_timestamp_secs();
                 let now_ts = now_ts_u64 as i64;
@@ -612,7 +613,7 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
             }
 
             // â”€â”€ Branch 5: foreground window changes â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-            _ = &mut window_sleep => {
+            () = &mut window_sleep => {
                 window_sleep.as_mut().reset(Instant::now() + Duration::from_millis(if is_afk { WINDOW_POLL_AFK_INTERVAL_MS } else { WINDOW_POLL_INTERVAL_MS }));
                 if let Some(event) = win_tracker.poll() {
                     // Opportunistically upload an app icon once per exe name per session.
@@ -679,7 +680,7 @@ async fn run_session(args: RunSessionArgs<'_>) -> Result<()> {
 // ----------------------------------------------------------------------------
 
 /// Write to the shared status mutex, ignoring lock-poison errors.
-pub(crate) fn set_status(status: &Mutex<AgentStatus>, s: AgentStatus) {
+pub fn set_status(status: &Mutex<AgentStatus>, s: AgentStatus) {
     if let Ok(mut guard) = status.lock() {
         *guard = s;
     }

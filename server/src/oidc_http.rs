@@ -13,7 +13,7 @@ pub async fn async_http_client(req: HttpRequest) -> Result<HttpResponse, reqwest
 
     let url = req.uri().to_string();
     let mut r = client.request(req.method().clone(), url);
-    for (name, value) in req.headers().iter() {
+    for (name, value) in req.headers() {
         r = r.header(name, value);
     }
     if !req.body().is_empty() {
@@ -27,15 +27,11 @@ pub async fn async_http_client(req: HttpRequest) -> Result<HttpResponse, reqwest
 
     let mut out = axum::http::Response::builder().status(status);
     {
-        let headers_mut = out.headers_mut().unwrap();
-        for (k, v) in hdrs.iter() {
-            headers_mut.insert(k, v.clone());
+        if let Some(headers_mut) = out.headers_mut() {
+            for (k, v) in &hdrs {
+                headers_mut.insert(k, v.clone());
+            }
         }
     }
-    Ok(out.body(body).unwrap_or_else(|_| {
-        axum::http::Response::builder()
-            .status(500)
-            .body(Vec::new())
-            .unwrap()
-    }))
+    Ok(out.body(body).unwrap_or_else(|_| axum::http::Response::new(Vec::new())))
 }

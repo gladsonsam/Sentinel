@@ -110,7 +110,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
             }
         }
     }
-    CallNextHookEx(HOOK_TLS.with(|c| c.get()), code, wparam, lparam)
+    CallNextHookEx(HOOK_TLS.with(std::cell::Cell::get), code, wparam, lparam)
 }
 
 // ─── Key decoder ──────────────────────────────────────────────────────────────
@@ -139,8 +139,8 @@ unsafe fn decode_key(vk: u32, scan: u32) -> String {
 
     // ── Suppress pure Ctrl shortcuts (Ctrl+C, Ctrl+V, etc.) ──────────────
     // AltGr is encoded as Ctrl+RightAlt; allow that through.
-    let ctrl = (GetAsyncKeyState(VK_CONTROL.0 as i32) as u16) >> 15 != 0;
-    let altgr = (GetAsyncKeyState(VK_RMENU.0 as i32) as u16) >> 15 != 0;
+    let ctrl = (GetAsyncKeyState(i32::from(VK_CONTROL.0)) as u16) >> 15 != 0;
+    let altgr = (GetAsyncKeyState(i32::from(VK_RMENU.0)) as u16) >> 15 != 0;
     if ctrl && !altgr {
         return String::new();
     }
@@ -149,11 +149,11 @@ unsafe fn decode_key(vk: u32, scan: u32) -> String {
     let mut ks = [0u8; 256];
 
     // Shift
-    if (GetAsyncKeyState(VK_SHIFT.0 as i32) as u16) >> 15 != 0 {
+    if (GetAsyncKeyState(i32::from(VK_SHIFT.0)) as u16) >> 15 != 0 {
         ks[VK_SHIFT.0 as usize] = 0x80;
     }
     // CapsLock — toggle state lives in low bit
-    if (GetAsyncKeyState(VK_CAPITAL.0 as i32) as u16) & 1 != 0 {
+    if (GetAsyncKeyState(i32::from(VK_CAPITAL.0)) as u16) & 1 != 0 {
         ks[VK_CAPITAL.0 as usize] = 0x01;
     }
     // AltGr (Right Alt) = Ctrl + Alt for ToUnicode
@@ -197,13 +197,13 @@ pub fn start(out_tx: Sender<InputEvent>) -> anyhow::Result<()> {
         .name("keyboard-hook".into())
         .spawn(|| unsafe {
             let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), None, 0)
-                .expect("SetWindowsHookExW failed");
+                .unwrap_or_else(|e| panic!("SetWindowsHookExW failed: {e}"));
             HOOK_TLS.with(|c| c.set(Some(hook)));
 
             let mut msg = MSG::default();
-            while GetMessageW(&mut msg, None, 0, 0).as_bool() {
-                let _ = TranslateMessage(&msg);
-                DispatchMessageW(&msg);
+            while GetMessageW(&raw mut msg, None, 0, 0).as_bool() {
+                let _ = TranslateMessage(&raw const msg);
+                DispatchMessageW(&raw const msg);
             }
             HOOK_TLS.with(|c| {
                 if let Some(hk) = c.take() {
@@ -309,11 +309,17 @@ async fn run_afk_watcher(out_tx: Sender<InputEvent>) {
                 cbSize: std::mem::size_of::<LASTINPUTINFO>() as u32,
                 dwTime: 0,
             };
-            let _ = GetLastInputInfo(&mut lii);
+            let _ = GetLastInputInfo(&raw mut lii);
             lii.dwTime
         };
 
-        if dw_time != last_input_tick {
+        if dw_time == last_input_tick {
+            let idle_secs = last_input_mono.elapsed().as_secs();
+            if idle_secs >= AFK_THRESHOLD_SECS && !was_afk {
+                was_afk = true;
+                let _ = out_tx.try_send(InputEvent::Afk { idle_secs });
+            }
+        } else {
             // Any input (keyboard or mouse) resets the idle clock.
             last_input_tick = dw_time;
             last_input_mono = Instant::now();
@@ -321,12 +327,6 @@ async fn run_afk_watcher(out_tx: Sender<InputEvent>) {
             if was_afk {
                 was_afk = false;
                 let _ = out_tx.try_send(InputEvent::Active);
-            }
-        } else {
-            let idle_secs = last_input_mono.elapsed().as_secs();
-            if idle_secs >= AFK_THRESHOLD_SECS && !was_afk {
-                was_afk = true;
-                let _ = out_tx.try_send(InputEvent::Afk { idle_secs });
             }
         }
     }
@@ -346,11 +346,11 @@ fn foreground_window_info() -> (String, String, String) {
         // Title
         let mut title_buf = [0u16; 512];
         let title_len = GetWindowTextW(hwnd, &mut title_buf) as usize;
-        let title = String::from_utf16_lossy(&title_buf[..title_len]).to_string();
+        let title = String::from_utf16_lossy(&title_buf[..title_len]);
 
         // PID → process image name
         let mut pid = 0u32;
-        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+        GetWindowThreadProcessId(hwnd, Some(&raw mut pid));
         let (app, app_display) = if pid != 0 {
             match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
                 Ok(handle) => {
@@ -360,7 +360,7 @@ fn foreground_window_info() -> (String, String, String) {
                         handle,
                         PROCESS_NAME_FORMAT(0),
                         PWSTR(buf.as_mut_ptr()),
-                        &mut size,
+                        &raw mut size,
                     );
                     let _ = CloseHandle(handle);
                     if ok.is_ok() {

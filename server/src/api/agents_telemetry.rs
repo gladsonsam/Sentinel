@@ -1,4 +1,4 @@
-//! Per-agent history: windows, keys, URLs, activity, WoL, etc.
+//! Per-agent history: windows, keys, URLs, activity, `WoL`, etc.
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -138,7 +138,7 @@ pub struct UrlCategoryStatsQuery {
     limit: i64,
 }
 
-fn default_category_limit() -> i64 {
+const fn default_category_limit() -> i64 {
     24
 }
 
@@ -180,7 +180,7 @@ pub struct UrlCategoryBackfillQuery {
     limit: i64,
 }
 
-fn default_backfill_limit() -> i64 {
+const fn default_backfill_limit() -> i64 {
     25_000
 }
 
@@ -480,7 +480,7 @@ pub async fn clear_agent_history(
 }
 
 #[derive(Deserialize, Default)]
-pub(crate) struct WakeQuery {
+pub struct WakeQuery {
     /// IPv4 broadcast address (default `255.255.255.255`).
     broadcast: Option<String>,
     /// UDP port (default 9).
@@ -551,7 +551,7 @@ pub async fn agent_wake(
     let broadcast = q
         .broadcast
         .as_deref()
-        .map(|s| s.trim())
+        .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or("255.255.255.255");
     let port = q.port.unwrap_or(9);

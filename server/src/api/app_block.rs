@@ -2,7 +2,7 @@
 //!
 //! GET  /api/app-block-rules?agent_id=X  → rules effective for that agent
 //! GET  /api/app-block-rules             → all rules (admin)
-//! POST /api/app-block-rules             ← {name, exe_pattern, match_mode, scopes}  (admin)
+//! POST /api/app-block-rules             ← {name, `exe_pattern`, `match_mode`, scopes}  (admin)
 //! PUT  /api/app-block-rules/:id         ← {enabled: bool}  (admin)
 //! DEL  /api/app-block-rules/:id         (admin)
 //!
@@ -225,7 +225,7 @@ pub async fn app_block_rules_update(
         rule_id,
         db::AppBlockRuleUpdateOpts {
             name: body.name.as_deref(),
-            exe_pattern: body.exe_pattern.as_deref().map(|s| s.trim()).filter(|s| !s.is_empty()),
+            exe_pattern: body.exe_pattern.as_deref().map(str::trim).filter(|s| !s.is_empty()),
             match_mode,
             enabled: body.enabled,
             scopes: scopes.as_deref(),
@@ -331,7 +331,7 @@ pub struct EventsQuery {
     pub offset: i64,
 }
 
-fn default_limit() -> i64 { 500 }
+const fn default_limit() -> i64 { 500 }
 
 pub async fn agent_app_block_events(
     Path(agent_id): Path<Uuid>,

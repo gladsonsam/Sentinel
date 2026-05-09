@@ -24,7 +24,7 @@ const MAX_TAIL_MAX_KB: u32 = 2048;
 const LOG_RPC_TIMEOUT: Duration = Duration::from_secs(6);
 
 #[derive(Deserialize, Default)]
-pub(crate) struct TailQuery {
+pub struct TailQuery {
     kind: Option<String>,
     max_kb: Option<u32>,
 }

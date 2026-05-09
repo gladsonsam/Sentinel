@@ -1,4 +1,4 @@
-﻿//! # Sentinel Agent (Windows)
+//! # Sentinel Agent (Windows)
 //!
 //! Connects to a remote WebSocket server and streams real-time telemetry.
 //!
@@ -109,9 +109,7 @@ static USER_AGENT_MUTEX: std::sync::OnceLock<HeldHandle> = std::sync::OnceLock::
 fn program_data_log_path(filename: &str) -> std::path::PathBuf {
     // Prefer a stable, shared location for service logs.
     // %ProgramData% is writable for LocalSystem and readable by admins.
-    let base = std::env::var_os("ProgramData")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| std::path::PathBuf::from(r"C:\ProgramData"));
+    let base = std::env::var_os("ProgramData").map_or_else(|| std::path::PathBuf::from(r"C:\ProgramData"), std::path::PathBuf::from);
     base.join("Sentinel").join(filename)
 }
 
@@ -141,35 +139,31 @@ fn init_logging(
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
-        match std::fs::OpenOptions::new()
+        if let Ok(file) = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
-            .open(&path)
-        {
-            Ok(file) => {
-                let (writer, guard) = tracing_appender::non_blocking(file);
-                let file_layer = fmt::layer()
-                    .with_target(false)
-                    .with_thread_ids(false)
-                    .compact()
-                    .with_writer(writer);
-                Registry::default()
-                    .with(env_filter)
-                    .with(file_layer)
-                    .init();
-                Some(guard)
-            }
-            Err(_) => {
-                let stderr_layer = fmt::layer()
-                    .with_target(false)
-                    .with_thread_ids(false)
-                    .compact();
-                Registry::default()
-                    .with(env_filter)
-                    .with(stderr_layer)
-                    .init();
-                None
-            }
+            .open(&path) {
+            let (writer, guard) = tracing_appender::non_blocking(file);
+            let file_layer = fmt::layer()
+                .with_target(false)
+                .with_thread_ids(false)
+                .compact()
+                .with_writer(writer);
+            Registry::default()
+                .with(env_filter)
+                .with(file_layer)
+                .init();
+            Some(guard)
+        } else {
+            let stderr_layer = fmt::layer()
+                .with_target(false)
+                .with_thread_ids(false)
+                .compact();
+            Registry::default()
+                .with(env_filter)
+                .with(stderr_layer)
+                .init();
+            None
         }
     } else {
         let stderr_layer = fmt::layer()
@@ -188,69 +182,20 @@ fn init_logging(
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    
+    #[cfg(target_os = "windows")]
+    handle_import_machine_config_arg(&args);
 
     #[cfg(target_os = "windows")]
-    if let Some(json_path) = parse_import_machine_config_arg(&args) {
-        eprintln!("Importing machine-wide config from {} â€¦", json_path.display());
-        match crate::config::import_machine_config_from_json_file(&json_path) {
-            Ok(()) => {
-                eprintln!(
-                    "Wrote machine-wide config to {} (DPAPI machine scope).",
-                    crate::config::machine_config_path().display()
-                );
-            }
-            Err(e) => {
-                eprintln!("Import failed: {e:#}");
-                std::process::exit(1);
-            }
-        }
-        std::process::exit(0);
-    }
-
-    #[cfg(target_os = "windows")]
-    if args.iter().any(|a| a == "--service") {
-        let log_guard = init_logging(Some(program_data_log_path("service.log")));
-        if let Some(g) = log_guard {
-            service::set_service_log_guard(g);
-        }
-        info!("Sentinel agent v{}", env!("CARGO_PKG_VERSION"));
-        info!("Starting in Windows service mode.");
-        if let Err(e) = service::run_windows_service() {
-            error!("Windows service failed: {e}");
-        }
+    if handle_service_mode_arg(&args) {
         return;
     }
-
 
     let _log_guard = init_logging(parse_log_file_arg(&args));
     info!("Sentinel agent v{}", env!("CARGO_PKG_VERSION"));
 
-    // Exactly one **interactive** user-session process (this binary without `--service`).
-    // A second launch exits immediately â€” that is not a second â€œagent productâ€, it is the same
-    // installer/shortcut started twice. The Windows **service** is a separate process and uses
-    // `service.log`; it launches this binary in the user session with `--log-file user-agent.log`.
     #[cfg(target_os = "windows")]
-    {
-        use windows::core::PCWSTR;
-        use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
-        use windows::Win32::System::Threading::CreateMutexW;
-
-        let name = crate::service::to_wide_z("Global\\SentinelAgentMain");
-        let h: HANDLE = unsafe { CreateMutexW(None, false, PCWSTR(name.as_ptr())) }
-            .unwrap_or_default();
-        if h.is_invalid() {
-            warn!("CreateMutexW failed; continuing without single-instance guard.");
-        } else {
-            let err = unsafe { GetLastError() };
-            if err == ERROR_ALREADY_EXISTS {
-                let _ = unsafe { CloseHandle(h) };
-                info!("Another Sentinel agent instance is already running; exiting.");
-                return;
-            }
-            // Keep mutex held for process lifetime.
-            let _ = USER_AGENT_MUTEX.set(HeldHandle(h));
-        }
-    }
+    enforce_single_instance();
 
     // Allow forcing the settings UI to show on startup (tray/hotkey is easy to miss).
     let show_ui_on_startup = args.iter().any(|a| a == "--show-ui")
@@ -315,7 +260,7 @@ fn main() {
                 .enable_all()
                 .worker_threads(2)
                 .build()
-                .expect("Failed to build Tokio runtime");
+                .unwrap_or_else(|e| { tracing::error!("Failed to build Tokio runtime: {e}"); std::process::exit(1); });
 
             rt.block_on(async move {
                 // Keyboard capture channels must be created inside the async context
@@ -349,7 +294,7 @@ fn main() {
                 .await;
             });
         })
-        .expect("Failed to spawn agent thread");
+        .unwrap_or_else(|e| { tracing::error!("Failed to spawn agent thread: {e}"); std::process::exit(1); });
 
     // Block until the keyboard hook is ready (or failed)
     match ready_rx.recv() {
@@ -372,6 +317,66 @@ fn main() {
             agent_status,
             show_ui_on_startup,
         );
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn handle_import_machine_config_arg(args: &[String]) {
+    if let Some(json_path) = parse_import_machine_config_arg(args) {
+        eprintln!("Importing machine-wide config from {} â€¦", json_path.display());
+        match crate::config::import_machine_config_from_json_file(&json_path) {
+            Ok(()) => {
+                eprintln!(
+                    "Wrote machine-wide config to {} (DPAPI machine scope).",
+                    crate::config::machine_config_path().display()
+                );
+            }
+            Err(e) => {
+                eprintln!("Import failed: {e:#}");
+                std::process::exit(1);
+            }
+        }
+        std::process::exit(0);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn handle_service_mode_arg(args: &[String]) -> bool {
+    if args.iter().any(|a| a == "--service") {
+        let log_guard = init_logging(Some(program_data_log_path("service.log")));
+        if let Some(g) = log_guard {
+            service::set_service_log_guard(g);
+        }
+        info!("Sentinel agent v{}", env!("CARGO_PKG_VERSION"));
+        info!("Starting in Windows service mode.");
+        if let Err(e) = service::run_windows_service() {
+            error!("Windows service failed: {e}");
+        }
+        return true;
+    }
+    false
+}
+
+#[cfg(target_os = "windows")]
+fn enforce_single_instance() {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{CloseHandle, GetLastError, ERROR_ALREADY_EXISTS, HANDLE};
+    use windows::Win32::System::Threading::CreateMutexW;
+
+    let name = crate::service::to_wide_z("Global\\SentinelAgentMain");
+    let h: HANDLE = unsafe { CreateMutexW(None, false, PCWSTR(name.as_ptr())) }
+        .unwrap_or_default();
+    if h.is_invalid() {
+        warn!("CreateMutexW failed; continuing without single-instance guard.");
+    } else {
+        let err = unsafe { GetLastError() };
+        if err == ERROR_ALREADY_EXISTS {
+            let _ = unsafe { CloseHandle(h) };
+            info!("Another Sentinel agent instance is already running; exiting.");
+            std::process::exit(0);
+        }
+        // Keep mutex held for process lifetime.
+        let _ = USER_AGENT_MUTEX.set(HeldHandle(h));
     }
 }
 

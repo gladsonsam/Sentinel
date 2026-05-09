@@ -36,8 +36,8 @@ pub struct OverridesQuery {
     offset: i64,
 }
 
-fn default_limit() -> i64 { 200 }
-fn default_offset() -> i64 { 0 }
+const fn default_limit() -> i64 { 200 }
+const fn default_offset() -> i64 { 0 }
 
 pub async fn list_overrides(State(s): State<Arc<AppState>>, Query(q): Query<OverridesQuery>) -> Response {
     let query = q.q.trim().to_lowercase();
@@ -45,7 +45,7 @@ pub async fn list_overrides(State(s): State<Arc<AppState>>, Query(q): Query<Over
     let offset = q.offset.max(0);
 
     let domain_rows = sqlx::query(
-        r#"
+        r"
         SELECT o.id, 'domain' AS kind, o.domain AS value, c.key AS category_key,
                COALESCE(l.label_en, initcap(replace(replace(c.key, '_', ' '), '-', ' '))) AS category_label, o.note, o.created_at
         FROM url_category_overrides_domain o
@@ -54,7 +54,7 @@ pub async fn list_overrides(State(s): State<Arc<AppState>>, Query(q): Query<Over
         WHERE ($1 = '' OR o.domain ILIKE ('%' || $1 || '%') OR c.key ILIKE ('%' || $1 || '%'))
         ORDER BY o.created_at DESC
         LIMIT $2 OFFSET $3
-        "#,
+        ",
     )
     .bind(&query)
     .bind(limit)
@@ -63,7 +63,7 @@ pub async fn list_overrides(State(s): State<Arc<AppState>>, Query(q): Query<Over
     .await;
 
     let url_rows = sqlx::query(
-        r#"
+        r"
         SELECT o.id, 'url' AS kind, o.url_prefix AS value, c.key AS category_key,
                COALESCE(l.label_en, initcap(replace(replace(c.key, '_', ' '), '-', ' '))) AS category_label, o.note, o.created_at
         FROM url_category_overrides_url o
@@ -72,7 +72,7 @@ pub async fn list_overrides(State(s): State<Arc<AppState>>, Query(q): Query<Over
         WHERE ($1 = '' OR o.url_prefix ILIKE ('%' || $1 || '%') OR c.key ILIKE ('%' || $1 || '%'))
         ORDER BY o.created_at DESC
         LIMIT $2 OFFSET $3
-        "#,
+        ",
     )
     .bind(&query)
     .bind(limit)
@@ -157,10 +157,10 @@ pub async fn add_override(
             return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "invalid domain" }))).into_response();
         }
         sqlx::query(
-            r#"INSERT INTO url_category_overrides_domain (category_id, domain, note)
+            r"INSERT INTO url_category_overrides_domain (category_id, domain, note)
                VALUES ($1,$2,$3)
                ON CONFLICT (domain) DO UPDATE SET category_id = EXCLUDED.category_id, note = EXCLUDED.note
-            "#,
+            ",
         )
         .bind(category_id)
         .bind(&domain)
@@ -175,10 +175,10 @@ pub async fn add_override(
             format!("https://{value_raw}")
         };
         sqlx::query(
-            r#"INSERT INTO url_category_overrides_url (category_id, url_prefix, note)
+            r"INSERT INTO url_category_overrides_url (category_id, url_prefix, note)
                VALUES ($1,$2,$3)
                ON CONFLICT (url_prefix) DO UPDATE SET category_id = EXCLUDED.category_id, note = EXCLUDED.note
-            "#,
+            ",
         )
         .bind(category_id)
         .bind(&url_prefix)

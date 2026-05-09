@@ -190,46 +190,37 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>, user: &AuthUser) {
         "MouseMove" => {
             let x_ok = val["cmd"]["x"]
                 .as_i64()
-                .map(|v| v >= i32::MIN as i64 && v <= i32::MAX as i64)
-                .unwrap_or(false);
+                .is_some_and(|v| i32::try_from(v).is_ok());
             let y_ok = val["cmd"]["y"]
                 .as_i64()
-                .map(|v| v >= i32::MIN as i64 && v <= i32::MAX as i64)
-                .unwrap_or(false);
+                .is_some_and(|v| i32::try_from(v).is_ok());
             x_ok && y_ok
         }
         "MouseClick" => {
             let x_ok = val["cmd"]["x"]
                 .as_i64()
-                .map(|v| v >= i32::MIN as i64 && v <= i32::MAX as i64)
-                .unwrap_or(false);
+                .is_some_and(|v| i32::try_from(v).is_ok());
             let y_ok = val["cmd"]["y"]
                 .as_i64()
-                .map(|v| v >= i32::MIN as i64 && v <= i32::MAX as i64)
-                .unwrap_or(false);
+                .is_some_and(|v| i32::try_from(v).is_ok());
             let button_ok = val["cmd"]["button"]
                 .as_str()
-                .map(|b| matches!(b, "left" | "right" | "middle"))
-                .unwrap_or(true); // omitted => defaults to "left" in the agent
+                .is_none_or(|b| matches!(b, "left" | "right" | "middle")); // omitted => defaults to "left" in the agent
             x_ok && y_ok && button_ok
         }
         "TypeText" => val["cmd"]["text"]
             .as_str()
-            .map(|s| s.chars().count() <= MAX_TYPE_TEXT_CHARS)
-            .unwrap_or(false),
+            .is_some_and(|s| s.chars().count() <= MAX_TYPE_TEXT_CHARS),
         "KeyPress" => val["cmd"]["key"]
             .as_str()
-            .map(|k| matches!(k, "enter" | "backspace" | "tab" | "escape"))
-            .unwrap_or(false),
+            .is_some_and(|k| matches!(k, "enter" | "backspace" | "tab" | "escape")),
         "Notify" => {
             let title_ok = val["cmd"]["title"]
                 .as_str()
-                .map(|s| s.chars().count() <= MAX_NOTIFY_TITLE_CHARS)
-                .unwrap_or(false);
+                .is_some_and(|s| s.chars().count() <= MAX_NOTIFY_TITLE_CHARS);
             let msg_ok = val["cmd"]["message"]
                 .as_str()
-                .map(|s| s.chars().count() <= MAX_NOTIFY_MESSAGE_CHARS)
-                .unwrap_or(false);
+                .is_some_and(|s| s.chars().count() <= MAX_NOTIFY_MESSAGE_CHARS);
             title_ok && msg_ok
         }
         // `ListDir` supports an omitted/empty path, which the agent treats as
@@ -239,45 +230,37 @@ fn handle_viewer_message(text: &str, state: &Arc<AppState>, user: &AuthUser) {
         "Mkdir" => {
             let path_ok = val["cmd"]["path"]
                 .as_str()
-                .map(|p| !p.trim().is_empty() && p.chars().count() <= MAX_FS_PATH_CHARS)
-                .unwrap_or(false);
+                .is_some_and(|p| !p.trim().is_empty() && p.chars().count() <= MAX_FS_PATH_CHARS);
             let name_ok = val["cmd"]["name"]
                 .as_str()
-                .map(|n| !n.trim().is_empty() && n.chars().count() <= MAX_FS_NAME_CHARS)
-                .unwrap_or(false);
+                .is_some_and(|n| !n.trim().is_empty() && n.chars().count() <= MAX_FS_NAME_CHARS);
             path_ok && name_ok
         }
         "RenamePath" => {
             let src_ok = val["cmd"]["src"]
                 .as_str()
-                .map(|p| !p.trim().is_empty() && p.chars().count() <= MAX_FS_PATH_CHARS)
-                .unwrap_or(false);
+                .is_some_and(|p| !p.trim().is_empty() && p.chars().count() <= MAX_FS_PATH_CHARS);
             let dst_ok = val["cmd"]["dst"]
                 .as_str()
-                .map(|p| !p.trim().is_empty() && p.chars().count() <= MAX_FS_PATH_CHARS)
-                .unwrap_or(false);
+                .is_some_and(|p| !p.trim().is_empty() && p.chars().count() <= MAX_FS_PATH_CHARS);
             src_ok && dst_ok
         }
         "CopyPath" => {
             let src_ok = val["cmd"]["src"]
                 .as_str()
-                .map(|p| !p.trim().is_empty() && p.chars().count() <= MAX_FS_PATH_CHARS)
-                .unwrap_or(false);
+                .is_some_and(|p| !p.trim().is_empty() && p.chars().count() <= MAX_FS_PATH_CHARS);
             let dst_ok = val["cmd"]["dst"]
                 .as_str()
-                .map(|p| !p.trim().is_empty() && p.chars().count() <= MAX_FS_PATH_CHARS)
-                .unwrap_or(false);
+                .is_some_and(|p| !p.trim().is_empty() && p.chars().count() <= MAX_FS_PATH_CHARS);
             src_ok && dst_ok
         }
         "DeletePath" => val["cmd"]["path"]
             .as_str()
-            .map(|p| !p.trim().is_empty() && p.chars().count() <= MAX_FS_PATH_CHARS)
-            .unwrap_or(false),
+            .is_some_and(|p| !p.trim().is_empty() && p.chars().count() <= MAX_FS_PATH_CHARS),
         "WriteFileChunk" => {
             let path_ok = val["cmd"]["path"]
                 .as_str()
-                .map(|p| !p.trim().is_empty() && p.chars().count() <= 2048)
-                .unwrap_or(false);
+                .is_some_and(|p| !p.trim().is_empty() && p.chars().count() <= 2048);
             let total = val["cmd"]["total_chunks"].as_u64().unwrap_or(0);
             let idx = val["cmd"]["chunk_index"].as_u64().unwrap_or(0);
             let chunks_ok = total >= 1 && idx < total;

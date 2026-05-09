@@ -53,9 +53,9 @@ pub fn icon_png_from_exe_path(exe_path: &str, size_px: u32) -> Result<Vec<u8>> {
     // Get HBITMAP (color) for the icon.
     let mut iconinfo = ICONINFO::default();
     unsafe {
-        GetIconInfo(hicon, &mut iconinfo)
+        GetIconInfo(hicon, &raw mut iconinfo)
             .ok()
-            .context("GetIconInfo failed")?
+            .context("GetIconInfo failed")?;
     };
     let hbm_color: HBITMAP = iconinfo.hbmColor;
     let hbm_mask: HBITMAP = iconinfo.hbmMask;
@@ -66,7 +66,7 @@ pub fn icon_png_from_exe_path(exe_path: &str, size_px: u32) -> Result<Vec<u8>> {
         GetObjectW(
             hbm_color.into(),
             std::mem::size_of::<BITMAP>() as i32,
-            Some(&mut bmp as *mut _ as *mut _),
+            Some((&raw mut bmp).cast()),
         )
     };
     if got == 0 {
@@ -124,8 +124,8 @@ pub fn icon_png_from_exe_path(exe_path: &str, size_px: u32) -> Result<Vec<u8>> {
             hbm_color,
             0,
             height as u32,
-            Some(buf.as_mut_ptr() as *mut _),
-            &mut bi,
+            Some(buf.as_mut_ptr().cast()),
+            &raw mut bi,
             DIB_RGB_COLORS,
         )
     };

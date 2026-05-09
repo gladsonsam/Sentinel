@@ -24,7 +24,7 @@ use super::helpers::{audit_ip, err500};
 const MAX_SCRIPT_BODY_BYTES: usize = 256 * 1024;
 
 #[derive(Deserialize)]
-pub(crate) struct RunScriptBody {
+pub struct RunScriptBody {
     shell: String,
     script: String,
     #[serde(default)]
@@ -32,7 +32,7 @@ pub(crate) struct RunScriptBody {
 }
 
 #[derive(Deserialize)]
-pub(crate) struct BulkScriptBody {
+pub struct BulkScriptBody {
     agent_ids: Vec<Uuid>,
     shell: String,
     script: String,
@@ -41,7 +41,7 @@ pub(crate) struct BulkScriptBody {
 }
 
 #[derive(Deserialize, Default)]
-pub(crate) struct SoftwareListQuery {
+pub struct SoftwareListQuery {
     limit: Option<i64>,
     offset: Option<i64>,
 }
@@ -168,7 +168,7 @@ pub async fn agent_software_collect(
     Json(serde_json::json!({ "ok": true })).into_response()
 }
 
-pub(crate) async fn run_script_and_wait(
+pub async fn run_script_and_wait(
     s: Arc<AppState>,
     agent_id: Uuid,
     shell: String,

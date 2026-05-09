@@ -112,11 +112,11 @@ fn default_agent_name() -> String {
     std::env::var("COMPUTERNAME").unwrap_or_else(|_| "agent".into())
 }
 
-fn default_auto_update_enabled() -> bool {
+const fn default_auto_update_enabled() -> bool {
     false
 }
 
-fn default_tray_icon_enabled() -> bool {
+const fn default_tray_icon_enabled() -> bool {
     true
 }
 
@@ -152,13 +152,11 @@ const CONFIG_DPAPI_ENTROPY: &[u8] = b"sentinel-agent-config\0";
 /// `%ProgramData%\Sentinel` (Windows). Shared config, logs, update staging, markers.
 #[cfg(windows)]
 pub fn program_data_sentinel_dir() -> PathBuf {
-    std::env::var_os("ProgramData")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from(r"C:\ProgramData"))
+    std::env::var_os("ProgramData").map_or_else(|| PathBuf::from(r"C:\ProgramData"), PathBuf::from)
         .join("Sentinel")
 }
 
-/// Verified MSI downloads before `msiexec` (Windows). Under ProgramData with everything else.
+/// Verified MSI downloads before `msiexec` (Windows). Under `ProgramData` with everything else.
 #[cfg(windows)]
 pub fn updates_staging_dir() -> PathBuf {
     program_data_sentinel_dir().join("updates")
@@ -363,7 +361,7 @@ pub fn take_reopen_settings_ui_after_restart() -> bool {
 
 /// Real-time connection status of the agent, shared between the background
 /// tokio thread (writer) and the GUI thread (reader).
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum AgentStatus {
     #[default]
     Disconnected,

@@ -53,7 +53,7 @@ fn run_netsh(args: &[&str]) -> Result<()> {
         } else {
             format!("exit code {}", output.status)
         };
-        anyhow::bail!("netsh: {}", detail);
+        anyhow::bail!("netsh: {detail}");
     }
     Ok(())
 }
@@ -87,9 +87,7 @@ pub fn apply_block(server_hostname: &str, server_port: u16) -> Result<()> {
         let server_ip = addr_str
             .to_socket_addrs()
             .ok()
-            .and_then(|mut a| a.next())
-            .map(|a| a.ip().to_string())
-            .unwrap_or_else(|| server_hostname.to_string());
+            .and_then(|mut a| a.next()).map_or_else(|| server_hostname.to_string(), |a| a.ip().to_string());
 
         // Remove any previous Sentinel rules so we start clean.
         delete_sentinel_rules();

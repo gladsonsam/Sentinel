@@ -41,11 +41,11 @@ pub struct Settings {
 
 pub async fn get_settings(pool: &PgPool) -> Result<Settings> {
     let row = sqlx::query(
-        r#"
+        r"
         SELECT enabled, auto_update, source_url, last_update_at, last_update_error
         FROM url_categorization_settings
         WHERE id = 1
-        "#,
+        ",
     )
     .fetch_one(pool)
     .await?;
@@ -54,7 +54,7 @@ pub async fn get_settings(pool: &PgPool) -> Result<Settings> {
         auto_update: row.try_get::<bool, _>("auto_update").unwrap_or(true),
         source_url: row
             .try_get::<String, _>("source_url")
-            .unwrap_or_else(|_| "".to_string()),
+            .unwrap_or_else(|_| String::new()),
         last_update_at: row.try_get::<Option<DateTime<Utc>>, _>("last_update_at").unwrap_or(None),
         last_update_error: row
             .try_get::<Option<String>, _>("last_update_error")
@@ -64,13 +64,13 @@ pub async fn get_settings(pool: &PgPool) -> Result<Settings> {
 
 pub async fn set_settings(pool: &PgPool, enabled: bool, auto_update: bool, source_url: &str) -> Result<()> {
     sqlx::query(
-        r#"
+        r"
         UPDATE url_categorization_settings
         SET enabled = $1,
             auto_update = $2,
             source_url = $3
         WHERE id = 1
-        "#,
+        ",
     )
     .bind(enabled)
     .bind(auto_update)
@@ -82,12 +82,12 @@ pub async fn set_settings(pool: &PgPool, enabled: bool, auto_update: bool, sourc
 
 async fn record_update_ok(pool: &PgPool) -> Result<()> {
     sqlx::query(
-        r#"
+        r"
         UPDATE url_categorization_settings
         SET last_update_at = NOW(),
             last_update_error = NULL
         WHERE id = 1
-        "#,
+        ",
     )
     .execute(pool)
     .await?;
@@ -96,11 +96,11 @@ async fn record_update_ok(pool: &PgPool) -> Result<()> {
 
 async fn record_update_err(pool: &PgPool, err: &str) -> Result<()> {
     sqlx::query(
-        r#"
+        r"
         UPDATE url_categorization_settings
         SET last_update_error = $1
         WHERE id = 1
-        "#,
+        ",
     )
     .bind(err)
     .execute(pool)
@@ -108,7 +108,7 @@ async fn record_update_err(pool: &PgPool, err: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn normalize_hostname(host: &str) -> String {
+pub fn normalize_hostname(host: &str) -> String {
     let raw = host.trim().trim_end_matches('.').to_lowercase();
     if raw.is_empty() {
         return String::new();
@@ -118,9 +118,9 @@ pub(crate) fn normalize_hostname(host: &str) -> String {
 
 /// True only when `raw` looks like a finished browser navigation, not omnibox typing.
 ///
-/// UIAutomation reads the address bar edit control, so partial input (e.g. `anti` while
+/// `UIAutomation` reads the address bar edit control, so partial input (e.g. `anti` while
 /// typing `antigravity.com`) must be ignored for URL history and analytics.
-pub(crate) fn looks_like_complete_navigation_url(raw: &str) -> bool {
+pub fn looks_like_complete_navigation_url(raw: &str) -> bool {
     let s = raw.trim();
     if s.is_empty() {
         return false;
@@ -166,7 +166,7 @@ pub(crate) fn looks_like_complete_navigation_url(raw: &str) -> bool {
     host.contains('.')
 }
 
-pub(crate) fn extract_hostname_from_url(url: &str) -> String {
+pub fn extract_hostname_from_url(url: &str) -> String {
     let raw = url.trim();
     if raw.is_empty() {
         return String::new();
@@ -176,13 +176,10 @@ pub(crate) fn extract_hostname_from_url(url: &str) -> String {
     } else {
         format!("https://{raw}")
     };
-    match url::Url::parse(&href) {
-        Ok(u) => u.host_str().map(normalize_hostname).unwrap_or_default(),
-        Err(_) => {
-            // Fallback: take first token up to a delimiter.
-            let host = raw.split(['/', ':', '?', '#']).next().unwrap_or("");
-            normalize_hostname(host)
-        }
+    if let Ok(u) = url::Url::parse(&href) { u.host_str().map(normalize_hostname).unwrap_or_default() } else {
+        // Fallback: take first token up to a delimiter.
+        let host = raw.split(['/', ':', '?', '#']).next().unwrap_or("");
+        normalize_hostname(host)
     }
 }
 
@@ -204,7 +201,7 @@ async fn job_set(
     message: Option<&str>,
 ) -> Result<()> {
     sqlx::query(
-        r#"
+        r"
         UPDATE url_categorization_job
         SET state = $1,
             started_at = COALESCE(started_at, NOW()),
@@ -213,7 +210,7 @@ async fn job_set(
             bytes_total = $3,
             message = $4
         WHERE id = 1
-        "#,
+        ",
     )
     .bind(state)
     .bind(bytes_done.max(0))
@@ -226,7 +223,7 @@ async fn job_set(
 
 async fn job_reset(pool: &PgPool) -> Result<()> {
     sqlx::query(
-        r#"
+        r"
         UPDATE url_categorization_job
         SET state = 'idle',
             started_at = NULL,
@@ -235,7 +232,7 @@ async fn job_reset(pool: &PgPool) -> Result<()> {
             bytes_done = 0,
             message = NULL
         WHERE id = 1
-        "#,
+        ",
     )
     .execute(pool)
     .await?;
@@ -315,11 +312,11 @@ pub fn spawn_update_job(pool: PgPool, source_url: String) {
 async fn import_from_targz_bytes(pool: &PgPool, bytes: &[u8], sha256: &str) -> Result<()> {
     // Create release metadata row (not strictly required, but useful for UI).
     let release_id: i64 = sqlx::query_scalar(
-        r#"
+        r"
         INSERT INTO url_categorization_release (version, sha256, active)
         VALUES ($1, $2, false)
         RETURNING id
-        "#,
+        ",
     )
     .bind("sha256")
     .bind(sha256)
@@ -413,12 +410,12 @@ async fn import_from_targz_bytes(pool: &PgPool, bytes: &[u8], sha256: &str) -> R
     let mut cat_id: HashMap<String, i64> = HashMap::new();
     for key in cat_domains.keys().chain(cat_urls.keys()) {
         let id: i64 = sqlx::query_scalar(
-            r#"
+            r"
             INSERT INTO url_categories (key, enabled)
             VALUES ($1, true)
             ON CONFLICT (key) DO UPDATE SET key = EXCLUDED.key
             RETURNING id
-            "#,
+            ",
         )
         .bind(key)
         .fetch_one(&mut *tx)
@@ -527,12 +524,12 @@ pub fn spawn(state: Arc<AppState>) {
 async fn worker_tick(state: &Arc<AppState>) -> Result<()> {
     // Pop a batch.
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT url_visit_id, agent_id, ts, url, hostname
         FROM url_categorization_queue
         ORDER BY ts ASC
         LIMIT $1
-        "#,
+        ",
     )
     .bind(WORKER_BATCH)
     .fetch_all(&state.db)
@@ -558,13 +555,13 @@ async fn worker_tick(state: &Arc<AppState>) -> Result<()> {
 
         // Persist mapping.
         sqlx::query(
-            r#"
+            r"
             INSERT INTO url_visit_category (url_visit_id, category_id)
             VALUES ($1, $2)
             ON CONFLICT (url_visit_id) DO UPDATE
             SET category_id = EXCLUDED.category_id,
                 categorized_at = NOW()
-            "#,
+            ",
         )
         .bind(visit_id)
         .bind(category_id)
@@ -573,13 +570,13 @@ async fn worker_tick(state: &Arc<AppState>) -> Result<()> {
 
         if let Some((cid, ref cat_key)) = cat {
             sqlx::query(
-                r#"
+                r"
                 INSERT INTO url_category_stats (agent_id, category_id, visit_count, last_ts)
                 VALUES ($1, $2, 1, $3)
                 ON CONFLICT (agent_id, category_id) DO UPDATE
                 SET visit_count = url_category_stats.visit_count + 1,
                     last_ts = GREATEST(url_category_stats.last_ts, EXCLUDED.last_ts)
-                "#,
+                ",
             )
             .bind(agent_id)
             .bind(cid)
@@ -621,14 +618,14 @@ async fn categorize_override(
     if !host.is_empty() {
         let suffixes = suffix_candidates(&host);
         let row = sqlx::query(
-            r#"
+            r"
             SELECT o.category_id, c.key
             FROM url_category_overrides_domain o
             JOIN url_categories c ON c.id = o.category_id
             WHERE c.enabled = true
               AND o.domain = ANY($1)
             LIMIT 1
-            "#,
+            ",
         )
         .bind(&suffixes)
         .fetch_optional(pool)
@@ -655,14 +652,14 @@ async fn categorize_override(
         href
     };
     let row = sqlx::query(
-        r#"
+        r"
         SELECT o.category_id, c.key
         FROM url_category_overrides_url o
         JOIN url_categories c ON c.id = o.category_id
         WHERE c.enabled = true
           AND $1 LIKE (o.url_prefix || '%')
         LIMIT 1
-        "#,
+        ",
     )
     .bind(&url_norm)
     .fetch_optional(pool)
@@ -676,7 +673,7 @@ async fn categorize_override(
     Ok(None)
 }
 
-pub(crate) async fn categorize_url_now(
+pub async fn categorize_url_now(
     pool: &PgPool,
     hostname: &str,
     url_str: &str,
@@ -692,14 +689,14 @@ pub(crate) async fn categorize_url_now(
     // 1) Domain match: any enabled category where entry equals host or suffix.
     let suffixes = suffix_candidates(&host);
     let row = sqlx::query(
-        r#"
+        r"
         SELECT e.category_id, c.key
         FROM url_category_domain_entries e
         JOIN url_categories c ON c.id = e.category_id
         WHERE c.enabled = true
           AND e.domain = ANY($1)
         LIMIT 1
-        "#,
+        ",
     )
     .bind(&suffixes)
     .fetch_optional(pool)
@@ -725,14 +722,14 @@ pub(crate) async fn categorize_url_now(
         href
     };
     let row = sqlx::query(
-        r#"
+        r"
         SELECT e.category_id, c.key
         FROM url_category_url_entries e
         JOIN url_categories c ON c.id = e.category_id
         WHERE c.enabled = true
           AND $1 LIKE (e.url_prefix || '%')
         LIMIT 1
-        "#,
+        ",
     )
     .bind(&url_norm)
     .fetch_optional(pool)

@@ -84,7 +84,7 @@ impl AppMetrics {
     }
 }
 
-pub async fn metrics_endpoint(metrics: Arc<AppMetrics>) -> impl IntoResponse {
+pub fn metrics_endpoint(metrics: Arc<AppMetrics>) -> impl IntoResponse {
     match metrics.render() {
         Ok(body) => (
             StatusCode::OK,

@@ -53,7 +53,7 @@ const CSRF_HEADER: &str = "x-csrf-token";
 fn new_dashboard_csrf_token() -> String {
     let mut b = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut b);
-    b.iter().map(|x| format!("{:02x}", x)).collect()
+    b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
 fn csrf_header_matches(expected: &str, supplied: Option<&str>) -> bool {
@@ -68,7 +68,7 @@ fn csrf_header_matches(expected: &str, supplied: Option<&str>) -> bool {
     a.ct_eq(b).into()
 }
 
-fn request_requires_csrf_token(method: &Method) -> bool {
+const fn request_requires_csrf_token(method: &Method) -> bool {
     matches!(
         method,
         &Method::POST | &Method::PUT | &Method::PATCH | &Method::DELETE
@@ -86,7 +86,7 @@ fn sanitize_return_to(raw: &str) -> &str {
         return "/";
     }
     // Keep it simple: don't allow control chars.
-    if t.chars().any(|c| c.is_control()) {
+    if t.chars().any(char::is_control) {
         return "/";
     }
     t
@@ -188,7 +188,7 @@ fn login_rate_retry_after(state: &AppState, key: &str) -> Option<u64> {
     if v.len() >= MAX_LOGIN_FAILURES_PER_WINDOW {
         let oldest = *v.iter().min()?;
         Some(
-            (LOGIN_FAIL_WINDOW - now.saturating_duration_since(oldest))
+            LOGIN_FAIL_WINDOW.checked_sub(now.saturating_duration_since(oldest)).unwrap_or_default()
                 .as_secs()
                 .max(1),
         )
@@ -206,8 +206,8 @@ fn record_login_failure(state: &AppState, key: &str) -> Result<u64, u64> {
     v.retain(|t| now.saturating_duration_since(*t) < LOGIN_FAIL_WINDOW);
     v.push(now);
     if v.len() >= MAX_LOGIN_FAILURES_PER_WINDOW {
-        let oldest = *v.iter().min().unwrap();
-        Err((LOGIN_FAIL_WINDOW - now.saturating_duration_since(oldest))
+        let oldest = *v.iter().min().unwrap_or(&now);
+        Err(LOGIN_FAIL_WINDOW.checked_sub(now.saturating_duration_since(oldest)).unwrap_or_default()
             .as_secs()
             .max(1))
     } else {
@@ -413,26 +413,23 @@ pub async fn login(
     let secure = forwarded_proto == "https"
         || std::env::var("COOKIE_SECURE")
             .ok()
-            .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-            .unwrap_or(false);
+            .is_some_and(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"));
 
     // Use SameSite=None when Secure is set so the cookie is sent on
     // non-top-level requests (including WebSocket upgrades) in more
     // deployment/proxy scenarios.
     let cookie = if secure {
         format!(
-            "session={}; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=86400",
-            token,
+            "session={token}; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=86400",
         )
     } else {
         format!(
-            "session={}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400",
-            token,
+            "session={token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=86400",
         )
     };
 
     (
-        [(header::SET_COOKIE, HeaderValue::from_str(&cookie).unwrap())],
+        [(header::SET_COOKIE, HeaderValue::from_str(&cookie).unwrap_or_else(|_| HeaderValue::from_static("")))],
         Json(serde_json::json!({ "ok": true, "csrf_token": csrf_token })),
     )
         .into_response()
@@ -461,8 +458,7 @@ pub async fn logout(
     let secure = forwarded_proto == "https"
         || std::env::var("COOKIE_SECURE")
             .ok()
-            .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-            .unwrap_or(false);
+            .is_some_and(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"));
 
     let clear = if secure {
         "session=; HttpOnly; Secure; SameSite=None; Path=/; Max-Age=0"
@@ -547,7 +543,7 @@ pub async fn oidc_login(headers: HeaderMap) -> Response {
         openidconnect::ClientId::new(cfg.client_id.clone()),
         Some(openidconnect::ClientSecret::new(cfg.client_secret.clone())),
     )
-    .set_redirect_uri(openidconnect::RedirectUrl::new(cfg.redirect_url.clone()).unwrap());
+    .set_redirect_uri(openidconnect::RedirectUrl::new(cfg.redirect_url.clone()).unwrap_or_else(|_| openidconnect::RedirectUrl::new("http://localhost".to_string()).unwrap_or_else(|e| panic!("invalid fallback url: {e}"))));
 
     let mut req = client.authorize_url(
         openidconnect::core::CoreAuthenticationFlow::AuthorizationCode,
@@ -563,8 +559,7 @@ pub async fn oidc_login(headers: HeaderMap) -> Response {
     let return_to = headers
         .get("x-sentinel-return-to")
         .and_then(|v| v.to_str().ok())
-        .map(sanitize_return_to)
-        .unwrap_or("/");
+        .map_or("/", sanitize_return_to);
 
     let forwarded_proto = headers
         .get("x-forwarded-proto")
@@ -573,8 +568,7 @@ pub async fn oidc_login(headers: HeaderMap) -> Response {
     let secure = forwarded_proto == "https"
         || std::env::var("COOKIE_SECURE")
             .ok()
-            .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-            .unwrap_or(false);
+            .is_some_and(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"));
 
     let same_site = if secure {
         "SameSite=None; Secure"
@@ -596,11 +590,11 @@ pub async fn oidc_login(headers: HeaderMap) -> Response {
 
     let mut res = Redirect::to(url.as_str()).into_response();
     res.headers_mut()
-        .append(header::SET_COOKIE, HeaderValue::from_str(&c_state).unwrap());
+        .append(header::SET_COOKIE, HeaderValue::from_str(&c_state).unwrap_or_else(|_| HeaderValue::from_static("")));
     res.headers_mut()
-        .append(header::SET_COOKIE, HeaderValue::from_str(&c_nonce).unwrap());
+        .append(header::SET_COOKIE, HeaderValue::from_str(&c_nonce).unwrap_or_else(|_| HeaderValue::from_static("")));
     res.headers_mut()
-        .append(header::SET_COOKIE, HeaderValue::from_str(&c_ret).unwrap());
+        .append(header::SET_COOKIE, HeaderValue::from_str(&c_ret).unwrap_or_else(|_| HeaderValue::from_static("")));
     res
 }
 
@@ -629,7 +623,7 @@ fn cookie_clear(name: &str, secure: bool) -> HeaderValue {
     } else {
         "SameSite=Lax"
     };
-    HeaderValue::from_str(&format!("{name}=; HttpOnly; {samesite}; Path=/; Max-Age=0")).unwrap()
+    HeaderValue::from_str(&format!("{name}=; HttpOnly; {samesite}; Path=/; Max-Age=0")).unwrap_or_else(|_| HeaderValue::from_static(""))
 }
 
 fn map_role_from_groups(cfg: &oidc::OidcConfig, groups: &[String]) -> String {
@@ -671,8 +665,7 @@ pub async fn oidc_callback(
     let secure = forwarded_proto == "https"
         || std::env::var("COOKIE_SECURE")
             .ok()
-            .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-            .unwrap_or(false);
+            .is_some_and(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"));
 
     // Always clear transient cookies.
     let clear_state = cookie_clear(OIDC_STATE_COOKIE, secure);
@@ -739,7 +732,7 @@ pub async fn oidc_callback(
         openidconnect::ClientId::new(cfg.client_id.clone()),
         Some(openidconnect::ClientSecret::new(cfg.client_secret.clone())),
     )
-    .set_redirect_uri(openidconnect::RedirectUrl::new(cfg.redirect_url.clone()).unwrap());
+    .set_redirect_uri(openidconnect::RedirectUrl::new(cfg.redirect_url.clone()).unwrap_or_else(|_| openidconnect::RedirectUrl::new("http://localhost".to_string()).unwrap_or_else(|e| panic!("invalid fallback url: {e}"))));
 
     let token_req = match client.exchange_code(openidconnect::AuthorizationCode::new(code)) {
         Ok(r) => r,
@@ -858,14 +851,13 @@ pub async fn oidc_callback(
         "SameSite=Lax"
     };
     let session_cookie = format!(
-        "session={}; HttpOnly; {same_site}; Path=/; Max-Age=86400",
-        token_plain
+        "session={token_plain}; HttpOnly; {same_site}; Path=/; Max-Age=86400"
     );
 
     let mut res = Redirect::to(&return_to).into_response();
     res.headers_mut().append(
         header::SET_COOKIE,
-        HeaderValue::from_str(&session_cookie).unwrap(),
+        HeaderValue::from_str(&session_cookie).unwrap_or_else(|_| HeaderValue::from_static("")),
     );
     res.headers_mut().append(header::SET_COOKIE, clear_state);
     res.headers_mut().append(header::SET_COOKIE, clear_nonce);

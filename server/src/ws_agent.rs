@@ -63,15 +63,15 @@ pub async fn handler(
     // - legacy: `?secret=...`
     // - preferred: `Authorization: Bearer ...`
     let provided = params.secret.as_deref().unwrap_or("").trim().to_string();
-    let provided = if !provided.is_empty() {
-        provided
-    } else {
+    let provided = if provided.is_empty() {
         headers
             .get(axum::http::header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .and_then(|s| s.strip_prefix("Bearer "))
             .map(|s| s.trim().to_string())
             .unwrap_or_default()
+    } else {
+        provided
     };
     let name = params
         .name
@@ -87,7 +87,7 @@ pub async fn handler(
             agent_name = %name,
             provided_len = provided.len(),
             allow_insecure_agent_auth = state.allow_insecure_agent_auth,
-            has_agent_secret = state.agent_secret.as_deref().map(|s| !s.is_empty()).unwrap_or(false),
+            has_agent_secret = state.agent_secret.as_deref().is_some_and(|s| !s.is_empty()),
             "Agent WS auth rejected (401)."
         );
         return (StatusCode::UNAUTHORIZED, "Unauthorized").into_response();
@@ -272,7 +272,7 @@ async fn run(mut ws: WebSocket, name: String, state: Arc<AppState>) {
 
                         // Cache the latest screenshot frame with a monotonically increasing sequence.
                         let mut frames = state.frames.lock();
-                        let next_seq = frames.get(&agent_id).map(|f| f.seq.saturating_add(1)).unwrap_or(1);
+                        let next_seq = frames.get(&agent_id).map_or(1, |f| f.seq.saturating_add(1));
                         frames.insert(
                             agent_id,
                             Frame {
@@ -468,8 +468,7 @@ async fn dispatch_val(val: serde_json::Value, agent_id: uuid::Uuid, name: &str, 
         "keys" => {
             let too_long = val["text"]
                 .as_str()
-                .map(|s| s.chars().count() > MAX_KEYS_TEXT_CHARS)
-                .unwrap_or(false);
+                .is_some_and(|s| s.chars().count() > MAX_KEYS_TEXT_CHARS);
             if too_long {
                 warn!("Dropping 'keys' event from {agent_id}: text too large");
                 Ok(())
@@ -480,12 +479,10 @@ async fn dispatch_val(val: serde_json::Value, agent_id: uuid::Uuid, name: &str, 
         "window_focus" => {
             let title_ok = val["title"]
                 .as_str()
-                .map(|s| s.chars().count() <= MAX_WINDOW_TITLE_CHARS)
-                .unwrap_or(true);
+                .is_none_or(|s| s.chars().count() <= MAX_WINDOW_TITLE_CHARS);
             let app_ok = val["app"]
                 .as_str()
-                .map(|s| s.chars().count() <= MAX_WINDOW_APP_CHARS)
-                .unwrap_or(true);
+                .is_none_or(|s| s.chars().count() <= MAX_WINDOW_APP_CHARS);
             if !title_ok || !app_ok {
                 warn!("Dropping 'window_focus' event from {agent_id}: title/app too large");
                 Ok(())
@@ -496,13 +493,12 @@ async fn dispatch_val(val: serde_json::Value, agent_id: uuid::Uuid, name: &str, 
         "url" => {
             let url_ok = val["url"]
                 .as_str()
-                .map(|s| s.len() <= MAX_URL_STR_BYTES)
-                .unwrap_or(true);
-            if !url_ok {
+                .is_none_or(|s| s.len() <= MAX_URL_STR_BYTES);
+            if url_ok {
+                db::insert_url(&state.db, agent_id, &val).await
+            } else {
                 warn!("Dropping 'url' event from {agent_id}: url too large");
                 Ok(())
-            } else {
-                db::insert_url(&state.db, agent_id, &val).await
             }
         }
         "url_session" => db::insert_url_session(&state.db, agent_id, &val).await,
@@ -511,8 +507,7 @@ async fn dispatch_val(val: serde_json::Value, agent_id: uuid::Uuid, name: &str, 
             // Expected: { type:"app_icon", exe_name:"winword.exe", png_base64:"..." }
             let exe_ok = val["exe_name"]
                 .as_str()
-                .map(|s| !s.trim().is_empty() && s.len() <= MAX_WINDOW_APP_CHARS)
-                .unwrap_or(false);
+                .is_some_and(|s| !s.trim().is_empty() && s.len() <= MAX_WINDOW_APP_CHARS);
             let b64 = val["png_base64"].as_str().unwrap_or("");
             if !exe_ok || b64.is_empty() {
                 Ok(())
@@ -541,10 +536,10 @@ async fn dispatch_val(val: serde_json::Value, agent_id: uuid::Uuid, name: &str, 
             let rule_id = val["rule_id"].as_i64();
             let rule_name = val["rule_name"].as_str();
             let exe_name = val["exe_name"].as_str().unwrap_or("").trim().to_string();
-            if !exe_name.is_empty() {
-                db::log_app_block_event(&state.db, agent_id, rule_id, rule_name, &exe_name).await
-            } else {
+            if exe_name.is_empty() {
                 Ok(())
+            } else {
+                db::log_app_block_event(&state.db, agent_id, rule_id, rule_name, &exe_name).await
             }
         }
         "agent_info" => db::upsert_agent_info(&state.db, agent_id, &val).await,

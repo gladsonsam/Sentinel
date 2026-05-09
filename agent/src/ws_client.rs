@@ -19,10 +19,10 @@ fn reconnect_backoff_delay(attempt: u32) -> Duration {
     let exp = 2u64.saturating_pow(attempt.min(8));
     let base = RECONNECT_BACKOFF_BASE_MS.saturating_mul(exp);
     let capped = base.min(RECONNECT_BACKOFF_MAX_MS);
-    let jitter_ms = std::time::SystemTime::now()
+    let jitter_ms = u64::from(std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .subsec_millis() as u64
+        .subsec_millis())
         % 500; // 0..499ms
     Duration::from_millis(capped.saturating_add(jitter_ms))
 }
@@ -87,8 +87,7 @@ pub fn redact_secret_from_ws_url(url: &str) -> String {
     }
     let value_end = out[value_start..]
         .find('&')
-        .map(|i| value_start + i)
-        .unwrap_or(out.len());
+        .map_or(out.len(), |i| value_start + i);
     out.replace_range(value_start..value_end, "***");
     out
 }
@@ -154,7 +153,7 @@ pub async fn run_ws_client(
             set_status(&status, AgentStatus::Disconnected);
             tokio::select! {
                 _ = stop_rx.changed() => {},
-                _ = tokio::time::sleep(Duration::from_secs(3)) => {},
+                () = tokio::time::sleep(Duration::from_secs(3)) => {},
                 f = outbound_rx.recv() => {
                     if let Some(f) = f {
                         buffered.push_back(f);
@@ -172,7 +171,7 @@ pub async fn run_ws_client(
             warn!("WS refusing to connect to non-TLS URL: {ws_url_for_log}");
             tokio::select! {
                 _ = stop_rx.changed() => {},
-                _ = tokio::time::sleep(Duration::from_secs(15)) => {},
+                () = tokio::time::sleep(Duration::from_secs(15)) => {},
             }
             continue;
         }
@@ -189,7 +188,7 @@ pub async fn run_ws_client(
                 let delay = reconnect_backoff_delay(attempt.max(1));
                 tokio::select! {
                     _ = stop_rx.changed() => {},
-                    _ = tokio::time::sleep(delay) => {},
+                    () = tokio::time::sleep(delay) => {},
                 }
                 continue;
             }
@@ -305,7 +304,7 @@ pub async fn run_ws_client(
         let delay = reconnect_backoff_delay(attempt.max(1));
         tokio::select! {
             _ = stop_rx.changed() => {},
-            _ = tokio::time::sleep(delay) => {},
+            () = tokio::time::sleep(delay) => {},
         }
     }
 }

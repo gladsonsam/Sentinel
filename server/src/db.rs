@@ -13,7 +13,6 @@ use rand::{Rng, RngCore};
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row};
 use std::collections::HashMap;
-use std::ops::DerefMut;
 use uuid::Uuid;
 
 use crate::url_categorization;
@@ -216,11 +215,11 @@ pub async fn dashboard_user_get_profile_bits(
     Ok(row.map(|r| {
         (
             r.try_get::<String, _>("username")
-                .unwrap_or_else(|_| "".to_string()),
+                .unwrap_or_else(|_| String::new()),
             r.try_get::<Option<String>, _>("display_icon")
                 .unwrap_or(None),
             r.try_get::<String, _>("display_name")
-                .unwrap_or_else(|_| "".to_string()),
+                .unwrap_or_else(|_| String::new()),
         )
     }))
 }
@@ -241,7 +240,7 @@ pub async fn dashboard_user_get_by_username(
         (
             r.try_get::<Uuid, _>("id").unwrap_or_default(),
             r.try_get::<String, _>("password_hash")
-                .unwrap_or_else(|_| "".to_string()),
+                .unwrap_or_else(|_| String::new()),
             r.try_get::<String, _>("role")
                 .unwrap_or_else(|_| "viewer".to_string()),
         )
@@ -259,8 +258,8 @@ pub async fn dashboard_user_list(pool: &PgPool) -> Result<Vec<DashboardUserRow>>
         .iter()
         .map(|r| DashboardUserRow {
             id: r.try_get("id").unwrap_or_default(),
-            username: r.try_get("username").unwrap_or_else(|_| "".to_string()),
-            display_name: r.try_get("display_name").unwrap_or_else(|_| "".to_string()),
+            username: r.try_get("username").unwrap_or_else(|_| String::new()),
+            display_name: r.try_get("display_name").unwrap_or_else(|_| String::new()),
             role: r.try_get("role").unwrap_or_else(|_| "viewer".to_string()),
             display_icon: r
                 .try_get::<Option<String>, _>("display_icon")
@@ -364,13 +363,13 @@ pub async fn dashboard_session_get_user(
 ) -> Result<Option<(Uuid, String, String, String, Option<String>, String)>> {
     // Returns (user_id, username, role, display_name, display_icon, csrf_token) when session exists and is not expired.
     let row = sqlx::query(
-        r#"
+        r"
         SELECT u.id AS user_id, u.username, u.role, u.display_name, u.display_icon, s.csrf_token
         FROM dashboard_sessions s
         JOIN dashboard_users u ON u.id = s.user_id
         WHERE s.token_sha256_hex = $1
           AND s.expires_at > NOW()
-        "#,
+        ",
     )
     .bind(token_sha256_hex)
     .fetch_optional(pool)
@@ -380,15 +379,15 @@ pub async fn dashboard_session_get_user(
         (
             r.try_get::<Uuid, _>("user_id").unwrap_or_default(),
             r.try_get::<String, _>("username")
-                .unwrap_or_else(|_| "".to_string()),
+                .unwrap_or_else(|_| String::new()),
             r.try_get::<String, _>("role")
                 .unwrap_or_else(|_| "viewer".to_string()),
             r.try_get::<String, _>("display_name")
-                .unwrap_or_else(|_| "".to_string()),
+                .unwrap_or_else(|_| String::new()),
             r.try_get::<Option<String>, _>("display_icon")
                 .unwrap_or(None),
             r.try_get::<String, _>("csrf_token")
-                .unwrap_or_else(|_| "".to_string()),
+                .unwrap_or_else(|_| String::new()),
         )
     }))
 }
@@ -483,7 +482,7 @@ pub async fn dashboard_identity_upsert(
     name: Option<&str>,
 ) -> Result<()> {
     sqlx::query(
-        r#"
+        r"
         INSERT INTO dashboard_identities (issuer, subject, user_id, preferred_username, email, name, last_login_at)
         VALUES ($1, $2, $3, $4, $5, $6, NOW())
         ON CONFLICT (issuer, subject) DO UPDATE SET
@@ -492,7 +491,7 @@ pub async fn dashboard_identity_upsert(
             email = EXCLUDED.email,
             name = EXCLUDED.name,
             last_login_at = NOW()
-        "#,
+        ",
     )
     .bind(issuer)
     .bind(subject)
@@ -522,12 +521,12 @@ pub async fn dashboard_identities_for_user(
     user_id: Uuid,
 ) -> Result<Vec<DashboardIdentityRow>> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT id, issuer, subject, preferred_username, email, name, last_login_at, created_at
         FROM dashboard_identities
         WHERE user_id = $1
         ORDER BY last_login_at DESC
-        "#,
+        ",
     )
     .bind(user_id)
     .fetch_all(pool)
@@ -537,8 +536,8 @@ pub async fn dashboard_identities_for_user(
         .iter()
         .map(|r| DashboardIdentityRow {
             id: r.try_get("id").unwrap_or_default(),
-            issuer: r.try_get("issuer").unwrap_or_else(|_| "".to_string()),
-            subject: r.try_get("subject").unwrap_or_else(|_| "".to_string()),
+            issuer: r.try_get("issuer").unwrap_or_else(|_| String::new()),
+            subject: r.try_get("subject").unwrap_or_else(|_| String::new()),
             preferred_username: r.try_get("preferred_username").ok().flatten(),
             email: r.try_get("email").ok().flatten(),
             name: r.try_get("name").ok().flatten(),
@@ -563,13 +562,13 @@ pub async fn dashboard_identity_link(
     user_id: Uuid,
 ) -> Result<()> {
     sqlx::query(
-        r#"
+        r"
         INSERT INTO dashboard_identities (issuer, subject, user_id, last_login_at)
         VALUES ($1, $2, $3, NOW())
         ON CONFLICT (issuer, subject) DO UPDATE SET
             user_id = EXCLUDED.user_id,
             last_login_at = NOW()
-        "#,
+        ",
     )
     .bind(issuer)
     .bind(subject)
@@ -585,12 +584,12 @@ pub async fn dashboard_identity_link(
 /// Returns the stable UUID for this agent name.
 pub async fn upsert_agent(pool: &PgPool, name: &str) -> Result<Uuid> {
     let row = sqlx::query(
-        r#"
+        r"
         INSERT INTO agents (name)
         VALUES ($1)
         ON CONFLICT (name) DO UPDATE SET last_seen = NOW()
         RETURNING id
-        "#,
+        ",
     )
     .bind(name)
     .fetch_one(pool)
@@ -641,14 +640,14 @@ pub enum EnrollReject {
 
 fn pg_is_unique_violation(e: &sqlx::Error) -> bool {
     match e {
-        sqlx::Error::Database(db) => db.code().map(|c| c == "23505").unwrap_or(false),
+        sqlx::Error::Database(db) => db.code().is_some_and(|c| c == "23505"),
         _ => false,
     }
 }
 
 /// Enrollment codes are six digits; non-digits are ignored.
 pub fn normalize_enrollment_code_for_lookup(raw: &str) -> Option<String> {
-    let digits: String = raw.chars().filter(|c| c.is_ascii_digit()).collect();
+    let digits: String = raw.chars().filter(char::is_ascii_digit).collect();
     (digits.len() == 6).then_some(digits)
 }
 
@@ -666,11 +665,11 @@ pub async fn create_agent_enrollment_token(
         let plaintext = format!("{:06}", rand::thread_rng().gen_range(0..1_000_000u32));
         let digest = Sha256::digest(plaintext.as_bytes()).to_vec();
         let res = sqlx::query(
-            r#"
+            r"
             INSERT INTO agent_enrollment_tokens (token_digest, uses_remaining, expires_at, note)
             VALUES ($1, $2, $3, $4)
             RETURNING id
-            "#,
+            ",
         )
         .bind(&digest[..])
         .bind(uses)
@@ -706,12 +705,12 @@ pub async fn enroll_agent_with_secret(
     let mut tx = pool.begin().await?;
 
     let erow = sqlx::query(
-        r#"
+        r"
         SELECT id, uses_remaining, expires_at
         FROM agent_enrollment_tokens
         WHERE token_digest = $1
         FOR UPDATE
-        "#,
+        ",
     )
     .bind(&digest[..])
     .fetch_optional(&mut *tx)
@@ -750,11 +749,11 @@ pub async fn enroll_agent_with_secret(
     }
 
     sqlx::query(
-        r#"
+        r"
         UPDATE agent_enrollment_tokens
         SET uses_remaining = uses_remaining - 1
         WHERE id = $1 AND uses_remaining > 0
-        "#,
+        ",
     )
     .bind(eid)
     .execute(&mut *tx)
@@ -765,48 +764,45 @@ pub async fn enroll_agent_with_secret(
     let agent_token_plain = URL_SAFE_NO_PAD.encode(raw);
     let api_hash = hash_dashboard_password(&agent_token_plain)?;
 
-    let agent_id: Uuid = match agent_row {
-        Some(ar) => {
-            let id: Uuid = ar.try_get("id")?;
-            let r = sqlx::query(
-                r#"
-                UPDATE agents
-                SET api_token_hash = $2, last_seen = NOW()
-                WHERE id = $1 AND api_token_hash IS NULL
-                "#,
-            )
-            .bind(id)
-            .bind(&api_hash)
-            .execute(&mut *tx)
-            .await?;
-            if r.rows_affected() == 0 {
-                tx.rollback().await?;
-                return Ok(Err(EnrollReject::AgentAlreadyEnrolled));
-            }
-            id
+    let agent_id: Uuid = if let Some(ar) = agent_row {
+        let id: Uuid = ar.try_get("id")?;
+        let r = sqlx::query(
+            r"
+            UPDATE agents
+            SET api_token_hash = $2, last_seen = NOW()
+            WHERE id = $1 AND api_token_hash IS NULL
+            ",
+        )
+        .bind(id)
+        .bind(&api_hash)
+        .execute(&mut *tx)
+        .await?;
+        if r.rows_affected() == 0 {
+            tx.rollback().await?;
+            return Ok(Err(EnrollReject::AgentAlreadyEnrolled));
         }
-        None => {
-            let row = sqlx::query(
-                r#"
-                INSERT INTO agents (name, api_token_hash)
-                VALUES ($1, $2)
-                RETURNING id
-                "#,
-            )
-            .bind(agent_name)
-            .bind(&api_hash)
-            .fetch_one(&mut *tx)
-            .await?;
-            row.try_get("id")?
-        }
+        id
+    } else {
+        let row = sqlx::query(
+            r"
+            INSERT INTO agents (name, api_token_hash)
+            VALUES ($1, $2)
+            RETURNING id
+            ",
+        )
+        .bind(agent_name)
+        .bind(&api_hash)
+        .fetch_one(&mut *tx)
+        .await?;
+        row.try_get("id")?
     };
 
     // Best-effort audit: record which enrollment token enrolled which agent name.
     let _ = sqlx::query(
-        r#"
+        r"
         INSERT INTO agent_enrollment_token_uses (token_id, agent_name, agent_id, client_ip)
         VALUES ($1, $2, $3, $4)
-        "#,
+        ",
     )
     .bind(eid)
     .bind(agent_name)
@@ -832,7 +828,7 @@ pub struct EnrollmentTokenRow {
 
 pub async fn list_agent_enrollment_tokens(pool: &PgPool) -> Result<Vec<EnrollmentTokenRow>> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT
             t.id,
             t.uses_remaining,
@@ -851,7 +847,7 @@ pub async fn list_agent_enrollment_tokens(pool: &PgPool) -> Result<Vec<Enrollmen
             GROUP BY token_id
         ) u ON u.token_id = t.id
         ORDER BY t.created_at DESC
-        "#,
+        ",
     )
     .fetch_all(pool)
     .await?;
@@ -900,13 +896,13 @@ pub async fn list_agent_enrollment_token_uses(
 ) -> Result<Vec<EnrollmentTokenUseRow>> {
     let limit = limit.clamp(1, 500);
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT used_at, agent_name, agent_id
         FROM agent_enrollment_token_uses
         WHERE token_id = $1
         ORDER BY used_at DESC
         LIMIT $2
-        "#,
+        ",
     )
     .bind(token_id)
     .bind(limit)
@@ -950,12 +946,12 @@ pub async fn upsert_agent_info(
     info: &serde_json::Value,
 ) -> Result<()> {
     sqlx::query(
-        r#"
+        r"
         INSERT INTO agent_info (agent_id, info, updated_at)
         VALUES ($1, $2, NOW())
         ON CONFLICT (agent_id)
         DO UPDATE SET info = EXCLUDED.info, updated_at = NOW()
-        "#,
+        ",
     )
     .bind(agent_id)
     .bind(info)
@@ -984,11 +980,11 @@ pub async fn agent_versions_batch(
         return Ok(std::collections::HashMap::new());
     }
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT agent_id, info->>'agent_version' AS agent_version
         FROM agent_info
         WHERE agent_id = ANY($1)
-        "#,
+        ",
     )
     .bind(agent_ids)
     .fetch_all(pool)
@@ -1013,7 +1009,7 @@ pub async fn agent_versions_batch(
 /// Record a new WebSocket session for an agent. Returns the session row id.
 pub async fn start_agent_session(pool: &PgPool, agent_id: Uuid) -> Result<i64> {
     let id: i64 =
-        sqlx::query_scalar(r#"INSERT INTO agent_sessions (agent_id) VALUES ($1) RETURNING id"#)
+        sqlx::query_scalar(r"INSERT INTO agent_sessions (agent_id) VALUES ($1) RETURNING id")
             .bind(agent_id)
             .fetch_one(pool)
             .await?;
@@ -1029,20 +1025,20 @@ pub async fn end_agent_session(pool: &PgPool, session_id: i64) -> Result<()> {
     Ok(())
 }
 
-/// Returns (last_connected_at, last_disconnected_at) for an agent.
+/// Returns (`last_connected_at`, `last_disconnected_at`) for an agent.
 #[allow(dead_code)] // Retained for ad-hoc use; hot paths use [`agent_last_session_times_batch`].
 pub async fn agent_last_session_times(
     pool: &PgPool,
     agent_id: Uuid,
 ) -> Result<(Option<DateTime<Utc>>, Option<DateTime<Utc>>)> {
     let row = sqlx::query(
-        r#"
+        r"
         SELECT
             MAX(connected_at)    AS last_connected_at,
             MAX(disconnected_at) AS last_disconnected_at
         FROM agent_sessions
         WHERE agent_id = $1
-        "#,
+        ",
     )
     .bind(agent_id)
     .fetch_one(pool)
@@ -1062,14 +1058,14 @@ pub async fn agent_last_session_times_batch(
         return Ok(HashMap::new());
     }
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT agent_id,
                MAX(connected_at)    AS last_connected_at,
                MAX(disconnected_at) AS last_disconnected_at
         FROM agent_sessions
         WHERE agent_id = ANY($1)
         GROUP BY agent_id
-        "#,
+        ",
     )
     .bind(agent_ids)
     .fetch_all(pool)
@@ -1095,7 +1091,7 @@ pub async fn insert_window(pool: &PgPool, agent: Uuid, v: &serde_json::Value) ->
     let ts = unix_to_dt(v["ts"].as_i64());
     let user_name = v["user"]
         .as_str()
-        .map(|s| s.trim())
+        .map(str::trim)
         .filter(|s| !s.is_empty());
 
     sqlx::query(
@@ -1112,14 +1108,14 @@ pub async fn insert_window(pool: &PgPool, agent: Uuid, v: &serde_json::Value) ->
     .await?;
 
     sqlx::query(
-        r#"
+        r"
         INSERT INTO window_top_stats (agent_id, app, app_display, title, focus_count, last_ts)
         VALUES ($1, $2, $3, $4, 1, $5)
         ON CONFLICT (agent_id, app, title) DO UPDATE
         SET app_display = EXCLUDED.app_display,
             focus_count = window_top_stats.focus_count + 1,
             last_ts = GREATEST(window_top_stats.last_ts, EXCLUDED.last_ts)
-        "#,
+        ",
     )
     .bind(agent)
     .bind(app)
@@ -1144,11 +1140,11 @@ pub async fn upsert_keys(pool: &PgPool, agent: Uuid, v: &serde_json::Value) -> R
     let ts = unix_to_dt(v["ts"].as_i64());
     let user_name = v["user"]
         .as_str()
-        .map(|s| s.trim())
+        .map(str::trim)
         .filter(|s| !s.is_empty());
 
     let updated = sqlx::query(
-        r#"
+        r"
         UPDATE key_sessions
         SET    text         = text || $1,
                app_display  = $2,
@@ -1158,7 +1154,7 @@ pub async fn upsert_keys(pool: &PgPool, agent: Uuid, v: &serde_json::Value) -> R
           AND  app          = $4
           AND  window_title = $5
           AND  updated_at   > NOW() - INTERVAL '30 seconds'
-        "#,
+        ",
     )
     .bind(text)
     .bind(app_display)
@@ -1201,7 +1197,7 @@ pub async fn insert_url(pool: &PgPool, agent: Uuid, v: &serde_json::Value) -> Re
     let ts = unix_to_dt(v["ts"].as_i64());
     let user_name = v["user"]
         .as_str()
-        .map(|s| s.trim())
+        .map(str::trim)
         .filter(|s| !s.is_empty());
 
     // Skip if same URL as the most-recent visit for this agent.
@@ -1217,11 +1213,11 @@ pub async fn insert_url(pool: &PgPool, agent: Uuid, v: &serde_json::Value) -> Re
     }
 
     let visit_id: i64 = sqlx::query_scalar(
-        r#"
+        r"
         INSERT INTO url_visits (agent_id, url, title, browser, ts, user_name)
         VALUES ($1,$2,$3,$4,$5,$6)
         RETURNING id
-        "#,
+        ",
     )
     .bind(agent)
     .bind(url)
@@ -1233,13 +1229,13 @@ pub async fn insert_url(pool: &PgPool, agent: Uuid, v: &serde_json::Value) -> Re
     .await?;
 
     sqlx::query(
-        r#"
+        r"
         INSERT INTO url_top_stats (agent_id, url, visit_count, last_ts)
         VALUES ($1, $2, 1, $3)
         ON CONFLICT (agent_id, url) DO UPDATE
         SET visit_count = url_top_stats.visit_count + 1,
             last_ts = GREATEST(url_top_stats.last_ts, EXCLUDED.last_ts)
-        "#,
+        ",
     )
     .bind(agent)
     .bind(url)
@@ -1250,12 +1246,12 @@ pub async fn insert_url(pool: &PgPool, agent: Uuid, v: &serde_json::Value) -> Re
     // Enqueue for categorization only when the feature is enabled.
     // This avoids unbounded queue growth when categorization is turned off.
     sqlx::query(
-        r#"
+        r"
         INSERT INTO url_categorization_queue (url_visit_id, agent_id, ts, url, hostname)
         SELECT $1, $2, $3, $4, ''
         WHERE (SELECT enabled FROM url_categorization_settings WHERE id = 1) = true
         ON CONFLICT (url_visit_id) DO NOTHING
-        "#,
+        ",
     )
     .bind(visit_id)
     .bind(agent)
@@ -1286,7 +1282,7 @@ pub async fn insert_url_session(pool: &PgPool, agent: Uuid, v: &serde_json::Valu
         .max(0);
     let user_name = v["user"]
         .as_str()
-        .map(|s| s.trim())
+        .map(str::trim)
         .filter(|s| !s.is_empty());
 
     let hostname = url_categorization::extract_hostname_from_url(url);
@@ -1294,10 +1290,10 @@ pub async fn insert_url_session(pool: &PgPool, agent: Uuid, v: &serde_json::Valu
     let category_id: Option<i64> = cat.as_ref().map(|(id, _)| *id);
 
     sqlx::query(
-        r#"
+        r"
         INSERT INTO url_sessions (agent_id, url, hostname, title, browser, ts_start, ts_end, duration_ms, category_id, user_name)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-        "#,
+        ",
     )
     .bind(agent)
     .bind(url)
@@ -1315,14 +1311,14 @@ pub async fn insert_url_session(pool: &PgPool, agent: Uuid, v: &serde_json::Valu
     // Aggregate per-site.
     if !hostname.is_empty() {
         sqlx::query(
-            r#"
+            r"
             INSERT INTO url_site_stats (agent_id, hostname, time_ms, visit_count, last_ts)
             VALUES ($1, $2, $3, 1, $4)
             ON CONFLICT (agent_id, hostname) DO UPDATE
             SET time_ms = url_site_stats.time_ms + EXCLUDED.time_ms,
                 visit_count = url_site_stats.visit_count + 1,
                 last_ts = GREATEST(url_site_stats.last_ts, EXCLUDED.last_ts)
-            "#,
+            ",
         )
         .bind(agent)
         .bind(&hostname)
@@ -1335,14 +1331,14 @@ pub async fn insert_url_session(pool: &PgPool, agent: Uuid, v: &serde_json::Valu
     // Aggregate per-category.
     if let Some(cid) = category_id {
         sqlx::query(
-            r#"
+            r"
             INSERT INTO url_category_time_stats (agent_id, category_id, time_ms, visit_count, last_ts)
             VALUES ($1, $2, $3, 1, $4)
             ON CONFLICT (agent_id, category_id) DO UPDATE
             SET time_ms = url_category_time_stats.time_ms + EXCLUDED.time_ms,
                 visit_count = url_category_time_stats.visit_count + 1,
                 last_ts = GREATEST(url_category_time_stats.last_ts, EXCLUDED.last_ts)
-            "#,
+            ",
         )
         .bind(agent)
         .bind(cid)
@@ -1363,7 +1359,7 @@ pub async fn insert_activity(pool: &PgPool, agent: Uuid, v: &serde_json::Value) 
     let ts = unix_to_dt(v["ts"].as_i64());
     let user_name = v["user"]
         .as_str()
-        .map(|s| s.trim())
+        .map(str::trim)
         .filter(|s| !s.is_empty());
 
     sqlx::query(
@@ -1395,13 +1391,13 @@ pub async fn upsert_app_icon(
     }
 
     sqlx::query(
-        r#"
+        r"
         INSERT INTO app_icons (agent_id, exe_name, png_bytes, updated_at)
         VALUES ($1, $2, $3, NOW())
         ON CONFLICT (agent_id, exe_name) DO UPDATE
         SET png_bytes = EXCLUDED.png_bytes,
             updated_at = NOW()
-        "#,
+        ",
     )
     .bind(agent)
     .bind(&exe)
@@ -1504,7 +1500,7 @@ pub async fn insert_audit_log(
 /// `dedup_window_secs` from now.
 pub async fn insert_audit_log_dedup(pool: &PgPool, row: AuditLogDedup<'_>) -> Result<()> {
     let exists: Option<i64> = sqlx::query_scalar(
-        r#"
+        r"
         SELECT id
         FROM audit_log
         WHERE actor = $1
@@ -1516,7 +1512,7 @@ pub async fn insert_audit_log_dedup(pool: &PgPool, row: AuditLogDedup<'_>) -> Re
           AND ts > NOW() - ($6::bigint * INTERVAL '1 second')
         ORDER BY ts DESC
         LIMIT 1
-        "#,
+        ",
     )
     .bind(row.actor)
     .bind(row.agent_id)
@@ -1577,7 +1573,7 @@ pub async fn query_audit_log(
     offset: i64,
 ) -> Result<Vec<AuditRecord>> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT id, ts, actor, client_ip, agent_id, action, status, detail
         FROM audit_log
         WHERE ($1::uuid IS NULL OR agent_id = $1)
@@ -1585,7 +1581,7 @@ pub async fn query_audit_log(
           AND ($3::text IS NULL OR status = $3)
         ORDER BY ts DESC
         LIMIT $4 OFFSET $5
-        "#,
+        ",
     )
     .bind(agent_id)
     .bind(action)
@@ -1621,13 +1617,13 @@ pub async fn query_top_urls(
     offset: i64,
 ) -> Result<Vec<UrlTopRow>> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT url, visit_count, last_ts
         FROM url_top_stats
         WHERE agent_id = $1
         ORDER BY visit_count DESC, last_ts DESC
         LIMIT $2 OFFSET $3
-        "#,
+        ",
     )
     .bind(agent)
     .bind(limit)
@@ -1652,13 +1648,13 @@ pub async fn query_top_windows(
     offset: i64,
 ) -> Result<Vec<WindowTopRow>> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT app, app_display, title, focus_count, last_ts
         FROM window_top_stats
         WHERE agent_id = $1
         ORDER BY focus_count DESC, last_ts DESC
         LIMIT $2 OFFSET $3
-        "#,
+        ",
     )
     .bind(agent)
     .bind(limit)
@@ -1688,7 +1684,7 @@ pub async fn query_database_storage(pool: &PgPool) -> Result<serde_json::Value> 
             .await?;
 
     let table_rows = sqlx::query(
-        r#"
+        r"
         SELECT
             c.relname::text AS name,
             pg_total_relation_size(c.oid)::bigint AS bytes
@@ -1698,7 +1694,7 @@ pub async fn query_database_storage(pool: &PgPool) -> Result<serde_json::Value> 
           AND c.relkind IN ('r', 'p', 'm')
           AND NOT c.relispartition
         ORDER BY bytes DESC
-        "#,
+        ",
     )
     .fetch_all(pool)
     .await?;
@@ -1797,7 +1793,7 @@ pub async fn query_urls(
     offset: i64,
 ) -> Result<Vec<serde_json::Value>> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT v.id, v.url, v.title, v.browser, v.ts, v.user_name,
                COALESCE(cc.key, c.key, 'uncategorized') AS category_key,
                COALESCE(cc.label_en, COALESCE(l.label_en, initcap(replace(replace(c.key, '_', ' '), '-', ' '))), 'Uncategorized') AS category
@@ -1810,7 +1806,7 @@ pub async fn query_urls(
         WHERE v.agent_id = $1
         ORDER BY v.ts DESC
         LIMIT $2 OFFSET $3
-        "#,
+        ",
     )
     .bind(agent)
     .bind(limit)
@@ -1847,7 +1843,7 @@ pub async fn query_url_category_stats(
     limit: i64,
 ) -> Result<Vec<UrlCategoryStatRow>> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT COALESCE(cc.label_en, COALESCE(l.label_en, initcap(replace(replace(c.key, '_', ' '), '-', ' '))), 'Uncategorized') AS category,
                SUM(s.visit_count)::bigint AS visit_count,
                MAX(s.last_ts) AS last_ts
@@ -1860,7 +1856,7 @@ pub async fn query_url_category_stats(
         GROUP BY category
         ORDER BY visit_count DESC, last_ts DESC
         LIMIT $2
-        "#,
+        ",
     )
     .bind(agent)
     .bind(limit)
@@ -1895,7 +1891,7 @@ pub async fn query_agent_url_categories_time(
     limit: i64,
 ) -> Result<Vec<AgentUrlCategoryTimeRow>> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT COALESCE(cc.key, c.key, 'uncategorized') AS category_key,
                COALESCE(cc.label_en, COALESCE(l.label_en, initcap(replace(replace(c.key, '_', ' '), '-', ' '))), 'Uncategorized') AS category_label,
                SUM(s.duration_ms)::bigint AS time_ms,
@@ -1912,7 +1908,7 @@ pub async fn query_agent_url_categories_time(
         GROUP BY category_key, category_label
         ORDER BY time_ms DESC NULLS LAST
         LIMIT $4
-        "#,
+        ",
     )
     .bind(agent)
     .bind(from)
@@ -1952,7 +1948,7 @@ pub async fn query_agent_url_sites_time(
     limit: i64,
 ) -> Result<Vec<AgentUrlSiteTimeRow>> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT s.hostname,
                COALESCE(cc.key, c.key, 'uncategorized') AS category_key,
                COALESCE(cc.label_en, COALESCE(l.label_en, initcap(replace(replace(c.key, '_', ' '), '-', ' '))), 'Uncategorized') AS category_label,
@@ -1972,7 +1968,7 @@ pub async fn query_agent_url_sites_time(
         GROUP BY s.hostname, category_key, category_label
         ORDER BY time_ms DESC NULLS LAST
         LIMIT $6
-        "#,
+        ",
     )
     .bind(agent)
     .bind(from)
@@ -2019,7 +2015,7 @@ pub async fn query_agent_url_sessions(
     limit: i64,
 ) -> Result<Vec<AgentUrlSessionRow>> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT s.id, s.url, s.hostname, s.ts_start, s.ts_end, s.duration_ms, s.browser, s.title, s.user_name,
                COALESCE(cc.key, c.key, 'uncategorized') AS category_key,
                COALESCE(cc.label_en, COALESCE(l.label_en, initcap(replace(replace(c.key, '_', ' '), '-', ' '))), 'Uncategorized') AS category_label
@@ -2033,7 +2029,7 @@ pub async fn query_agent_url_sessions(
           AND s.ts_end <= $3
         ORDER BY s.ts_start DESC
         LIMIT $4
-        "#,
+        ",
     )
     .bind(agent)
     .bind(from)
@@ -2074,7 +2070,7 @@ pub async fn enqueue_url_categorization_backfill(pool: &PgPool, agent: Uuid, lim
     }
 
     let rows = sqlx::query(
-        r#"
+        r"
         INSERT INTO url_categorization_queue (url_visit_id, agent_id, ts, url, hostname)
         SELECT v.id, v.agent_id, v.ts, v.url, ''
         FROM url_visits v
@@ -2085,7 +2081,7 @@ pub async fn enqueue_url_categorization_backfill(pool: &PgPool, agent: Uuid, lim
         LIMIT $2
         ON CONFLICT (url_visit_id) DO NOTHING
         RETURNING url_visit_id
-        "#,
+        ",
     )
     .bind(agent)
     .bind(limit.max(0))
@@ -2104,7 +2100,7 @@ pub async fn enqueue_url_categorization_backfill_all(pool: &PgPool, limit: i64) 
         return Ok(0);
     }
     let rows = sqlx::query(
-        r#"
+        r"
         INSERT INTO url_categorization_queue (url_visit_id, agent_id, ts, url, hostname)
         SELECT v.id, v.agent_id, v.ts, v.url, ''
         FROM url_visits v
@@ -2114,7 +2110,7 @@ pub async fn enqueue_url_categorization_backfill_all(pool: &PgPool, limit: i64) 
         LIMIT $1
         ON CONFLICT (url_visit_id) DO NOTHING
         RETURNING url_visit_id
-        "#,
+        ",
     )
     .bind(limit.max(0))
     .fetch_all(pool)
@@ -2125,12 +2121,12 @@ pub async fn enqueue_url_categorization_backfill_all(pool: &PgPool, limit: i64) 
 pub async fn recalc_url_sessions_categories(pool: &PgPool, limit: i64) -> Result<i64> {
     // Load latest sessions and recompute category; update rows + aggregates best-effort.
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT id, agent_id, url, hostname, ts_end, duration_ms
         FROM url_sessions
         ORDER BY ts_end DESC
         LIMIT $1
-        "#,
+        ",
     )
     .bind(limit.max(0))
     .fetch_all(pool)
@@ -2289,14 +2285,14 @@ pub async fn set_retention_agent(
     }
 
     sqlx::query(
-        r#"
+        r"
         INSERT INTO retention_agent (agent_id, keylog_days, window_days, url_days)
         VALUES ($1, $2, $3, $4)
         ON CONFLICT (agent_id) DO UPDATE SET
             keylog_days = EXCLUDED.keylog_days,
             window_days = EXCLUDED.window_days,
             url_days = EXCLUDED.url_days
-        "#,
+        ",
     )
     .bind(agent)
     .bind(p.keylog_days)
@@ -2343,7 +2339,7 @@ pub async fn prune_telemetry_by_retention(pool: &PgPool) -> Result<()> {
                     "DELETE FROM key_sessions WHERE agent_id = $1 AND updated_at < NOW() - ($2::bigint * INTERVAL '1 day')",
                 )
                 .bind(aid)
-                .bind(days as i64)
+                .bind(i64::from(days))
                 .execute(pool)
                 .await?;
             }
@@ -2355,7 +2351,7 @@ pub async fn prune_telemetry_by_retention(pool: &PgPool) -> Result<()> {
                     "DELETE FROM window_events WHERE agent_id = $1 AND ts < NOW() - ($2::bigint * INTERVAL '1 day')",
                 )
                 .bind(aid)
-                .bind(days as i64)
+                .bind(i64::from(days))
                 .execute(pool)
                 .await?;
 
@@ -2363,7 +2359,7 @@ pub async fn prune_telemetry_by_retention(pool: &PgPool) -> Result<()> {
                     "DELETE FROM activity_log WHERE agent_id = $1 AND ts < NOW() - ($2::bigint * INTERVAL '1 day')",
                 )
                 .bind(aid)
-                .bind(days as i64)
+                .bind(i64::from(days))
                 .execute(pool)
                 .await?;
             }
@@ -2375,7 +2371,7 @@ pub async fn prune_telemetry_by_retention(pool: &PgPool) -> Result<()> {
                     "DELETE FROM url_visits WHERE agent_id = $1 AND ts < NOW() - ($2::bigint * INTERVAL '1 day')",
                 )
                 .bind(aid)
-                .bind(days as i64)
+                .bind(i64::from(days))
                 .execute(pool)
                 .await?;
             }
@@ -2431,7 +2427,7 @@ pub async fn prune_auxiliary_retention(
 // ─── Agent local UI password (Argon2 PHC string) ───
 
 /// Sentinel value meaning “no local UI password” when pushed to the agent.
-pub fn empty_agent_ui_password_hash() -> String {
+pub const fn empty_agent_ui_password_hash() -> String {
     String::new()
 }
 
@@ -2486,12 +2482,12 @@ pub async fn set_local_ui_override_hash(
         }
         Some(h) => {
             sqlx::query(
-                r#"
+                r"
                 INSERT INTO agent_local_ui_password_override (agent_id, password_hash_sha256)
                 VALUES ($1, $2)
                 ON CONFLICT (agent_id) DO UPDATE SET
                     password_hash_sha256 = EXCLUDED.password_hash_sha256
-                "#,
+                ",
             )
             .bind(agent_id)
             .bind(h)
@@ -2563,12 +2559,12 @@ pub async fn set_agent_auto_update_override(
     enabled: bool,
 ) -> Result<()> {
     sqlx::query(
-        r#"
+        r"
         INSERT INTO agent_auto_update_override (agent_id, enabled)
         VALUES ($1, $2)
         ON CONFLICT (agent_id) DO UPDATE SET
             enabled = EXCLUDED.enabled
-        "#,
+        ",
     )
     .bind(agent_id)
     .bind(enabled)
@@ -2593,10 +2589,10 @@ pub async fn effective_agent_auto_update_enabled(pool: &PgPool, agent_id: Uuid) 
 
 // ─── Agent internet block (parental controls) ─────────────────────────────────
 
-/// Whether any enabled internet_block_rule applies to this agent (all/group/agent scope).
+/// Whether any enabled `internet_block_rule` applies to this agent (all/group/agent scope).
 pub async fn get_agent_internet_blocked(pool: &PgPool, agent_id: Uuid) -> Result<bool> {
     let count: i64 = sqlx::query_scalar(
-        r#"
+        r"
         SELECT COUNT(*)
         FROM internet_block_rules r
         WHERE r.enabled
@@ -2613,7 +2609,7 @@ pub async fn get_agent_internet_blocked(pool: &PgPool, agent_id: Uuid) -> Result
                     AND s.group_id IN (SELECT group_id FROM agent_group_members WHERE agent_id = $1))
               )
           )
-        "#,
+        ",
     )
     .bind(agent_id)
     .fetch_one(pool)
@@ -2624,7 +2620,7 @@ pub async fn get_agent_internet_blocked(pool: &PgPool, agent_id: Uuid) -> Result
 /// Effective scope kind for display: 'all' > 'group' > 'agent' > null.
 pub async fn get_agent_internet_block_source(pool: &PgPool, agent_id: Uuid) -> Result<Option<String>> {
     let row: Option<String> = sqlx::query_scalar(
-        r#"
+        r"
         SELECT scope_kind FROM internet_block_rule_scopes s
         JOIN internet_block_rules r ON r.id = s.rule_id
         WHERE r.enabled
@@ -2637,7 +2633,7 @@ pub async fn get_agent_internet_block_source(pool: &PgPool, agent_id: Uuid) -> R
           )
         ORDER BY CASE s.scope_kind WHEN 'all' THEN 1 WHEN 'group' THEN 2 ELSE 3 END
         LIMIT 1
-        "#,
+        ",
     )
     .bind(agent_id)
     .fetch_optional(pool)
@@ -2700,12 +2696,12 @@ pub async fn internet_block_rules_list_all(pool: &PgPool) -> Result<Vec<Internet
         }).collect::<Result<Vec<_>>>()?;
 
         let schedule_rows = sqlx::query(
-            r#"
+            r"
             SELECT day_of_week, start_minute, end_minute
             FROM internet_block_rule_schedules
             WHERE rule_id = $1
             ORDER BY day_of_week, start_minute, end_minute
-            "#,
+            ",
         )
         .bind(id)
         .fetch_all(pool)
@@ -2747,7 +2743,7 @@ pub async fn internet_block_rules_effective_for_agent(
     agent_id: Uuid,
 ) -> Result<Vec<InternetBlockRuleEffectiveRow>> {
     let rules = sqlx::query(
-        r#"
+        r"
         SELECT r.id, r.name
         FROM internet_block_rules r
         WHERE r.enabled
@@ -2762,7 +2758,7 @@ pub async fn internet_block_rules_effective_for_agent(
               )
           )
         ORDER BY r.id
-        "#,
+        ",
     )
     .bind(agent_id)
     .fetch_all(pool)
@@ -2772,12 +2768,12 @@ pub async fn internet_block_rules_effective_for_agent(
     for r in &rules {
         let id: i64 = r.try_get("id")?;
         let schedule_rows = sqlx::query(
-            r#"
+            r"
             SELECT day_of_week, start_minute, end_minute
             FROM internet_block_rule_schedules
             WHERE rule_id = $1
             ORDER BY day_of_week, start_minute, end_minute
-            "#,
+            ",
         )
         .bind(id)
         .fetch_all(pool)
@@ -2814,28 +2810,28 @@ pub async fn internet_block_rule_create(
         "INSERT INTO internet_block_rules (name) VALUES ($1) RETURNING id",
     )
     .bind(name)
-    .fetch_one(tx.deref_mut())
+    .fetch_one(&mut *tx)
     .await?;
     for (kind, group_id, agent_id) in scopes {
         sqlx::query(
             "INSERT INTO internet_block_rule_scopes (rule_id, scope_kind, group_id, agent_id) VALUES ($1,$2,$3,$4)",
         )
         .bind(id).bind(kind.as_str()).bind(group_id).bind(agent_id)
-        .execute(tx.deref_mut())
+        .execute(&mut *tx)
         .await?;
     }
     for s in schedules {
         sqlx::query(
-            r#"
+            r"
             INSERT INTO internet_block_rule_schedules (rule_id, day_of_week, start_minute, end_minute)
             VALUES ($1, $2, $3, $4)
-            "#,
+            ",
         )
         .bind(id)
         .bind(s.day_of_week)
         .bind(s.start_minute)
         .bind(s.end_minute)
-        .execute(tx.deref_mut())
+        .execute(&mut *tx)
         .await?;
     }
     tx.commit().await?;
@@ -2856,7 +2852,7 @@ pub async fn internet_block_rule_set_schedules(
     let mut tx = pool.begin().await?;
     let r = sqlx::query("SELECT 1 FROM internet_block_rules WHERE id = $1")
         .bind(rule_id)
-        .fetch_optional(tx.deref_mut())
+        .fetch_optional(&mut *tx)
         .await?;
     if r.is_none() {
         tx.rollback().await?;
@@ -2864,20 +2860,20 @@ pub async fn internet_block_rule_set_schedules(
     }
     sqlx::query("DELETE FROM internet_block_rule_schedules WHERE rule_id = $1")
         .bind(rule_id)
-        .execute(tx.deref_mut())
+        .execute(&mut *tx)
         .await?;
     for s in schedules {
         sqlx::query(
-            r#"
+            r"
             INSERT INTO internet_block_rule_schedules (rule_id, day_of_week, start_minute, end_minute)
             VALUES ($1, $2, $3, $4)
-            "#,
+            ",
         )
         .bind(rule_id)
         .bind(s.day_of_week)
         .bind(s.start_minute)
         .bind(s.end_minute)
-        .execute(tx.deref_mut())
+        .execute(&mut *tx)
         .await?;
     }
     tx.commit().await?;
@@ -2915,9 +2911,9 @@ pub async fn internet_block_set_for_agent(pool: &PgPool, agent_id: Uuid, blocked
     if blocked {
         // Create an agent-scoped rule if the agent isn't already blocked at agent scope.
         let already: i64 = sqlx::query_scalar(
-            r#"SELECT COUNT(*) FROM internet_block_rules r
+            r"SELECT COUNT(*) FROM internet_block_rules r
                JOIN internet_block_rule_scopes s ON s.rule_id = r.id
-               WHERE r.enabled AND s.scope_kind='agent' AND s.agent_id=$1"#,
+               WHERE r.enabled AND s.scope_kind='agent' AND s.agent_id=$1",
         )
         .bind(agent_id).fetch_one(pool).await?;
         if already == 0 {
@@ -2932,9 +2928,9 @@ pub async fn internet_block_set_for_agent(pool: &PgPool, agent_id: Uuid, blocked
     } else {
         // Remove all agent-scoped rules for this specific agent.
         sqlx::query(
-            r#"DELETE FROM internet_block_rules WHERE id IN (
+            r"DELETE FROM internet_block_rules WHERE id IN (
                SELECT rule_id FROM internet_block_rule_scopes WHERE scope_kind='agent' AND agent_id=$1
-            )"#,
+            )",
         )
         .bind(agent_id).execute(pool).await?;
     }
@@ -2980,15 +2976,15 @@ pub async fn replace_agent_software(
         if name.is_empty() {
             continue;
         }
-        let version = item["version"].as_str().map(|s| s.to_string());
-        let publisher = item["publisher"].as_str().map(|s| s.to_string());
-        let install_location = item["install_location"].as_str().map(|s| s.to_string());
-        let install_date = item["install_date"].as_str().map(|s| s.to_string());
+        let version = item["version"].as_str().map(std::string::ToString::to_string);
+        let publisher = item["publisher"].as_str().map(std::string::ToString::to_string);
+        let install_location = item["install_location"].as_str().map(std::string::ToString::to_string);
+        let install_date = item["install_date"].as_str().map(std::string::ToString::to_string);
         sqlx::query(
-            r#"
+            r"
             INSERT INTO agent_software (agent_id, name, version, publisher, install_location, install_date)
             VALUES ($1, $2, $3, $4, $5, $6)
-            "#,
+            ",
         )
         .bind(agent_id)
         .bind(name)
@@ -3006,12 +3002,12 @@ pub async fn replace_agent_software(
 
 pub async fn list_agent_software(pool: &PgPool, agent_id: Uuid) -> Result<Vec<AgentSoftwareRow>> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT name, version, publisher, install_location, install_date, captured_at
         FROM agent_software
         WHERE agent_id = $1
         ORDER BY lower(name) ASC
-        "#,
+        ",
     )
     .bind(agent_id)
     .fetch_all(pool)
@@ -3045,13 +3041,13 @@ pub async fn list_agent_software_paged(
             .await?;
 
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT name, version, publisher, install_location, install_date, captured_at
         FROM agent_software
         WHERE agent_id = $1
         ORDER BY lower(name) ASC
         LIMIT $2 OFFSET $3
-        "#,
+        ",
     )
     .bind(agent_id)
     .bind(limit)
@@ -3098,14 +3094,14 @@ pub struct AgentGroupRow {
 
 pub async fn agent_groups_list(pool: &PgPool) -> Result<Vec<AgentGroupRow>> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT g.id, g.name, g.description, g.created_at,
                COALESCE(COUNT(m.agent_id), 0)::BIGINT AS member_count
         FROM agent_groups g
         LEFT JOIN agent_group_members m ON m.group_id = g.id
         GROUP BY g.id, g.name, g.description, g.created_at
         ORDER BY lower(g.name)
-        "#,
+        ",
     )
     .fetch_all(pool)
     .await?;
@@ -3125,11 +3121,11 @@ pub async fn agent_groups_list(pool: &PgPool) -> Result<Vec<AgentGroupRow>> {
 
 pub async fn agent_group_create(pool: &PgPool, name: &str, description: &str) -> Result<Uuid> {
     let id: Uuid = sqlx::query_scalar(
-        r#"
+        r"
         INSERT INTO agent_groups (name, description)
         VALUES ($1, $2)
         RETURNING id
-        "#,
+        ",
     )
     .bind(name.trim())
     .bind(description)
@@ -3216,13 +3212,13 @@ pub async fn agent_groups_for_agent(
     agent_id: Uuid,
 ) -> Result<Vec<AgentGroupForAgentRow>> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT g.id, g.name, g.description
         FROM agent_groups g
         INNER JOIN agent_group_members m ON m.group_id = g.id
         WHERE m.agent_id = $1
         ORDER BY lower(g.name)
-        "#,
+        ",
     )
     .bind(agent_id)
     .fetch_all(pool)
@@ -3259,7 +3255,7 @@ pub async fn alert_rules_effective_for_agent(
     channel: &str,
 ) -> Result<Vec<AlertRuleRow>> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT DISTINCT r.id, r.name, r.pattern, r.match_mode,
                r.case_insensitive, r.cooldown_secs, r.take_screenshot
         FROM alert_rules r
@@ -3277,7 +3273,7 @@ pub async fn alert_rules_effective_for_agent(
             )
           )
         ORDER BY r.id
-        "#,
+        ",
     )
     .bind(agent_id)
     .bind(channel)
@@ -3324,11 +3320,11 @@ pub struct AlertRuleListItem {
 
 pub async fn alert_rules_list_all(pool: &PgPool) -> Result<Vec<AlertRuleListItem>> {
     let rules = sqlx::query(
-        r#"
+        r"
         SELECT id, name, channel, pattern, match_mode, case_insensitive, cooldown_secs, enabled, take_screenshot
         FROM alert_rules
         ORDER BY id
-        "#,
+        ",
     )
     .fetch_all(pool)
     .await?;
@@ -3374,7 +3370,7 @@ async fn alert_rule_scopes_write_tx(
     rule_id: i64,
     scopes: &[(String, Option<Uuid>, Option<Uuid>)],
 ) -> Result<()> {
-    let conn = tx.deref_mut();
+    let conn = &mut **tx;
     sqlx::query("DELETE FROM alert_rule_scopes WHERE rule_id = $1")
         .bind(rule_id)
         .execute(&mut *conn)
@@ -3382,10 +3378,10 @@ async fn alert_rule_scopes_write_tx(
 
     for (kind, group_id, agent_id) in scopes {
         sqlx::query(
-            r#"
+            r"
             INSERT INTO alert_rule_scopes (rule_id, scope_kind, group_id, agent_id)
             VALUES ($1, $2, $3, $4)
-            "#,
+            ",
         )
         .bind(rule_id)
         .bind(kind.as_str())
@@ -3403,11 +3399,11 @@ pub async fn alert_rule_create_with_scopes(
 ) -> Result<i64> {
     let mut tx = pool.begin().await?;
     let id: i64 = sqlx::query_scalar(
-        r#"
+        r"
         INSERT INTO alert_rules (name, channel, pattern, match_mode, case_insensitive, cooldown_secs, enabled, take_screenshot)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING id
-        "#,
+        ",
     )
     .bind(params.name)
     .bind(params.channel)
@@ -3417,7 +3413,7 @@ pub async fn alert_rule_create_with_scopes(
     .bind(params.cooldown_secs)
     .bind(params.enabled)
     .bind(params.take_screenshot)
-    .fetch_one(tx.deref_mut())
+    .fetch_one(&mut *tx)
     .await?;
     alert_rule_scopes_write_tx(&mut tx, id, params.scopes).await?;
     tx.commit().await?;
@@ -3431,12 +3427,12 @@ pub async fn alert_rule_update_with_scopes(
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
     let r = sqlx::query(
-        r#"
+        r"
         UPDATE alert_rules
         SET name = $2, channel = $3, pattern = $4, match_mode = $5,
             case_insensitive = $6, cooldown_secs = $7, enabled = $8, take_screenshot = $9, updated_at = NOW()
         WHERE id = $1
-        "#,
+        ",
     )
     .bind(rule_id)
     .bind(params.name)
@@ -3447,7 +3443,7 @@ pub async fn alert_rule_update_with_scopes(
     .bind(params.cooldown_secs)
     .bind(params.enabled)
     .bind(params.take_screenshot)
-    .execute(tx.deref_mut())
+    .execute(&mut *tx)
     .await?;
     if r.rows_affected() == 0 {
         tx.rollback().await?;
@@ -3503,11 +3499,11 @@ pub async fn alert_rule_event_insert(
     snippet: &str,
 ) -> Result<i64> {
     let id: i64 = sqlx::query_scalar(
-        r#"
+        r"
         INSERT INTO alert_rule_events (agent_id, rule_id, rule_name, channel, snippet)
         VALUES ($1, $2, $3, $4, $5)
         RETURNING id
-        "#,
+        ",
     )
     .bind(agent_id)
     .bind(rule_id)
@@ -3525,13 +3521,13 @@ pub async fn alert_rule_event_screenshot_upsert(
     jpeg: &[u8],
 ) -> Result<()> {
     sqlx::query(
-        r#"
+        r"
         INSERT INTO alert_rule_event_screenshots (event_id, jpeg)
         VALUES ($1, $2)
         ON CONFLICT (event_id) DO UPDATE SET
             jpeg = EXCLUDED.jpeg,
             created_at = NOW()
-        "#,
+        ",
     )
     .bind(event_id)
     .bind(jpeg)
@@ -3560,7 +3556,7 @@ pub async fn alert_rule_events_list_all(
     offset: i64,
 ) -> Result<Vec<AlertRuleEventTriggeredRow>> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT e.id, e.agent_id, COALESCE(a.name, '') AS agent_name,
                e.rule_name, e.channel, e.snippet, e.created_at,
                EXISTS (SELECT 1 FROM alert_rule_event_screenshots s WHERE s.event_id = e.id) AS has_screenshot,
@@ -3570,7 +3566,7 @@ pub async fn alert_rule_events_list_all(
         LEFT JOIN alert_rules r ON r.id = e.rule_id
         ORDER BY e.created_at DESC
         LIMIT $1 OFFSET $2
-        "#,
+        ",
     )
     .bind(limit)
     .bind(offset)
@@ -3599,7 +3595,7 @@ pub async fn alert_rule_events_list_for_agent(
     offset: i64,
 ) -> Result<Vec<AlertRuleEventRow>> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT e.id, e.rule_id, e.rule_name, e.channel, e.snippet, e.created_at,
                EXISTS (SELECT 1 FROM alert_rule_event_screenshots s WHERE s.event_id = e.id) AS has_screenshot,
                COALESCE(r.take_screenshot, false) AS screenshot_requested
@@ -3608,7 +3604,7 @@ pub async fn alert_rule_events_list_for_agent(
         WHERE e.agent_id = $1
         ORDER BY e.created_at DESC
         LIMIT $2 OFFSET $3
-        "#,
+        ",
     )
     .bind(agent_id)
     .bind(limit)
@@ -3641,7 +3637,7 @@ pub async fn alert_rule_events_list_for_rule(
     offset: i64,
 ) -> Result<Vec<AlertRuleEventTriggeredRow>> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT e.id, e.agent_id, COALESCE(a.name, '') AS agent_name, e.rule_name, e.channel, e.snippet,
                e.created_at,
                EXISTS (SELECT 1 FROM alert_rule_event_screenshots s WHERE s.event_id = e.id) AS has_screenshot,
@@ -3652,7 +3648,7 @@ pub async fn alert_rule_events_list_for_rule(
         WHERE e.rule_id = $1
         ORDER BY e.created_at DESC
         LIMIT $2 OFFSET $3
-        "#,
+        ",
     )
     .bind(rule_id)
     .bind(limit)
@@ -3728,7 +3724,7 @@ pub async fn app_block_rules_effective_for_agent(
     // Subquery picks the most-permissive scope kind (all=1, group=2, agent=3)
     // for display purposes; the WHERE clause checks actual applicability.
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT r.id, r.name, r.exe_pattern, r.match_mode,
                (SELECT scope_kind
                 FROM app_block_rule_scopes sub
@@ -3754,7 +3750,7 @@ pub async fn app_block_rules_effective_for_agent(
               )
           )
         ORDER BY r.id
-        "#,
+        ",
     )
     .bind(agent_id)
     .fetch_all(pool)
@@ -3764,12 +3760,12 @@ pub async fn app_block_rules_effective_for_agent(
     for r in &rows {
         let rule_id: i64 = r.try_get("id")?;
         let schedule_rows = sqlx::query(
-            r#"
+            r"
             SELECT day_of_week, start_minute, end_minute
             FROM app_block_rule_schedules
             WHERE rule_id = $1
             ORDER BY day_of_week, start_minute, end_minute
-            "#,
+            ",
         )
         .bind(rule_id)
         .fetch_all(pool)
@@ -3804,7 +3800,7 @@ pub async fn app_block_rules_applicable_for_agent(
     agent_id: Uuid,
 ) -> Result<Vec<AppBlockRuleRow>> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT r.id, r.name, r.exe_pattern, r.match_mode, r.enabled,
                (SELECT scope_kind
                 FROM app_block_rule_scopes sub
@@ -3829,7 +3825,7 @@ pub async fn app_block_rules_applicable_for_agent(
               )
         )
         ORDER BY r.id
-        "#,
+        ",
     )
     .bind(agent_id)
     .fetch_all(pool)
@@ -3839,12 +3835,12 @@ pub async fn app_block_rules_applicable_for_agent(
     for r in &rows {
         let rule_id: i64 = r.try_get("id")?;
         let schedule_rows = sqlx::query(
-            r#"
+            r"
             SELECT day_of_week, start_minute, end_minute
             FROM app_block_rule_schedules
             WHERE rule_id = $1
             ORDER BY day_of_week, start_minute, end_minute
-            "#,
+            ",
         )
         .bind(rule_id)
         .fetch_all(pool)
@@ -3905,12 +3901,12 @@ pub async fn app_block_rules_list_all(pool: &PgPool) -> Result<Vec<AppBlockRuleL
             .collect::<Result<Vec<_>>>()?;
 
         let schedule_rows = sqlx::query(
-            r#"
+            r"
             SELECT day_of_week, start_minute, end_minute
             FROM app_block_rule_schedules
             WHERE rule_id = $1
             ORDER BY day_of_week, start_minute, end_minute
-            "#,
+            ",
         )
         .bind(id)
         .fetch_all(pool)
@@ -3957,7 +3953,7 @@ pub async fn app_block_rule_create(
     .bind(name)
     .bind(exe_pattern)
     .bind(match_mode)
-    .fetch_one(tx.deref_mut())
+    .fetch_one(&mut *tx)
     .await?;
 
     for (kind, group_id, agent_id) in scopes {
@@ -3968,21 +3964,21 @@ pub async fn app_block_rule_create(
         .bind(kind.as_str())
         .bind(group_id)
         .bind(agent_id)
-        .execute(tx.deref_mut())
+        .execute(&mut *tx)
         .await?;
     }
     for s in schedules {
         sqlx::query(
-            r#"
+            r"
             INSERT INTO app_block_rule_schedules (rule_id, day_of_week, start_minute, end_minute)
             VALUES ($1, $2, $3, $4)
-            "#,
+            ",
         )
         .bind(id)
         .bind(s.day_of_week)
         .bind(s.start_minute)
         .bind(s.end_minute)
-        .execute(tx.deref_mut())
+        .execute(&mut *tx)
         .await?;
     }
     tx.commit().await?;
@@ -3998,7 +3994,7 @@ pub async fn app_block_rule_set_schedules(
     let mut tx = pool.begin().await?;
     let r = sqlx::query("SELECT 1 FROM app_block_rules WHERE id = $1")
         .bind(rule_id)
-        .fetch_optional(tx.deref_mut())
+        .fetch_optional(&mut *tx)
         .await?;
     if r.is_none() {
         tx.rollback().await?;
@@ -4006,20 +4002,20 @@ pub async fn app_block_rule_set_schedules(
     }
     sqlx::query("DELETE FROM app_block_rule_schedules WHERE rule_id = $1")
         .bind(rule_id)
-        .execute(tx.deref_mut())
+        .execute(&mut *tx)
         .await?;
     for s in schedules {
         sqlx::query(
-            r#"
+            r"
             INSERT INTO app_block_rule_schedules (rule_id, day_of_week, start_minute, end_minute)
             VALUES ($1, $2, $3, $4)
-            "#,
+            ",
         )
         .bind(rule_id)
         .bind(s.day_of_week)
         .bind(s.start_minute)
         .bind(s.end_minute)
-        .execute(tx.deref_mut())
+        .execute(&mut *tx)
         .await?;
     }
     tx.commit().await?;
@@ -4047,7 +4043,7 @@ pub async fn app_block_rule_update(
     let mut tx = pool.begin().await?;
     let exists = sqlx::query("SELECT 1 FROM app_block_rules WHERE id = $1")
         .bind(rule_id)
-        .fetch_optional(tx.deref_mut())
+        .fetch_optional(&mut *tx)
         .await?;
     if exists.is_none() {
         tx.rollback().await?;
@@ -4056,28 +4052,28 @@ pub async fn app_block_rule_update(
 
     if opts.name.is_some() || opts.exe_pattern.is_some() || opts.match_mode.is_some() || opts.enabled.is_some() {
         sqlx::query(
-            r#"
+            r"
             UPDATE app_block_rules
             SET name = COALESCE($2, name),
                 exe_pattern = COALESCE($3, exe_pattern),
                 match_mode = COALESCE($4, match_mode),
                 enabled = COALESCE($5, enabled)
             WHERE id = $1
-            "#,
+            ",
         )
         .bind(rule_id)
         .bind(opts.name)
         .bind(opts.exe_pattern)
         .bind(opts.match_mode)
         .bind(opts.enabled)
-        .execute(tx.deref_mut())
+        .execute(&mut *tx)
         .await?;
     }
 
     if let Some(scopes_rows) = opts.scopes {
         sqlx::query("DELETE FROM app_block_rule_scopes WHERE rule_id = $1")
             .bind(rule_id)
-            .execute(tx.deref_mut())
+            .execute(&mut *tx)
             .await?;
         for (kind, group_id, agent_id) in scopes_rows {
             sqlx::query(
@@ -4087,7 +4083,7 @@ pub async fn app_block_rule_update(
             .bind(kind.as_str())
             .bind(group_id)
             .bind(agent_id)
-            .execute(tx.deref_mut())
+            .execute(&mut *tx)
             .await?;
         }
     }
@@ -4095,20 +4091,20 @@ pub async fn app_block_rule_update(
     if let Some(sched_rows) = opts.schedules {
         sqlx::query("DELETE FROM app_block_rule_schedules WHERE rule_id = $1")
             .bind(rule_id)
-            .execute(tx.deref_mut())
+            .execute(&mut *tx)
             .await?;
         for s in sched_rows {
             sqlx::query(
-                r#"
+                r"
                 INSERT INTO app_block_rule_schedules (rule_id, day_of_week, start_minute, end_minute)
                 VALUES ($1, $2, $3, $4)
-                "#,
+                ",
             )
             .bind(rule_id)
             .bind(s.day_of_week)
             .bind(s.start_minute)
             .bind(s.end_minute)
-            .execute(tx.deref_mut())
+            .execute(&mut *tx)
             .await?;
         }
     }
@@ -4137,7 +4133,7 @@ pub async fn app_block_rule_delete(pool: &PgPool, rule_id: i64) -> Result<bool> 
     Ok(r.rows_affected() > 0)
 }
 
-/// Agent UUIDs that have a direct-scope rule for this rule_id (for targeted push).
+/// Agent UUIDs that have a direct-scope rule for this `rule_id` (for targeted push).
 pub async fn app_block_rule_direct_agent_ids(pool: &PgPool, rule_id: i64) -> Result<Vec<Uuid>> {
     let rows = sqlx::query(
         "SELECT agent_id FROM app_block_rule_scopes WHERE rule_id = $1 AND scope_kind = 'agent' AND agent_id IS NOT NULL",
@@ -4202,7 +4198,7 @@ pub async fn app_block_events_for_agent(
     offset: i64,
 ) -> Result<Vec<AppBlockEventRow>> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT e.id, e.agent_id, a.name AS agent_name,
                e.rule_id, COALESCE(e.rule_name, r.name) AS rule_name,
                e.exe_name, e.killed_at
@@ -4212,7 +4208,7 @@ pub async fn app_block_events_for_agent(
         WHERE e.agent_id = $1
         ORDER BY e.killed_at DESC
         LIMIT $2 OFFSET $3
-        "#,
+        ",
     )
     .bind(agent_id)
     .bind(limit)
@@ -4240,7 +4236,7 @@ pub async fn app_block_events_for_rule(
     offset: i64,
 ) -> Result<Vec<AppBlockEventRow>> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT e.id, e.agent_id, a.name AS agent_name,
                e.rule_id, COALESCE(e.rule_name, r.name) AS rule_name,
                e.exe_name, e.killed_at
@@ -4250,7 +4246,7 @@ pub async fn app_block_events_for_rule(
         WHERE e.rule_id = $1
         ORDER BY e.killed_at DESC
         LIMIT $2 OFFSET $3
-        "#,
+        ",
     )
     .bind(rule_id)
     .bind(limit)
@@ -4278,7 +4274,7 @@ pub async fn app_block_events_all(
     offset: i64,
 ) -> Result<Vec<AppBlockEventRow>> {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT e.id, e.agent_id, a.name AS agent_name,
                e.rule_id, COALESCE(e.rule_name, r.name) AS rule_name,
                e.exe_name, e.killed_at
@@ -4287,7 +4283,7 @@ pub async fn app_block_events_all(
         LEFT JOIN app_block_rules r ON r.id = e.rule_id
         ORDER BY e.killed_at DESC
         LIMIT $1 OFFSET $2
-        "#,
+        ",
     )
     .bind(limit)
     .bind(offset)

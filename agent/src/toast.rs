@@ -1,5 +1,5 @@
-//! Windows toast notifications via WinRT. Uses the PowerShell **App User Model ID** so
-//! toasts appear as from PowerShell when Sentinel has no registered AUMID (same as
+//! Windows toast notifications via `WinRT`. Uses the `PowerShell` **App User Model ID** so
+//! toasts appear as from `PowerShell` when Sentinel has no registered AUMID (same as
 //! classic `winrt-notification` + `POWERSHELL_APP_ID`).
 
 use std::thread;
@@ -17,7 +17,7 @@ pub struct Toast {
 }
 
 impl Toast {
-    /// Toast source identity (shows as PowerShell in Action Center).
+    /// Toast source identity (shows as `PowerShell` in Action Center).
     pub const POWERSHELL_APP_ID: &'static str = "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\
                                                  \\WindowsPowerShell\\v1.0\\powershell.exe";
 

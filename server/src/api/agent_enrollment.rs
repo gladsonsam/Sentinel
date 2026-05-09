@@ -24,7 +24,7 @@ pub struct CreateEnrollmentTokenBody {
     pub note: Option<String>,
 }
 
-fn default_uses() -> i32 {
+const fn default_uses() -> i32 {
     1
 }
 
@@ -124,7 +124,7 @@ pub async fn list_enrollment_tokens(
     }
 }
 
-/// Admin: revoke an enrollment token (sets uses_remaining = 0).
+/// Admin: revoke an enrollment token (sets `uses_remaining` = 0).
 pub async fn revoke_enrollment_token(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<auth::AuthUser>,
@@ -150,7 +150,7 @@ pub async fn revoke_enrollment_token(
     }
 }
 
-/// Admin: revoke all enrollment tokens (sets uses_remaining = 0 for all).
+/// Admin: revoke all enrollment tokens (sets `uses_remaining` = 0 for all).
 pub async fn revoke_all_enrollment_tokens(
     State(state): State<Arc<AppState>>,
     Extension(user): Extension<auth::AuthUser>,

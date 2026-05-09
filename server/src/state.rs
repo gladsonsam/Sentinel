@@ -100,13 +100,13 @@ pub struct AppState {
     /// One-shot waiters for agent log RPC responses (`log_tail`, `log_sources`).
     pub log_waiters: Mutex<HashMap<Uuid, oneshot::Sender<serde_json::Value>>>,
     pub(crate) login_failures: Mutex<HashMap<String, Vec<Instant>>>,
-    /// Per (rule_id, agent_id) last fire time for alert cooldowns.
+    /// Per (`rule_id`, `agent_id`) last fire time for alert cooldowns.
     pub alert_match_cooldowns: Mutex<HashMap<(i64, Uuid), Instant>>,
 
     /// Optional Prometheus metrics (when `METRICS_ENABLED`).
     pub metrics: Option<Arc<crate::metrics::AppMetrics>>,
 
-    /// Idempotency for `POST .../software/collect`: (agent_id, key) → last use time.
+    /// Idempotency for `POST .../software/collect`: (`agent_id`, key) → last use time.
     pub software_collect_dedup: Mutex<HashMap<(Uuid, String), Instant>>,
 
     /// External notification providers (Home Assistant, future: Slack, ntfy, …).
@@ -248,7 +248,7 @@ impl AppState {
         self.agent_live.lock().remove(&agent_id);
     }
 
-    /// Returns `Err(retry_after_secs)` when WoL for this agent is throttled.
+    /// Returns `Err(retry_after_secs)` when `WoL` for this agent is throttled.
     pub fn wol_throttle_check(&self, agent_id: Uuid) -> Result<(), u64> {
         if self.wol_min_interval.is_zero() {
             return Ok(());
@@ -258,7 +258,7 @@ impl AppState {
         if let Some(last) = map.get(&agent_id) {
             let elapsed = now.saturating_duration_since(*last);
             if elapsed < self.wol_min_interval {
-                let wait = (self.wol_min_interval - elapsed).as_secs().max(1);
+                let wait = self.wol_min_interval.checked_sub(elapsed).unwrap_or_default().as_secs().max(1);
                 return Err(wait);
             }
         }
@@ -314,8 +314,7 @@ impl AppState {
         self.agent_cmds
             .lock()
             .get(&agent_id)
-            .map(|tx| tx.try_send(AgentControl::Text(s)).is_ok())
-            .unwrap_or(false)
+            .is_some_and(|tx| tx.try_send(AgentControl::Text(s)).is_ok())
     }
 
     /// Best-effort: ask a connected agent to close its WebSocket.
@@ -323,8 +322,7 @@ impl AppState {
         self.agent_cmds
             .lock()
             .get(&agent_id)
-            .map(|tx| tx.try_send(AgentControl::Close).is_ok())
-            .unwrap_or(false)
+            .is_some_and(|tx| tx.try_send(AgentControl::Close).is_ok())
     }
 
     /// Send a JSON string to every connected viewer (fire-and-forget).

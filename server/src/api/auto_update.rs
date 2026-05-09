@@ -26,7 +26,7 @@ pub async fn agent_auto_update_global_get(State(s): State<Arc<AppState>>) -> Res
 }
 
 #[derive(Deserialize)]
-pub(crate) struct AgentAutoUpdateBody {
+pub struct AgentAutoUpdateBody {
     enabled: bool,
 }
 

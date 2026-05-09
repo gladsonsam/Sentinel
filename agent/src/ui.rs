@@ -122,7 +122,7 @@ fn show_settings_window(handle: AppHandle) {
             .or_else(|| handle.config().app.windows.first())
             .cloned();
         let Some(conf) = cfg else { return };
-        let _ = tauri::WebviewWindowBuilder::from_config(&handle, &conf).and_then(|b| b.build());
+        let _ = tauri::WebviewWindowBuilder::from_config(&handle, &conf).and_then(tauri::WebviewWindowBuilder::build);
         if let Some(w) = handle.get_webview_window("main") {
             let _ = w.show();
             let _ = w.set_focus();
@@ -337,11 +337,11 @@ pub struct SaveConfigPayload {
     pub new_password: Option<String>,
 }
 
-fn default_auto_update_enabled() -> bool {
+const fn default_auto_update_enabled() -> bool {
     false
 }
 
-fn default_tray_icon_enabled() -> bool {
+const fn default_tray_icon_enabled() -> bool {
     true
 }
 
@@ -454,7 +454,7 @@ fn open_log_location(kind: String) -> Result<(), String> {
 
 #[tauri::command]
 fn get_config(stored: State<StoredConfig>) -> Config {
-    stored.0.lock().unwrap().clone()
+    stored.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
 }
 
 #[tauri::command]
@@ -466,7 +466,7 @@ fn save_config(
 ) -> Result<(), String> {
     // Lock once to avoid deadlocks (multiple lock() calls in one expression can re-lock).
     let (preserve_ui_hash, preserve_internet_blocked, preserve_internet_block_rules, preserve_app_block_rules) = {
-        let cur = stored.0.lock().unwrap();
+        let cur = stored.0.lock().unwrap_or_else(|e| e.into_inner());
         (
             cur.ui_password_hash.clone(),
             cur.internet_blocked,
@@ -507,7 +507,7 @@ fn save_config(
     let _ = config_tx.0.send(Some(new_cfg.clone()));
 
     // Update the in-memory copy so subsequent get_config() reads are fresh.
-    *stored.0.lock().unwrap() = new_cfg;
+    *stored.0.lock().unwrap_or_else(|e| e.into_inner()) = new_cfg;
 
     // Apply tray visibility preference immediately.
     ensure_tray_matches_config(&app);
@@ -518,7 +518,7 @@ fn save_config(
 
 #[tauri::command]
 fn get_status(status: State<SharedStatus>) -> StatusResponse {
-    let s = status.0.lock().unwrap().clone();
+    let s = status.0.lock().unwrap_or_else(|e| e.into_inner()).clone();
     match s {
         AgentStatus::Connected => StatusResponse {
             status: "Connected".into(),
@@ -546,14 +546,14 @@ fn get_app_version(app: AppHandle) -> String {
 
 #[tauri::command]
 fn has_ui_password(stored: State<StoredConfig>) -> bool {
-    let cfg = stored.0.lock().unwrap();
+    let cfg = stored.0.lock().unwrap_or_else(|e| e.into_inner());
     let h = cfg.ui_password_hash.as_str();
     !h.is_empty() && h.starts_with("$argon2")
 }
 
 #[tauri::command]
 fn verify_ui_password(password: String, stored: State<StoredConfig>) -> Result<(), String> {
-    let cfg = stored.0.lock().unwrap();
+    let cfg = stored.0.lock().unwrap_or_else(|e| e.into_inner());
     let expected = cfg.ui_password_hash.as_str();
     if expected.is_empty() {
         // No lock configured.
@@ -587,7 +587,7 @@ fn hide_window(app: AppHandle) {
 #[tauri::command]
 fn exit_agent(stored: State<StoredConfig>) -> Result<(), String> {
     // If a UI password is set, require a recent successful verification.
-    let cfg = stored.0.lock().unwrap();
+    let cfg = stored.0.lock().unwrap_or_else(|e| e.into_inner());
     let expected = cfg.ui_password_hash.as_str();
     let has_pw = !expected.is_empty() && expected.starts_with("$argon2");
     drop(cfg);
@@ -691,7 +691,7 @@ async fn adopt_with_enrollment_code(
         )
         .await
         .map_err(|e| e.to_string())?;
-        *stored.0.lock().unwrap() = cfg.clone();
+        *stored.0.lock().unwrap_or_else(|e| e.into_inner()) = cfg.clone();
         let watch = if cfg.server_url.is_empty() {
             None
         } else {
@@ -870,7 +870,7 @@ pub fn run_tauri(
                 });
             }
 
-            let win = app.get_webview_window("main").expect("main window missing");
+            let win = app.get_webview_window("main").unwrap_or_else(|| panic!("main window missing"));
 
             // Show on first run or explicit flag
             let is_first_run = initial_config.server_url.is_empty();
@@ -918,7 +918,7 @@ pub fn run_tauri(
 
                             let Some(conf) = cfg else { return };
                             let _ = tauri::WebviewWindowBuilder::from_config(&handle, &conf)
-                                .and_then(|b| b.build());
+                                .and_then(tauri::WebviewWindowBuilder::build);
 
                             if let Some(w) = handle.get_webview_window("main") {
                                 let _ = w.show();

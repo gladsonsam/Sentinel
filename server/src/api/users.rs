@@ -19,7 +19,7 @@ use super::helpers::{audit_ip, err500};
 // ─── Dashboard user management (admin-only) ───────────────────────────────────
 
 #[derive(Deserialize)]
-pub(crate) struct CreateUserBody {
+pub struct CreateUserBody {
     username: String,
     password: String,
     role: Option<String>,
@@ -131,12 +131,12 @@ pub async fn users_create(
 }
 
 #[derive(Deserialize)]
-pub(crate) struct PasswordBody {
+pub struct PasswordBody {
     password: String,
 }
 
 #[derive(Deserialize)]
-pub(crate) struct UserProfileBody {
+pub struct UserProfileBody {
     #[serde(default)]
     username: Option<String>,
     #[serde(default)]
@@ -151,7 +151,7 @@ fn normalize_profile_display_name(raw: &str) -> Result<String, &'static str> {
     if t.len() > 200 {
         return Err("display name must be at most 200 characters");
     }
-    if t.chars().any(|c| c.is_control()) {
+    if t.chars().any(char::is_control) {
         return Err("display name may not contain control characters");
     }
     Ok(t.to_string())
@@ -165,7 +165,7 @@ fn normalize_profile_username(raw: &str) -> Result<String, &'static str> {
     if t.len() > 128 {
         return Err("username must be at most 128 characters");
     }
-    if t.chars().any(|c| c.is_control()) {
+    if t.chars().any(char::is_control) {
         return Err("username may not contain control characters");
     }
     Ok(t.to_string())
@@ -204,7 +204,7 @@ fn normalize_profile_display_icon_set(raw: &str) -> Result<String, &'static str>
         if !ok {
             return Err("avatar must be a PNG, JPEG, WebP, or GIF data URL");
         }
-        if t.chars().any(|c| c.is_control()) {
+        if t.chars().any(char::is_control) {
             return Err("avatar data URL may not contain control characters");
         }
         return Ok(t.to_string());
@@ -212,7 +212,7 @@ fn normalize_profile_display_icon_set(raw: &str) -> Result<String, &'static str>
     if t.len() > 32 {
         return Err("icon must be at most 32 characters");
     }
-    if t.chars().any(|c| c.is_control()) {
+    if t.chars().any(char::is_control) {
         return Err("icon may not contain control characters");
     }
     Ok(t.to_string())
@@ -416,7 +416,7 @@ pub async fn user_set_password(
 }
 
 #[derive(Deserialize)]
-pub(crate) struct RoleBody {
+pub struct RoleBody {
     role: String,
 }
 
@@ -557,7 +557,7 @@ pub async fn user_identities(
 }
 
 #[derive(Deserialize)]
-pub(crate) struct IdentityLinkBody {
+pub struct IdentityLinkBody {
     issuer: String,
     subject: String,
 }

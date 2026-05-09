@@ -55,13 +55,6 @@ const REMOTE_FILE_CHUNK_BYTES = 3 * 1024 * 1024;
 
 export function FilesTab({ agentId, sendWsMessage, dashboardRole = null }: FilesTabProps) {
   const blockedByRole = dashboardRole === "viewer";
-  if (blockedByRole) {
-    return (
-      <Alert type="info" header="Operator role required">
-        Remote file browsing requires the <strong>operator</strong> or <strong>admin</strong> role.
-      </Alert>
-    );
-  }
 
   const DRIVES_PATH = "__this_pc__";
   // Empty path means "agent default" (usually user's Documents).
@@ -111,13 +104,14 @@ export function FilesTab({ agentId, sendWsMessage, dashboardRole = null }: Files
   } | null>(null);
 
   const loadDirectory = useCallback((path: string) => {
+    if (blockedByRole) return;
     setLoading(true);
     sendWsMessage({
       type: "control",
       agent_id: agentId,
       cmd: path ? { type: "ListDir", path } : { type: "ListDir" },
     });
-  }, [agentId, sendWsMessage]);
+  }, [agentId, sendWsMessage, blockedByRole]);
 
   useEffect(() => {
     loadDirectory(currentPath);
@@ -525,6 +519,14 @@ export function FilesTab({ agentId, sendWsMessage, dashboardRole = null }: Files
       setFsMessage({ ok: false, text: "Could not copy to clipboard." });
     }
   };
+
+  if (blockedByRole) {
+    return (
+      <Alert type="info" header="Operator role required">
+        Remote file browsing requires the <strong>operator</strong> or <strong>admin</strong> role.
+      </Alert>
+    );
+  }
 
   return (
     <SpaceBetween size="l">

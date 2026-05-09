@@ -1219,7 +1219,7 @@ export function ActivityTimeline({
           : ""
       : "";
     return `${base} tracked${highlightTimestamp ? " · scrolled to alert time" : ""}${scopeHint}`;
-  }, [filteredSorted.length, sorted.length, isFiltered, highlightTimestamp]);
+  }, [filteredSorted.length, sorted.length, isFiltered, highlightTimestamp, hasMoreOlder, onLoadMore]);
 
   if (loading && sessions.length === 0) {
     return (

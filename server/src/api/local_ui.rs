@@ -19,12 +19,12 @@ use super::helpers::{audit_ip, err500};
 // ─── Agent local UI password (Windows settings window) ───────────────────────
 
 #[derive(Deserialize)]
-pub(crate) struct LocalUiPasswordBody {
+pub struct LocalUiPasswordBody {
     /// Plaintext; `null` or omitted + empty string = no password (open) or clear override.
     password: Option<String>,
 }
 
-fn validate_local_ui_password_plain(p: &str) -> Result<(), &'static str> {
+const fn validate_local_ui_password_plain(p: &str) -> Result<(), &'static str> {
     if p.is_empty() {
         return Ok(());
     }

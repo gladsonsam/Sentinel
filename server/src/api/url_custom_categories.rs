@@ -57,7 +57,7 @@ pub struct PutMembersBody {
 
 pub async fn list_custom_categories(State(s): State<Arc<AppState>>) -> Response {
     let cats = sqlx::query(
-        r#"
+        r"
         SELECT c.id, c.key, c.label_en, c.description_en, c.display_order, c.hidden, c.updated_at,
                COALESCE(m.member_count, 0)::bigint AS member_count
         FROM url_custom_categories c
@@ -67,17 +67,17 @@ pub async fn list_custom_categories(State(s): State<Arc<AppState>>) -> Response 
             GROUP BY custom_category_id
         ) m ON m.custom_category_id = c.id
         ORDER BY c.display_order ASC, c.label_en ASC, c.id ASC
-        "#,
+        ",
     )
     .fetch_all(&s.db)
     .await;
 
     let members = sqlx::query(
-        r#"
+        r"
         SELECT m.custom_category_id, m.ut1_key
         FROM url_custom_category_members m
         ORDER BY m.custom_category_id ASC, m.ut1_key ASC
-        "#,
+        ",
     )
     .fetch_all(&s.db)
     .await;
@@ -136,11 +136,11 @@ pub async fn create_custom_category(
     let desc = body.description_en.trim();
 
     let row = sqlx::query(
-        r#"
+        r"
         INSERT INTO url_custom_categories (key, label_en, description_en, display_order, hidden, updated_at)
         VALUES ($1,$2,$3,$4,$5,NOW())
         RETURNING id
-        "#,
+        ",
     )
     .bind(&key)
     .bind(label_en)
@@ -186,7 +186,7 @@ pub async fn update_custom_category(
         .bind(id)
         .fetch_optional(&s.db)
         .await;
-    let Ok(cur) = cur else { return err500(cur.err().unwrap().into()); };
+    let cur = match cur { Ok(c) => c, Err(e) => return err500(e.into()), };
     let Some(cur) = cur else {
         return (StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "not found" }))).into_response();
     };
@@ -196,7 +196,7 @@ pub async fn update_custom_category(
     let next_label = body
         .label_en
         .as_deref()
-        .map(|s| s.trim())
+        .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or(cur_label.as_str())
         .to_string();
@@ -205,16 +205,14 @@ pub async fn update_custom_category(
     }
     let next_desc = body
         .description_en
-        .as_deref()
-        .map(|s| s.trim().to_string())
-        .unwrap_or_else(|| cur.try_get::<String, _>("description_en").unwrap_or_default());
+        .as_deref().map_or_else(|| cur.try_get::<String, _>("description_en").unwrap_or_default(), |s| s.trim().to_string());
     let next_order = body
         .display_order
         .unwrap_or_else(|| cur.try_get::<i32, _>("display_order").unwrap_or(0));
     let next_hidden = body.hidden.unwrap_or_else(|| cur.try_get::<bool, _>("hidden").unwrap_or(false));
 
     let ok = sqlx::query(
-        r#"
+        r"
         UPDATE url_custom_categories
         SET label_en = $2,
             description_en = $3,
@@ -222,7 +220,7 @@ pub async fn update_custom_category(
             hidden = $5,
             updated_at = NOW()
         WHERE id = $1
-        "#,
+        ",
     )
     .bind(id)
     .bind(&next_label)
@@ -290,12 +288,12 @@ pub async fn put_custom_category_members(
     // Validate UT1 keys exist to avoid silent typos.
     if !keys.is_empty() {
         let missing = sqlx::query(
-            r#"
+            r"
             SELECT k AS missing
             FROM UNNEST($1::text[]) AS k
             WHERE NOT EXISTS (SELECT 1 FROM url_categories c WHERE c.key = k)
             LIMIT 25
-            "#,
+            ",
         )
         .bind(&keys)
         .fetch_all(&s.db)
@@ -328,7 +326,7 @@ pub async fn put_custom_category_members(
         let _ = tx.rollback().await;
         return err500(e.into());
     }
-    for k in keys.iter() {
+    for k in &keys {
         if let Err(e) = sqlx::query(
             "INSERT INTO url_custom_category_members (custom_category_id, ut1_key) VALUES ($1,$2) ON CONFLICT DO NOTHING",
         )

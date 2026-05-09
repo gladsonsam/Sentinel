@@ -25,7 +25,7 @@ pub enum MatchMode {
 
 impl MatchMode {
     fn from_str(s: &str) -> Self {
-        if s == "exact" { MatchMode::Exact } else { MatchMode::Contains }
+        if s == "exact" { Self::Exact } else { Self::Contains }
     }
 }
 
@@ -40,7 +40,7 @@ pub struct BlockRule {
 
 impl BlockRule {
     pub fn from_stored(s: &StoredBlockRule) -> Self {
-        BlockRule {
+        Self {
             id: s.id,
             exe_pattern: s.exe_pattern.clone(),
             match_mode: MatchMode::from_str(&s.match_mode),
@@ -102,7 +102,7 @@ pub async fn run_enforcer(rules: SharedRules, kill_tx: KillReportTx) {
     loop {
         poll.tick().await;
         let active: Vec<BlockRule> = {
-            let lock = rules.lock().unwrap();
+            let lock = rules.lock().unwrap_or_else(|e| e.into_inner());
             if lock.is_empty() {
                 continue;
             }
@@ -116,7 +116,7 @@ pub async fn run_enforcer(rules: SharedRules, kill_tx: KillReportTx) {
         }
         let kills = scan_and_kill_matching_processes(&active);
         if !kills.is_empty() {
-            if let Some(tx) = kill_tx.lock().unwrap().clone() {
+            if let Some(tx) = kill_tx.lock().unwrap_or_else(|e| e.into_inner()).clone() {
                 for ev in kills {
                     let _ = tx.send(ev);
                 }
@@ -155,7 +155,7 @@ fn scan_and_kill_matching_processes(rules: &[BlockRule]) -> Vec<KillEvent> {
         ..Default::default()
     };
 
-    let mut result = unsafe { Process32FirstW(snap, &mut entry) };
+    let mut result = unsafe { Process32FirstW(snap, &raw mut entry) };
     while result.is_ok() {
         let len = entry
             .szExeFile
@@ -176,11 +176,11 @@ fn scan_and_kill_matching_processes(rules: &[BlockRule]) -> Vec<KillEvent> {
                             h,
                             PROCESS_NAME_FORMAT(0),
                             PWSTR(buf.as_mut_ptr()),
-                            &mut size,
+                            &raw mut size,
                         )
                     };
                     let _ = unsafe { CloseHandle(h) };
-                    r.ok().map(|_| String::from_utf16_lossy(&buf[..size as usize]))
+                    r.ok().map(|()| String::from_utf16_lossy(&buf[..size as usize]))
                 });
             let candidate = image_path.clone().unwrap_or_else(|| exe.clone());
             if let Some(rule) = rules.iter().find(|r| r.matches(&candidate)) {
@@ -190,7 +190,7 @@ fn scan_and_kill_matching_processes(rules: &[BlockRule]) -> Vec<KillEvent> {
             }
         }
 
-        result = unsafe { Process32NextW(snap, &mut entry) };
+        result = unsafe { Process32NextW(snap, &raw mut entry) };
     }
 
     let _ = unsafe { CloseHandle(snap) };

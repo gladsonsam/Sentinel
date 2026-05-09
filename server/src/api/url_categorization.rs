@@ -178,7 +178,7 @@ pub async fn post_update_now(
 
 pub async fn list_categories(State(s): State<Arc<AppState>>) -> Response {
     let rows = sqlx::query(
-        r#"
+        r"
         SELECT c.key,
                c.enabled,
                COALESCE(l.description_en, c.description, '') AS description,
@@ -186,7 +186,7 @@ pub async fn list_categories(State(s): State<Arc<AppState>>) -> Response {
         FROM url_categories c
         LEFT JOIN url_category_labels l ON l.key = c.key
         ORDER BY c.key ASC
-        "#,
+        ",
     )
         .fetch_all(&s.db)
         .await;
@@ -267,14 +267,14 @@ pub async fn put_categories(
             if !label.is_empty() {
                 let desc = c.description.as_deref().unwrap_or("").trim().to_string();
                 if let Err(e) = sqlx::query(
-                    r#"
+                    r"
                     INSERT INTO url_category_labels (key, label_en, description_en, updated_at)
                     VALUES ($1, $2, $3, NOW())
                     ON CONFLICT (key) DO UPDATE
                         SET label_en = EXCLUDED.label_en,
                             description_en = EXCLUDED.description_en,
                             updated_at = NOW()
-                    "#,
+                    ",
                 )
                 .bind(k)
                 .bind(label)

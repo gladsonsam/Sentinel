@@ -34,18 +34,18 @@ impl IpcLine {
         s
     }
 
-    pub fn from_slice(bytes: &[u8]) -> Option<IpcLine> {
+    pub fn from_slice(bytes: &[u8]) -> Option<Self> {
         serde_json::from_slice(bytes).ok()
     }
 
     pub fn into_outbound(self) -> Option<OutboundFrame> {
         match self {
-            IpcLine::WsText { text } => Some(OutboundFrame::Text(text)),
-            IpcLine::WsBinaryB64 { data_b64 } => {
+            Self::WsText { text } => Some(OutboundFrame::Text(text)),
+            Self::WsBinaryB64 { data_b64 } => {
                 let decoded = base64::engine::general_purpose::STANDARD.decode(data_b64).ok()?;
                 Some(OutboundFrame::Binary(decoded))
             }
-            IpcLine::ConfigChanged => None,
+            Self::ConfigChanged => None,
         }
     }
 }

@@ -18,12 +18,12 @@ const SENTINEL_GITHUB_REPO: &str = "gladsonsam/Sentinel";
 const SENTINEL_RELEASES_URL: &str = "https://github.com/gladsonsam/Sentinel/releases";
 
 #[derive(Deserialize)]
-pub(crate) struct LatestAgentJson {
+pub struct LatestAgentJson {
     version: String,
 }
 
 #[derive(Deserialize)]
-pub(crate) struct GitHubLatestRelease {
+pub struct GitHubLatestRelease {
     tag_name: String,
 }
 
@@ -87,7 +87,7 @@ fn semver_is_newer(latest: &str, current: &str) -> bool {
 }
 
 #[derive(Deserialize, Default)]
-pub(crate) struct SettingsVersionQuery {
+pub struct SettingsVersionQuery {
     /// When true, skip process-local cache and fetch GitHub (and agent manifest) again.
     #[serde(default)]
     nocache: bool,
@@ -101,8 +101,7 @@ async fn build_settings_version_json() -> serde_json::Value {
     );
     let server_update_available = latest_server_release
         .as_deref()
-        .map(|l| semver_is_newer(l, server_version.as_str()))
-        .unwrap_or(false);
+        .is_some_and(|l| semver_is_newer(l, server_version.as_str()));
 
     serde_json::json!({
         "server_version": server_version,

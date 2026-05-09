@@ -4,7 +4,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 #[derive(Deserialize)]
-pub(crate) struct PageParams {
+pub struct PageParams {
     #[serde(default = "default_limit")]
     pub(crate) limit: i64,
     #[serde(default)]
@@ -12,7 +12,7 @@ pub(crate) struct PageParams {
 }
 
 #[derive(Deserialize)]
-pub(crate) struct AuditParams {
+pub struct AuditParams {
     pub(crate) agent_id: Option<Uuid>,
     pub(crate) action: Option<String>,
     pub(crate) status: Option<String>,
@@ -22,11 +22,11 @@ pub(crate) struct AuditParams {
     pub(crate) offset: i64,
 }
 
-fn default_limit() -> i64 {
+const fn default_limit() -> i64 {
     50
 }
 
-pub(crate) fn validate_page_params(p: &PageParams) -> Result<(), &'static str> {
+pub fn validate_page_params(p: &PageParams) -> Result<(), &'static str> {
     if !(1..=1000).contains(&p.limit) {
         return Err("limit must be between 1 and 1000");
     }
@@ -36,7 +36,7 @@ pub(crate) fn validate_page_params(p: &PageParams) -> Result<(), &'static str> {
     Ok(())
 }
 
-pub(crate) fn validate_audit_params(p: &AuditParams) -> Result<(), &'static str> {
+pub fn validate_audit_params(p: &AuditParams) -> Result<(), &'static str> {
     if !(1..=1000).contains(&p.limit) {
         return Err("limit must be between 1 and 1000");
     }

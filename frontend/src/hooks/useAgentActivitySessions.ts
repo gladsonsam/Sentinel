@@ -36,11 +36,47 @@ export function useAgentActivitySessions(agentId: string, activeTab: TabKey) {
 
   // Keep raw pages in refs so we can recompute sessions on load-more without
   // triggering intermediate rerenders for each dataset.
+interface RawWindowRow {
+  hwnd: number;
+  title: string;
+  app: string;
+  ts?: string;
+  created?: string;
+  user?: string | null;
+}
+
+interface RawUrlRow {
+  id?: number;
+  url: string;
+  browser: string;
+  ts: string;
+  user?: string | null;
+}
+
+interface RawKeyRow {
+  window_title: string;
+  app: string;
+  text: string;
+  updated_at?: string;
+  started_at?: string;
+  user?: string | null;
+}
+
+interface RawAlertRow {
+  id?: number | string;
+  rule_name?: string;
+  channel?: string;
+  snippet?: string;
+  created_at?: string;
+  has_screenshot?: boolean;
+  screenshot_requested?: boolean;
+}
+
   const rawRef = useRef<{
-    windows: any[];
-    urls: any[];
-    keys: any[];
-    alerts: any[];
+    windows: RawWindowRow[];
+    urls: RawUrlRow[];
+    keys: RawKeyRow[];
+    alerts: RawAlertRow[];
     pageSize: number;
     offsets: { windows: number; urls: number; keys: number; alerts: number };
     hasMore: { windows: boolean; urls: boolean; keys: boolean; alerts: boolean };
@@ -58,41 +94,41 @@ export function useAgentActivitySessions(agentId: string, activeTab: TabKey) {
     const { windows, urls, keys, alerts } = rawRef.current;
 
     const windowRows = windows
-      .map((row) => ({
+      .map((row: RawWindowRow) => ({
         id: row.hwnd,
-        window_title: row.title,
-        exe_name: row.app,
-        app_display: row.app,
-        timestamp: row.ts || row.created,
+        window_title: row.title ?? "",
+        exe_name: row.app ?? "",
+        app_display: row.app ?? "",
+        timestamp: row.ts || row.created || "",
         user: row.user ?? null,
       }))
       .filter((row) => parseTimestamp(row.timestamp));
 
     const urlRows = urls
-      .map((row) => ({
+      .map((row: RawUrlRow) => ({
         id: row.id ?? 0,
-        url: row.url,
-        browser: row.browser,
-        timestamp: row.ts,
+        url: row.url ?? "",
+        browser: row.browser ?? "",
+        timestamp: row.ts ?? "",
         user: row.user ?? null,
       }))
       .filter((row) => parseTimestamp(row.timestamp));
 
     const keyRows = keys
-      .map((row) => ({
+      .map((row: RawKeyRow) => ({
         id: 0,
-        window_title: row.window_title,
-        exe_name: row.app,
-        app_display: row.app,
-        keys: row.text,
-        timestamp: row.updated_at || row.started_at,
+        window_title: row.window_title ?? "",
+        exe_name: row.app ?? "",
+        app_display: row.app ?? "",
+        keys: row.text ?? "",
+        timestamp: row.updated_at || row.started_at || "",
         user: row.user ?? null,
       }))
       .filter((row) => parseTimestamp(row.timestamp));
 
     let alertEvents: SessionAlertEvent[] = [];
     try {
-      alertEvents = (alerts ?? []).map((row) => ({
+      alertEvents = (alerts ?? []).map((row: RawAlertRow) => ({
         id: Number(row.id ?? 0),
         rule_name: String(row.rule_name ?? ""),
         channel: String(row.channel ?? ""),

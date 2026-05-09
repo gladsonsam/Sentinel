@@ -22,26 +22,26 @@ type AlertRuleScopeRow = (String, Option<Uuid>, Option<Uuid>);
 // ─── Agent groups & alert rules (admin) ───────────────────────────────────────
 
 #[derive(Deserialize)]
-pub(crate) struct AgentGroupCreateBody {
+pub struct AgentGroupCreateBody {
     name: String,
     #[serde(default)]
     description: String,
 }
 
 #[derive(Deserialize)]
-pub(crate) struct AgentGroupUpdateBody {
+pub struct AgentGroupUpdateBody {
     name: String,
     #[serde(default)]
     description: String,
 }
 
 #[derive(Deserialize)]
-pub(crate) struct AgentGroupMembersAddBody {
+pub struct AgentGroupMembersAddBody {
     agent_ids: Vec<Uuid>,
 }
 
 #[derive(Deserialize)]
-pub(crate) struct AlertRuleScopeIn {
+pub struct AlertRuleScopeIn {
     kind: String,
     #[serde(default)]
     group_id: Option<Uuid>,
@@ -50,7 +50,7 @@ pub(crate) struct AlertRuleScopeIn {
 }
 
 #[derive(Deserialize)]
-pub(crate) struct AlertRuleCreateBody {
+pub struct AlertRuleCreateBody {
     #[serde(default)]
     name: String,
     channel: String,
@@ -69,7 +69,7 @@ pub(crate) struct AlertRuleCreateBody {
 }
 
 #[derive(Deserialize)]
-pub(crate) struct AlertRuleUpdateBody {
+pub struct AlertRuleUpdateBody {
     #[serde(default)]
     name: String,
     channel: String,
@@ -91,11 +91,11 @@ fn default_match_mode() -> String {
     "substring".to_string()
 }
 
-fn default_true() -> bool {
+const fn default_true() -> bool {
     true
 }
 
-fn default_cooldown_secs() -> i32 {
+const fn default_cooldown_secs() -> i32 {
     300
 }
 

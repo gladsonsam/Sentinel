@@ -45,9 +45,8 @@ impl CaptureSettings {
         let mut jpeg_quality: u8 = val
             .get("jpeg_quality")
             .or_else(|| val.get("jpeg_q"))
-            .and_then(|v| v.as_u64())
-            .map(|u| u as u8)
-            .unwrap_or(40)
+            .and_then(serde_json::Value::as_u64)
+            .map_or(40, |u| u as u8)
             .clamp(1, 100);
 
         let interval_ms: u64 = if let Some(v) = val.get("interval_ms") {
@@ -58,7 +57,7 @@ impl CaptureSettings {
             } else {
                 200
             }
-        } else if let Some(fps) = val.get("fps").and_then(|v| v.as_f64()) {
+        } else if let Some(fps) = val.get("fps").and_then(serde_json::Value::as_f64) {
             if fps.is_finite() && fps > 0.0 {
                 (1000.0 / fps).round() as u64
             } else {
@@ -96,15 +95,11 @@ pub fn start_capture(
     std::thread::Builder::new()
         .name("screen-capture".into())
         .spawn(move || {
-            let monitor = match Monitor::all()
+            let monitor = if let Some(m) = Monitor::all()
                 .ok()
-                .and_then(|ms| ms.into_iter().find(|m| m.is_primary().unwrap_or(false)))
-            {
-                Some(m) => m,
-                None => {
-                    error!("Screen capture: no primary monitor found.");
-                    return;
-                }
+                .and_then(|ms| ms.into_iter().find(|m| m.is_primary().unwrap_or(false))) { m } else {
+                error!("Screen capture: no primary monitor found.");
+                return;
             };
 
             info!(

@@ -44,7 +44,7 @@ pub struct ScheduledScriptRow {
 
 pub async fn list_scripts(State(s): State<Arc<AppState>>) -> Response {
     let records = match sqlx::query(
-        r#"
+        r"
         SELECT 
             s.id, s.name, s.shell, s.script, s.timeout_secs, s.enabled, s.created_at, s.updated_at,
             COALESCE(json_agg(json_build_object('kind', sc.kind, 'group_id', sc.group_id, 'agent_id', sc.agent_id)) FILTER (WHERE sc.kind IS NOT NULL), '[]'::json) as scopes,
@@ -56,7 +56,7 @@ pub async fn list_scripts(State(s): State<Arc<AppState>>) -> Response {
         LEFT JOIN scheduled_script_scopes sc ON sc.script_id = s.id
         GROUP BY s.id
         ORDER BY s.id DESC
-        "#
+        "
     )
     .fetch_all(&s.db)
     .await
@@ -101,7 +101,7 @@ pub struct CreateScheduledScriptBody {
     pub schedules: Vec<ScheduledScriptSchedule>,
 }
 
-fn default_timeout() -> i32 { 120 }
+const fn default_timeout() -> i32 { 120 }
 
 pub async fn create_script(
     State(s): State<Arc<AppState>>,
@@ -308,7 +308,7 @@ pub async fn trigger_script(
         return (StatusCode::BAD_REQUEST, Json(serde_json::json!({ "error": "No agents in scope" }))).into_response();
     }
 
-    let connected_agents = s.agents.lock().keys().cloned().collect::<std::collections::HashSet<_>>();
+    let connected_agents = s.agents.lock().keys().copied().collect::<std::collections::HashSet<_>>();
     let now_utc = chrono::Utc::now();
     // For manual triggers, we use the actual current time as expected_fire_time but maybe append "(manual)" or similar?
     // Actually, let's just use the current time truncated to seconds for consistency.
@@ -468,7 +468,7 @@ pub async fn events_all(
 ) -> Response {
     let limit = q.limit.unwrap_or(100).clamp(1, 1000);
     match sqlx::query(
-        r#"
+        r"
         SELECT 
             e.script_id, e.agent_id, e.status, e.expected_fire_time, e.output,
             e.is_manual,
@@ -478,7 +478,7 @@ pub async fn events_all(
         JOIN agents a ON a.id = e.agent_id
         ORDER BY e.expected_fire_time DESC
         LIMIT $1
-        "#
+        "
     )
     .bind(limit)
     .fetch_all(&s.db)
@@ -510,7 +510,7 @@ pub async fn events_for_script(
 ) -> Response {
     let limit = q.limit.unwrap_or(100).clamp(1, 1000);
     match sqlx::query(
-        r#"
+        r"
         SELECT 
             e.script_id, e.agent_id, e.status, e.expected_fire_time, e.output,
             e.is_manual,
@@ -520,7 +520,7 @@ pub async fn events_for_script(
         WHERE e.script_id = $1
         ORDER BY e.expected_fire_time DESC
         LIMIT $2
-        "#
+        "
     )
     .bind(id)
     .bind(limit)

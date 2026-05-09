@@ -20,8 +20,7 @@ pub fn api_json_error(status: StatusCode, code: &str, message: &str) -> Response
 pub fn internal_error(err: anyhow::Error) -> Response {
     let expose = std::env::var("EXPOSE_INTERNAL_ERRORS")
         .ok()
-        .map(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
-        .unwrap_or(false);
+        .is_some_and(|v| matches!(v.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"));
     if expose {
         tracing::error!(error = %err, "internal error");
         (

@@ -1,4 +1,4 @@
-//! Sentinel server: Axum HTTP API, static dashboard, WebSockets for agents and viewers, PostgreSQL.
+//! Sentinel server: Axum HTTP API, static dashboard, `WebSockets` for agents and viewers, `PostgreSQL`.
 //!
 //! Configuration is via environment variables; see `.env.example` in the repository root and the wiki (Configuration + Environment template).
 
@@ -78,108 +78,16 @@ async fn main() -> anyhow::Result<()> {
             .init();
     }
 
-    let db_url = cfg.database_url.clone();
+    let pool = setup_database_and_migrations(&cfg).await?;
 
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .max_connections(cfg.pool_max_connections)
-        .connect(&db_url)
-        .await
-        .map_err(|e| anyhow::anyhow!("Database connection failed: {e}"))?;
+    let allow_insecure_dashboard_open = bootstrap_dashboard_users(&pool).await?;
 
-    sqlx::migrate!("./migrations")
-        .run(&pool)
-        .await
-        .map_err(|e| match e {
-            sqlx::migrate::MigrateError::VersionMismatch(v) => anyhow::anyhow!(
-                "Migration {v} checksum mismatch: the SQL embedded in this binary does not match `_sqlx_migrations` (common after editing an already-applied migration, or CRLF vs LF drift).\n\
-                 \n\
-                 Fix: rebuild the server from the repo, then sync checksums from the **same** `server/migrations` files used for that build:\n\
- cargo run --locked -p sentinel-server --bin migration_checksums\n\
-                 Apply the printed UPDATEs with `psql` against this database, then restart.\n\
-                 Inspect: SELECT version, encode(checksum,'hex') AS checksum_hex FROM _sqlx_migrations WHERE version = {v};\n\
-                 \n\
-                 (Docker builds now normalize `*.sql` to LF before compile.)\n\
-                 \n\
-                 Underlying error: {e}"
-            ),
-            sqlx::migrate::MigrateError::Dirty(v) => anyhow::anyhow!(
-                "Migration {v} is dirty (partial apply). Check `_sqlx_migrations` for success = false. Resolve the failed migration SQL manually, then delete or fix that row before restarting.\n\
-                 Underlying error: {e}"
-            ),
-            _ => anyhow::anyhow!("Migration failed: {e}"),
-        })?;
-
-    info!("Database ready.");
-
-    // ── Dashboard users bootstrap ────────────────────────────────────────────
-    let allow_insecure_dashboard_open_env = read_env_or_file("ALLOW_INSECURE_DASHBOARD_OPEN")
-        .map(|v| parse_bool(&v))
-        .unwrap_or(false);
-    let allow_insecure_dashboard_open = if cfg!(debug_assertions) {
-        allow_insecure_dashboard_open_env
-    } else {
-        if allow_insecure_dashboard_open_env {
-            tracing::warn!(
-                "Ignoring ALLOW_INSECURE_DASHBOARD_OPEN in release builds (insecure)."
-            );
-        }
-        false
-    };
-
-    let admin_username = read_env_or_file("ADMIN_USERNAME")
-        .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| "admin".to_string());
-
-    let admin_password = read_env_or_file("ADMIN_PASSWORD")
-        .or_else(|| read_env_or_file("UI_PASSWORD"))
-        .filter(|s| !s.is_empty());
-
-    let users = db::dashboard_user_count(&pool).await.unwrap_or(0);
-    if users == 0 {
-        match admin_password {
-            Some(ref pw) => {
-                db::bootstrap_default_admin(&pool, &admin_username, pw).await?;
-                info!("Bootstrapped default dashboard user '{admin_username}' (role: admin).");
-            }
-            None => {
-                if allow_insecure_dashboard_open {
-                    info!("No dashboard users exist yet; dashboard is open (ALLOW_INSECURE_DASHBOARD_OPEN=true).");
-                } else {
-                    return Err(anyhow::anyhow!(
-                        "No dashboard users exist. Set ADMIN_PASSWORD (or UI_PASSWORD) to bootstrap the default admin."
-                    ));
-                }
-            }
-        }
-    }
-
-    let pool_retention = pool.clone();
-    let ret_secs = cfg.retention_interval_secs;
-    let alert_days = cfg.alert_event_retention_days;
-    let software_days = cfg.software_inventory_retention_days;
-    tokio::spawn(async move {
-        if let Err(e) = db::prune_telemetry_by_retention(&pool_retention).await {
-            tracing::warn!(error = %e, "initial retention prune failed");
-        }
-        if let Err(e) =
-            db::prune_auxiliary_retention(&pool_retention, alert_days, software_days).await
-        {
-            tracing::warn!(error = %e, "initial auxiliary retention prune failed");
-        }
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(ret_secs));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            interval.tick().await;
-            if let Err(e) = db::prune_telemetry_by_retention(&pool_retention).await {
-                tracing::warn!(error = %e, "retention prune failed");
-            }
-            if let Err(e) =
-                db::prune_auxiliary_retention(&pool_retention, alert_days, software_days).await
-            {
-                tracing::warn!(error = %e, "auxiliary retention prune failed");
-            }
-        }
-    });
+    spawn_retention_prune_task(
+        pool.clone(),
+        cfg.retention_interval_secs,
+        cfg.alert_event_retention_days,
+        cfg.software_inventory_retention_days,
+    );
 
     if allow_insecure_dashboard_open {
         info!("Dashboard can run without users (insecure opt-in).");
@@ -187,8 +95,7 @@ async fn main() -> anyhow::Result<()> {
 
     let agent_secret = read_env_or_file("AGENT_SECRET").filter(|s| !s.is_empty());
     let allow_insecure_agent_auth = read_env_or_file("ALLOW_INSECURE_AGENT_AUTH")
-        .map(|v| parse_bool(&v))
-        .unwrap_or(false);
+        .is_some_and(|v| parse_bool(&v));
     if agent_secret.is_some() {
         info!("AGENT_SECRET is set (optional shared secret for agents that are not enrolled with a per-device token).");
     } else if allow_insecure_agent_auth {
@@ -210,8 +117,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let allow_remote_script = read_env_or_file("ALLOW_REMOTE_SCRIPT_EXECUTION")
-        .map(|v| parse_bool(&v))
-        .unwrap_or(false);
+        .is_some_and(|v| parse_bool(&v));
     if allow_remote_script {
         info!("Remote script execution from the dashboard is ENABLED (ALLOW_REMOTE_SCRIPT_EXECUTION).");
     }
@@ -281,14 +187,14 @@ async fn main() -> anyhow::Result<()> {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
             loop {
                 interval.tick().await;
-                m.db_pool_size.set(st.db.size() as i64);
+                m.db_pool_size.set(i64::from(st.db.size()));
                 m.db_pool_idle.set(st.db.num_idle() as i64);
                 m.agents_online.set(st.agents.lock().len() as i64);
                 let viewers: u64 = st
                     .capture_viewers
                     .lock()
                     .values()
-                    .map(|&c| c as u64)
+                    .map(|&c| u64::from(c))
                     .sum();
                 m.ws_viewers_total.set(viewers as i64);
             }
@@ -310,7 +216,7 @@ async fn main() -> anyhow::Result<()> {
                     let Some(m) = s.metrics.clone() else {
                         return StatusCode::NOT_FOUND.into_response();
                     };
-                    metrics::metrics_endpoint(m).await.into_response()
+                    metrics::metrics_endpoint(m).into_response()
                 }),
             )
             .with_state(state.clone())
@@ -350,21 +256,21 @@ async fn main() -> anyhow::Result<()> {
                     .burst_size(8)
                     .key_extractor(SmartIpKeyExtractor)
                     .finish()
-                    .unwrap(),
+                    .ok_or_else(|| anyhow::anyhow!("Invalid governor config for enroll"))?,
             ),
         })
         .with_state(state.clone());
 
     let api_inner = if cfg.api_rate_limit_per_second > 0 {
         let n = cfg.api_rate_limit_per_second.clamp(1, 500);
-        let burst_u = (n * 2).min(1000).max(n).min(u32::MAX as u64) as u32;
+        let burst_u = (n * 2).min(1000).max(n).min(u64::from(u32::MAX)) as u32;
         let governor_conf = std::sync::Arc::new(
             GovernorConfigBuilder::default()
                 .per_second(n)
                 .burst_size(burst_u)
                 .key_extractor(SmartIpKeyExtractor)
                 .finish()
-                .unwrap(),
+                .ok_or_else(|| anyhow::anyhow!("Invalid governor config for API"))?,
         );
         info!("API rate limit: {} req/s (burst {})", n, burst_u);
         api::router().layer(GovernorLayer {
@@ -439,11 +345,126 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn setup_database_and_migrations(cfg: &ServerConfig) -> anyhow::Result<sqlx::PgPool> {
+    let db_url = cfg.database_url.clone();
+
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(cfg.pool_max_connections)
+        .connect(&db_url)
+        .await
+        .map_err(|e| anyhow::anyhow!("Database connection failed: {e}"))?;
+
+    sqlx::migrate!("./migrations")
+        .run(&pool)
+        .await
+        .map_err(|e| match e {
+            sqlx::migrate::MigrateError::VersionMismatch(v) => anyhow::anyhow!(
+                "Migration {v} checksum mismatch: the SQL embedded in this binary does not match `_sqlx_migrations` (common after editing an already-applied migration, or CRLF vs LF drift).\n\
+                 \n\
+                 Fix: rebuild the server from the repo, then sync checksums from the **same** `server/migrations` files used for that build:\n\
+ cargo run --locked -p sentinel-server --bin migration_checksums\n\
+                 Apply the printed UPDATEs with `psql` against this database, then restart.\n\
+                 Inspect: SELECT version, encode(checksum,'hex') AS checksum_hex FROM _sqlx_migrations WHERE version = {v};\n\
+                 \n\
+                 (Docker builds now normalize `*.sql` to LF before compile.)\n\
+                 \n\
+                 Underlying error: {e}"
+            ),
+            sqlx::migrate::MigrateError::Dirty(v) => anyhow::anyhow!(
+                "Migration {v} is dirty (partial apply). Check `_sqlx_migrations` for success = false. Resolve the failed migration SQL manually, then delete or fix that row before restarting.\n\
+                 Underlying error: {e}"
+            ),
+            _ => anyhow::anyhow!("Migration failed: {e}"),
+        })?;
+
+    info!("Database ready.");
+    Ok(pool)
+}
+
+async fn bootstrap_dashboard_users(pool: &sqlx::PgPool) -> anyhow::Result<bool> {
+    let allow_insecure_dashboard_open_env = read_env_or_file("ALLOW_INSECURE_DASHBOARD_OPEN")
+        .is_some_and(|v| parse_bool(&v));
+    let allow_insecure_dashboard_open = if cfg!(debug_assertions) {
+        allow_insecure_dashboard_open_env
+    } else {
+        if allow_insecure_dashboard_open_env {
+            tracing::warn!(
+                "Ignoring ALLOW_INSECURE_DASHBOARD_OPEN in release builds (insecure)."
+            );
+        }
+        false
+    };
+
+    let admin_username = read_env_or_file("ADMIN_USERNAME")
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "admin".to_string());
+
+    let admin_password = read_env_or_file("ADMIN_PASSWORD")
+        .or_else(|| read_env_or_file("UI_PASSWORD"))
+        .filter(|s| !s.is_empty());
+
+    let users = db::dashboard_user_count(pool).await.unwrap_or(0);
+    if users == 0 {
+        match admin_password {
+            Some(ref pw) => {
+                db::bootstrap_default_admin(pool, &admin_username, pw).await?;
+                info!("Bootstrapped default dashboard user '{admin_username}' (role: admin).");
+            }
+            None => {
+                if allow_insecure_dashboard_open {
+                    info!("No dashboard users exist yet; dashboard is open (ALLOW_INSECURE_DASHBOARD_OPEN=true).");
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "No dashboard users exist. Set ADMIN_PASSWORD (or UI_PASSWORD) to bootstrap the default admin."
+                    ));
+                }
+            }
+        }
+    }
+
+    if allow_insecure_dashboard_open {
+        info!("Dashboard can run without users (insecure opt-in).");
+    }
+
+    Ok(allow_insecure_dashboard_open)
+}
+
+fn spawn_retention_prune_task(
+    pool_retention: sqlx::PgPool,
+    ret_secs: u64,
+    alert_days: Option<i64>,
+    software_days: Option<i64>,
+) {
+    tokio::spawn(async move {
+        if let Err(e) = db::prune_telemetry_by_retention(&pool_retention).await {
+            tracing::warn!(error = %e, "initial retention prune failed");
+        }
+        if let Err(e) =
+            db::prune_auxiliary_retention(&pool_retention, alert_days, software_days).await
+        {
+            tracing::warn!(error = %e, "initial auxiliary retention prune failed");
+        }
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(ret_secs));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            if let Err(e) = db::prune_telemetry_by_retention(&pool_retention).await {
+                tracing::warn!(error = %e, "retention prune failed");
+            }
+            if let Err(e) =
+                db::prune_auxiliary_retention(&pool_retention, alert_days, software_days).await
+            {
+                tracing::warn!(error = %e, "auxiliary retention prune failed");
+            }
+        }
+    });
+}
+
 async fn shutdown_signal() {
     let ctrl_c = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            tracing::warn!("Failed to install Ctrl+C handler: {e}");
+        }
     };
     #[cfg(unix)]
     let terminate = async {
@@ -456,8 +477,8 @@ async fn shutdown_signal() {
     let terminate = std::future::pending::<()>();
 
     tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
+        () = ctrl_c => {},
+        () = terminate => {},
     }
     info!("shutdown signal received, draining connections");
 }
@@ -496,8 +517,7 @@ async fn record_http_metrics(
 fn https_enforced() -> bool {
     std::env::var("ENFORCE_HTTPS")
         .ok()
-        .map(|v| parse_bool(&v))
-        .unwrap_or(true)
+        .is_none_or(|v| parse_bool(&v))
 }
 
 async fn require_https(State(enforce): State<bool>, req: Request, next: Next) -> Response {
@@ -539,7 +559,7 @@ fn cors_layer_from_env() -> CorsLayer {
 
     let origins: Vec<HeaderValue> = raw
         .split(',')
-        .map(|s| s.trim())
+        .map(str::trim)
         .filter(|s| !s.is_empty())
         .filter_map(|s| s.parse::<HeaderValue>().ok())
         .collect();

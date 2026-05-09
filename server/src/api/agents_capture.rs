@@ -159,7 +159,7 @@ pub async fn agent_mjpeg(
         state: s.clone(),
     };
 
-    let stream_state = s.clone();
+    let stream_state = s;
     let poll_ms = u64::from(viewer_prefs.interval_ms).clamp(33, 2000);
     let stream = async_stream::stream! {
         // Moving the guard into the stream keeps it alive until the HTTP
@@ -200,11 +200,10 @@ pub async fn agent_mjpeg(
             };
 
             // Skip frames we've already sent.
-            if f.seq == last_seq {
-                if last_emit.elapsed() < RESEND_EVERY {
+            if f.seq == last_seq
+                && last_emit.elapsed() < RESEND_EVERY {
                     continue;
                 }
-            }
             last_seq = f.seq;
             last_emit = Instant::now();
 

@@ -45,9 +45,9 @@ pub enum MouseButton {
 impl From<MouseButton> for Button {
     fn from(b: MouseButton) -> Self {
         match b {
-            MouseButton::Left => Button::Left,
-            MouseButton::Right => Button::Right,
-            MouseButton::Middle => Button::Middle,
+            MouseButton::Left => Self::Left,
+            MouseButton::Right => Self::Right,
+            MouseButton::Middle => Self::Middle,
         }
     }
 }
@@ -79,7 +79,7 @@ pub enum ControlCommand {
     /// Press a special key (Enter, Backspace, etc).
     KeyPress { key: SpecialKey },
 
-    /// Toast on the agent PC (uses PowerShell AUMID — same look as before).
+    /// Toast on the agent PC (uses `PowerShell` AUMID — same look as before).
     Notify { title: String, message: String },
 }
 

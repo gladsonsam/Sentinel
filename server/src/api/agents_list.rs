@@ -204,7 +204,7 @@ pub async fn list_agents_overview(State(s): State<Arc<AppState>>) -> Response {
 }
 
 #[derive(Deserialize)]
-pub(crate) struct AgentIconBody {
+pub struct AgentIconBody {
     /// Icon key (from the dashboard's icon library); empty or null clears.
     icon: Option<String>,
 }
@@ -294,7 +294,7 @@ pub async fn agent_sessions_all(
 ) -> Response {
     let limit = q.limit.unwrap_or(100).clamp(1, 1000);
     match sqlx::query(
-        r#"
+        r"
         SELECT 
             s.id, s.agent_id, s.connected_at, s.disconnected_at,
             a.name as agent_name
@@ -302,7 +302,7 @@ pub async fn agent_sessions_all(
         JOIN agents a ON a.id = s.agent_id
         ORDER BY s.connected_at DESC
         LIMIT $1
-        "#
+        "
     )
     .bind(limit)
     .fetch_all(&s.db)

@@ -17,7 +17,7 @@ mod local_ui;
 mod pagination;
 mod retention;
 mod settings;
-pub(crate) mod software_scripts;
+pub mod software_scripts;
 mod url_categorization;
 mod url_category_overrides;
 mod url_categorization_recalc;
