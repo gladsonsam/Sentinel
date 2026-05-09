@@ -5,8 +5,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { LogicalSize } from "@tauri-apps/api/dpi";
 import { applyMode, Mode } from "@cloudscape-design/global-styles";
 import AppLayout from "@cloudscape-design/components/app-layout";
 import TopNavigation from "@cloudscape-design/components/top-navigation";
@@ -227,6 +225,7 @@ function SettingsPanel() {
   const [logAutoRefresh, setLogAutoRefresh] = useState(true);
   const [logClearing, setLogClearing] = useState(false);
   const [logClearMsg, setLogClearMsg] = useState<string | null>(null);
+  const [clearAllConfirmOpen, setClearAllConfirmOpen] = useState(false);
   const logViewportRef = useRef<HTMLTextAreaElement | null>(null);
   const logStickToBottomRef = useRef(true);
   const logInitialScrollDoneRef = useRef(false);
@@ -265,11 +264,6 @@ function SettingsPanel() {
     // When opening settings, make it easy to type/paste immediately.
     setTimeout(() => serverUrlInputRef.current?.focus(), 0);
   }, [nav]);
-
-  useEffect(() => {
-    const win = getCurrentWebviewWindow();
-    void win.setSize(new LogicalSize(1100, 720));
-  }, []);
 
   useEffect(() => {
     const poll = async () => {
@@ -332,6 +326,23 @@ function SettingsPanel() {
       setTimeout(() => setLogClearMsg(null), 3000);
     }
   }, [logSourceId]);
+
+  const clearAllLogs = useCallback(async () => {
+    if (logSources.length === 0) return;
+    setLogClearing(true);
+    setLogClearMsg(null);
+    try {
+      await Promise.allSettled(logSources.map((s) => invoke("clear_log_file", { kind: s.id })));
+      // Refresh current view (selected source).
+      void refreshLogs(false);
+      setLogClearMsg("All logs cleared.");
+    } catch (e: unknown) {
+      setLogClearMsg(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLogClearing(false);
+      setTimeout(() => setLogClearMsg(null), 3000);
+    }
+  }, [logSources, refreshLogs]);
 
   const openLogLocation = useCallback(() => {
     void invoke("open_log_location", { kind: logSourceId }).catch(() => {});
@@ -888,6 +899,12 @@ function SettingsPanel() {
                                   <Button onClick={() => void clearLogs()} loading={logClearing}>
                                     Clear
                                   </Button>
+                                  <Button
+                                    onClick={() => setClearAllConfirmOpen(true)}
+                                    disabled={logClearing || logSources.length === 0}
+                                  >
+                                    Clear all
+                                  </Button>
                                   <Button onClick={openLogLocation} iconName="folder-open">
                                     Open location
                                   </Button>
@@ -1030,6 +1047,48 @@ function SettingsPanel() {
               autoComplete="current-password"
             />
           </FormField>
+        </SpaceBetween>
+      </Modal>
+
+      <Modal
+        visible={clearAllConfirmOpen}
+        onDismiss={() => {
+          if (logClearing) return;
+          setClearAllConfirmOpen(false);
+        }}
+        size="small"
+        closeAriaLabel="Close"
+        header="Clear all logs"
+        footer={
+          <Box float="right">
+            <SpaceBetween direction="horizontal" size="xs">
+              <Button variant="link" disabled={logClearing} onClick={() => setClearAllConfirmOpen(false)}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                disabled={logClearing || logSources.length === 0}
+                loading={logClearing}
+                onClick={() => {
+                  setClearAllConfirmOpen(false);
+                  void clearAllLogs();
+                }}
+              >
+                Clear all
+              </Button>
+            </SpaceBetween>
+          </Box>
+        }
+      >
+        <SpaceBetween size="s">
+          <Box>
+            This clears <strong>all</strong> known agent log files from this machine (not just the currently selected log).
+          </Box>
+          {logSources.length > 0 ? (
+            <Box color="text-body-secondary" fontSize="body-s">
+              Includes: {logSources.map((s) => s.label).join(", ")}
+            </Box>
+          ) : null}
         </SpaceBetween>
       </Modal>
 

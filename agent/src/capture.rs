@@ -39,6 +39,47 @@ impl Default for CaptureSettings {
     }
 }
 
+impl CaptureSettings {
+    /// Parse [`CaptureSettings`] from a control WebSocket `start_capture` JSON payload.
+    pub fn from_server_command(val: &serde_json::Value) -> Self {
+        let mut jpeg_quality: u8 = val
+            .get("jpeg_quality")
+            .or_else(|| val.get("jpeg_q"))
+            .and_then(|v| v.as_u64())
+            .map(|u| u as u8)
+            .unwrap_or(40)
+            .clamp(1, 100);
+
+        let interval_ms: u64 = if let Some(v) = val.get("interval_ms") {
+            if let Some(ms) = v.as_u64() {
+                ms
+            } else if let Some(ms) = v.as_f64() {
+                ms as u64
+            } else {
+                200
+            }
+        } else if let Some(fps) = val.get("fps").and_then(|v| v.as_f64()) {
+            if fps.is_finite() && fps > 0.0 {
+                (1000.0 / fps).round() as u64
+            } else {
+                200
+            }
+        } else {
+            200
+        }
+        .clamp(33, 2000);
+
+        if val.get("jpeg_quality").is_none() && val.get("jpeg_q").is_none() {
+            jpeg_quality = 40;
+        }
+
+        Self {
+            jpeg_quality,
+            interval_ms,
+        }
+    }
+}
+
 /// Spawn the capture loop on a dedicated OS thread; return its stop flag.
 ///
 /// Frames are JPEG-encoded (quality configurable) and sent on `tx` on `settings.interval_ms`.
@@ -50,7 +91,7 @@ pub fn start_capture(
     stop: Arc<AtomicBool>,
     settings: CaptureSettings,
 ) -> anyhow::Result<()> {
-    let jpeg_quality = settings.jpeg_quality.max(1).min(100);
+    let jpeg_quality = settings.jpeg_quality.clamp(1, 100);
     let interval_ms = settings.interval_ms.max(1);
     std::thread::Builder::new()
         .name("screen-capture".into())
